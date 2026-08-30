@@ -17,6 +17,13 @@ things are asserted here and nowhere else:
 3. A refusal to score is neither an acceptance nor a rejection, at every layer:
    a different type, a different transcript field, a different summary line, and
    a JSON round trip that keeps them apart.
+4. The **pooled** floors, as ``verify`` applies them one verifier at a time.
+   Two of the four abort reasons are statements about the pair rather than about
+   this verifier's own log, and the difference is what closes the split-coin
+   route: a verifier who cleared his own floor still refuses when the pair's
+   total is short, and refuses again when the *other* verifier is starved. The
+   pooled floor's own derivation lives in ``tests/test_protocol_tally.py``,
+   beside the message that makes it checkable.
 
 The security point of (2) is easy to miss and is pinned by
 ``test_a_starved_matched_set_that_would_have_been_accepted_now_aborts``: a
@@ -52,8 +59,10 @@ from sih141.protocol.verify import (
     VerificationResult,
     matched_positions,
     minimum_matched_count,
+    minimum_pooled_matched_count,
     mismatch_positions,
     verify,
+    verify_all,
     verify_or_abort,
 )
 
@@ -658,3 +667,261 @@ def test_a_stored_refusal_cannot_invent_its_own_floor() -> None:
             results=(),
             aborts=(VerificationAbort.from_dict(blob),),
         )
+
+
+# ==========================================================================
+# 5. The two pooled floors, applied by verify() one verifier at a time
+# ==========================================================================
+
+
+def test_a_verifier_who_hears_nothing_applies_only_his_own_floor() -> None:
+    """``counterpart_matched=None`` is the pre-pooled rule, unchanged.
+
+    The default, and what a caller holding one record can honestly pass. It is
+    pinned because every existing call site relies on it and because the Phase 3
+    seam that measures the split-coin attack is exactly this path.
+    """
+    params = ProtocolParams(key_length=600)
+    key = generate_private_key(params, 0, rng=np.random.default_rng(SEED + 20))
+    signature = sign(0, key, params)
+    floor = minimum_matched_count(params)
+    record = _record_matching_exactly(key, params, matched=floor)
+
+    result = verify(signature, record, params)
+    assert result.accepted
+    assert verify(signature, record, params, counterpart_matched=None) == result
+
+
+def test_a_pooled_total_below_its_floor_reaches_no_verdict() -> None:
+    """Both verifiers cleared their own floors and the pair still has too little.
+
+    The rule the split-coin declaration runs into: ``m_B`` and ``m_C`` are each
+    at ``m_min``, so the per-verifier rule is satisfied twice over, and
+    ``M = 2 m_min`` is below ``M_min`` all the same. Nothing about either rate
+    is anomalous, which is why no exponent catches it and a count has to.
+    """
+    params = ProtocolParams(key_length=600)
+    key = generate_private_key(params, 0, rng=np.random.default_rng(SEED + 21))
+    signature = sign(0, key, params)
+    floor = minimum_matched_count(params)
+    pooled_floor = minimum_pooled_matched_count(params)
+    assert 2 * floor < pooled_floor
+    record = _record_matching_exactly(key, params, matched=floor)
+
+    with pytest.raises(MatchedSetTooSmall) as excinfo:
+        verify(signature, record, params, counterpart_matched=floor)
+
+    abort = excinfo.value.abort
+    assert abort.reason is AbortReason.POOLED_BELOW_FLOOR
+    assert abort.matched_count == floor >= abort.minimum_matched
+    assert abort.counterpart_matched == floor
+    assert abort.pooled_count == 2 * floor
+    assert abort.minimum_pooled == pooled_floor
+    assert abort.shortfall == pooled_floor - 2 * floor
+    assert abort.is_pooled
+    message = str(excinfo.value)
+    assert "not a signature failure" in message
+    assert "pooled matched-count floor" in message
+    assert "cleared his own floor" in message
+
+
+def test_a_starved_counterpart_takes_this_verifier_down_with_him() -> None:
+    """The joint consequence, which is what makes the guarantee exhaustive.
+
+    Bob's own evidence is ample and the pair's total clears the pooled floor;
+    Charlie is nonetheless below *his* floor, so Bob reaches no verdict either.
+    Accepting here is precisely the asymmetric outcome -- Bob holding a
+    signature Charlie cannot score -- that a signer splitting the evidence base
+    is aiming for, and it is removed from the outcome space rather than priced.
+    """
+    params = ProtocolParams(key_length=600)
+    key = generate_private_key(params, 0, rng=np.random.default_rng(SEED + 22))
+    signature = sign(0, key, params)
+    floor = minimum_matched_count(params)
+    pooled_floor = minimum_pooled_matched_count(params)
+    # Bob holds more than the whole pooled floor; Charlie holds one record
+    # short of his own.
+    record = _record_matching_exactly(key, params, matched=pooled_floor)
+    assert pooled_floor + (floor - 1) >= pooled_floor
+
+    with pytest.raises(MatchedSetTooSmall) as excinfo:
+        verify(signature, record, params, counterpart_matched=floor - 1)
+
+    abort = excinfo.value.abort
+    assert abort.reason is AbortReason.COUNTERPART_BELOW_FLOOR
+    assert abort.matched_count == pooled_floor
+    assert abort.counterpart_matched == floor - 1
+    assert abort.shortfall == 1
+    assert abort.is_pooled
+    message = str(excinfo.value)
+    assert "would have been scored" in message
+    assert "shortfall is in the *split*" in message
+
+    # One more matched record at Charlie and the run scores normally.
+    assert verify(signature, record, params, counterpart_matched=floor).accepted
+
+
+def test_the_local_floor_is_tested_before_the_pooled_ones() -> None:
+    """A starved verifier is a local finding and is labelled as one.
+
+    The order matters for what a Phase 5 reader is told: blaming the pair for a
+    failure that is entirely this verifier's would point an investigation at the
+    wrong thing.
+    """
+    params = ProtocolParams(key_length=600)
+    key = generate_private_key(params, 0, rng=np.random.default_rng(SEED + 23))
+    signature = sign(0, key, params)
+    floor = minimum_matched_count(params)
+    record = _record_matching_exactly(key, params, matched=floor - 1)
+
+    abort = verify_or_abort(signature, record, params, counterpart_matched=0)
+    assert isinstance(abort, VerificationAbort)
+    assert abort.reason is AbortReason.BELOW_FLOOR
+    assert not abort.is_pooled
+    # The exchanged numbers are still carried, as context for the reader.
+    assert abort.counterpart_matched == 0
+    assert abort.minimum_pooled == minimum_pooled_matched_count(params)
+    assert abort.shortfall == 1
+
+
+def test_a_pooled_reason_cannot_be_built_without_the_exchanged_numbers() -> None:
+    """A statement about the pair that quotes no pair would be unreadable."""
+    with pytest.raises(ValueError, match="statement about the two"):
+        VerificationAbort(
+            "Bob", AbortReason.POOLED_BELOW_FLOOR, 80, 67, 200.0, 600, 0
+        )
+
+
+def test_a_pooled_reason_cannot_hide_a_local_failure() -> None:
+    """``verify`` tests the local floor first, so the label has to agree."""
+    with pytest.raises(ValueError, match="already below his floor"):
+        VerificationAbort(
+            "Bob",
+            AbortReason.POOLED_BELOW_FLOOR,
+            10,
+            67,
+            200.0,
+            600,
+            0,
+            counterpart_matched=10,
+            minimum_pooled=212,
+        )
+
+
+def test_a_pooled_reason_cannot_contradict_the_pooled_count() -> None:
+    """The label and the numbers have to be the same observation, still."""
+    with pytest.raises(ValueError, match="meets the pooled floor"):
+        VerificationAbort(
+            "Bob",
+            AbortReason.POOLED_BELOW_FLOOR,
+            200,
+            67,
+            200.0,
+            600,
+            0,
+            counterpart_matched=200,
+            minimum_pooled=212,
+        )
+    with pytest.raises(ValueError, match="below the pooled floor"):
+        VerificationAbort(
+            "Bob",
+            AbortReason.COUNTERPART_BELOW_FLOOR,
+            100,
+            67,
+            200.0,
+            600,
+            0,
+            counterpart_matched=10,
+            minimum_pooled=212,
+        )
+    with pytest.raises(ValueError, match="meets the per-verifier floor"):
+        VerificationAbort(
+            "Bob",
+            AbortReason.COUNTERPART_BELOW_FLOOR,
+            200,
+            67,
+            200.0,
+            600,
+            0,
+            counterpart_matched=100,
+            minimum_pooled=212,
+        )
+
+
+def test_a_pooled_refusal_round_trips_through_its_own_dict() -> None:
+    """The two new fields survive JSON, and an older blob still restores."""
+    abort = VerificationAbort(
+        Party.CHARLIE,
+        AbortReason.POOLED_BELOW_FLOOR,
+        70,
+        67,
+        200.0,
+        600,
+        1,
+        counterpart_matched=70,
+        minimum_pooled=212,
+    )
+    restored = VerificationAbort.from_dict(
+        json.loads(json.dumps(abort.to_dict()))
+    )
+    assert restored == abort
+    assert restored.summary() == abort.summary()
+    assert "pooled M = 70 + 70 = 140" in restored.summary()
+
+    older = abort.to_dict()
+    del older["counterpart_matched"]
+    del older["minimum_pooled"]
+    older["reason"] = AbortReason.BELOW_FLOOR
+    older["matched_count"] = 13
+    legacy = VerificationAbort.from_dict(older)
+    assert legacy.counterpart_matched is None
+    assert legacy.minimum_pooled is None
+    assert legacy.pooled_count is None
+    assert not legacy.is_pooled
+    assert legacy.shortfall == 54
+
+
+def test_a_counterpart_count_larger_than_the_key_is_a_wiring_error() -> None:
+    """The other verifier's matched set is a subset of the same key positions."""
+    params = ProtocolParams(key_length=600)
+    key = generate_private_key(params, 0, rng=np.random.default_rng(SEED + 24))
+    record = _record_matching_exactly(key, params, matched=200)
+    with pytest.raises(ValueError, match="exceeds the key length"):
+        verify(sign(0, key, params), record, params, counterpart_matched=601)
+    with pytest.raises(TypeError, match="counterpart_matched"):
+        verify(sign(0, key, params), record, params, counterpart_matched=1.5)
+
+
+def test_verify_all_pools_the_two_counts_by_default() -> None:
+    """The function that produces both verdicts runs Phase C' between them.
+
+    Holding both records is not the same as the two verifiers having compared
+    anything, so the exchange is performed explicitly and each verifier is then
+    handed nothing but the other's count. With ``M = 2 m_min`` the pooled rule
+    refuses what the per-verifier rule allows twice over, which is the whole
+    difference.
+    """
+    params = ProtocolParams(key_length=600)
+    key = generate_private_key(params, 0, rng=np.random.default_rng(SEED + 25))
+    signature = sign(0, key, params)
+    floor = minimum_matched_count(params)
+    records = {
+        party: RecipientRecord(
+            party=party,
+            message_bit=0,
+            entries=_record_matching_exactly(
+                key, params, matched=floor, party=party
+            ).entries,
+            symmetrised=True,
+        )
+        for party in (Party.BOB, Party.CHARLIE)
+    }
+
+    with pytest.raises(MatchedSetTooSmall) as excinfo:
+        verify_all(signature, records, params)
+    assert excinfo.value.abort.reason is AbortReason.POOLED_BELOW_FLOOR
+
+    results = verify_all(signature, records, params, exchange_counts=False)
+    assert all(result.accepted for result in results.values())
+    with pytest.raises(TypeError, match="exchange_counts must be a bool"):
+        verify_all(signature, records, params, exchange_counts=1)

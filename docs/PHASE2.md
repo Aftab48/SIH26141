@@ -4,28 +4,44 @@ Engineering note for `sih141.protocol`. Covers the protocol in precise notation,
 adversary model, the three security expressions with their derivations, why `s_a < s_v`,
 the no-cloning objection and its answer, and the seams Phase 3 attaches to.
 
-Status: complete, with one **corrected security claim** — read Section 6b before quoting a
-non-repudiation number. The `6.9e−10` this document previously published as holding "for
-every Alice strategy" holds only while the signer cannot see the recipients' logged bases,
-and the shipped `Signer` seam hands her both raw logs. The mathematics was never wrong; the
-advertising was.
+Status: complete. Two security repairs have landed on the non-repudiation claim, in that
+order, and Section 6b carries both derivations.
 
-**What replaces it, in the order a reader should reach for it.**
+1. The `6.9e−10` this document once published as holding "for every Alice strategy" holds
+   only while the signer cannot see the recipients' logged bases, and the shipped `Signer`
+   seam hands her both raw logs. It was replaced by a per-run conditional bound and a
+   per-verifier matched-count floor. The mathematics was never wrong; the advertising was.
+2. That floor left one route open and said so: a signer who aims the *pooled* matched count
+   at `2·m_min` and lets the symmetrisation coins split it leaves Bob accepting a signature
+   Charlie cannot score, about half the time, at every key length — measured `78/200` at
+   `L = 360` and `85/200` at `L = 600`. Closing it is Phase C′ (`tally.py`): one classical
+   message each way between the recipients, carrying a matched count. Section 6b-iv.
+
+**What to quote, in the order a reader should reach for it.**
 
 | Situation | Quote this | At `DEFAULT_PARAMS` | Assumes |
 | --- | --- | --- | --- |
 | A run that completed | `SessionTranscript.repudiation_guarantee` — `repudiation_bound` at the observed `M = m_B + m_C` | `6.9e−10` on a healthy run | **nothing** |
-| Before any run | `verify.enforced_repudiation_bound` — the bound the shipped matched-count floor forces | `1.9e−09` | **nothing** |
+| Before any run | `verify.enforced_repudiation_bound` — the bound the shipped floors force | `1.4e−09` | **nothing** |
 | Never publish | `analysis.averaged_repudiation_bound` | `6.9e−10` | assumption (IND), which the `Signer` seam breaks |
 
-Both honest numbers are now **implemented and enforced**, not hypothetical: `verify.py`
-refuses to score a matched set below `minimum_matched_count` (`36555` at the defaults), so
-`M ≥ 2·m_min` on any run that reaches two verdicts. Three limits are stated rather than
-hidden, and each is measured in Section 6b: there is **no unconditional bound below `1/2`
-without the abort rule** (Section 6b-iii); the rule closes the repudiation *verdict* but
-leaves one *no-verdict* route open, which needs a pooled floor and one extra classical
-message; and below `L = 267` the rule degenerates to `m_min = 1`, so `DEMO_PARAMS` carries
-no security claim at all and says so.
+Both honest numbers are **implemented and enforced**, not hypothetical. A verdict requires
+all three of
+
+```
+m_B ≥ m_min        m_C ≥ m_min        m_B + m_C ≥ M_min
+```
+
+with `m_min = 36555` (`minimum_matched_count`) and `M_min = 74190`
+(`minimum_pooled_matched_count`) at the defaults, so `M ≥ max(2·m_min, M_min) = 74190` on
+any run that reaches a verdict at all — and, because the second condition is checked by
+*both* verifiers, "Bob accepted" now implies "Charlie reached a verdict". There is no third
+outcome left to quote beside the number. Two limits remain, both stated rather than hidden
+and both measured in Section 6b: there is **no unconditional bound below `1/2` without an
+abort rule** (Section 6b-iii), and below `L = 140` both floors degenerate, so a
+demonstration key carries no security claim at all and says so. `DEMO_PARAMS` (`L = 192`)
+sits between the two crossovers and is now protected by the pooled floor alone, where the
+per-verifier floor could refuse nothing.
 
 ---
 
@@ -39,18 +55,23 @@ no security claim at all and says so.
 | `distribute.py` | Phase A: teleportation and immediate measurement | `ResourceContext`, `ResourceFactory`, `ideal_resource`, `distribute_to_recipient`, `distribute_public_key` |
 | `symmetrise.py` | Phase A′: the recipients' private exchange | `Symmetriser`, `symmetrise_records`, `no_symmetrisation` |
 | `signature.py` | Phase B: the declaration | `Signature`, `sign` |
-| `verify.py` | Phase C: the matched/unmatched split, the accept rule, and the matched-count floor | `VerificationResult`, `matched_positions`, `mismatch_positions`, `verify`, `verify_all`, `verify_or_abort`, `HONEST_ABORT_BUDGET`, `AbortReason`, `VerificationAbort`, `MatchedSetTooSmall`, `minimum_matched_count`, `enforced_repudiation_bound` |
+| `tally.py` | Phase C′: the recipients' matched-count exchange, and the pooled floor it makes checkable | `CountExchange`, `MatchedCountMessage`, `PooledMatchedCounts`, `matched_count_message`, `exchange_matched_counts`, `no_count_exchange` |
+| `verify.py` | Phase C: the matched/unmatched split, the accept rule, and the three matched-count floors | `VerificationResult`, `matched_positions`, `mismatch_positions`, `verify`, `verify_all`, `verify_or_abort`, `HONEST_ABORT_BUDGET`, `AbortReason`, `VerificationAbort`, `MatchedSetTooSmall`, `minimum_matched_count`, `minimum_pooled_matched_count`, `guaranteed_pooled_matched_count`, `enforced_repudiation_bound` |
 | `session.py` | Orchestration and the attack seams | `MESSAGE_BITS`, `Distributor`, `Symmetriser`, `Signer`, `Forwarder`, `honest_signer`, `honest_forwarder`, `SessionTranscript`, `QDSSession` |
 | `analysis.py` | Closed forms only; no simulation | `matched_statistics`, `honest_statistics`, `forgery_probability`/`_bound`, `recipient_forgery_probability`/`_bound`, `repudiation_probability`, `repudiation_bound`, `averaged_repudiation_bound`, `repudiation_bound_with_abort`, `symmetric_repudiation_bound`, `honest_abort_probability`/`_bound`, `binary_kl_divergence`, `hoeffding_exponent`, `max_accepted_mismatches`, `depolarising_error_rate`, `matched_count_distribution`, `matched_shortfall_probability`, `FORGER_MATCHED_MISMATCH_PROBABILITY`, `BoundMethod` |
 
 Dependencies run one way: `params` → `keys` → `records` → `distribute` → `symmetrise` →
-`signature` → `verify` → `session`, with `analysis` depending only on `params`. The one
-edge that closes back is `verify.enforced_repudiation_bound`, which imports
-`analysis.repudiation_bound_with_abort` inside the function body: it is the wiring between
-the floor `verify` enforces and the number that floor buys, and it is deliberately the only
-place the two meet, so verification's *rule* never depends on the analysis of it. Every
-public name is re-exported from `sih141.protocol`, `analysis` included, so Phase 3 never
-has to reach into a submodule; `tests/test_protocol_reconciliation.py` asserts that.
+`signature` → `verify` → `tally` → `session`, with `analysis` depending only on `params`.
+`verify` owns the floors; `tally` owns the message that makes the pooled one checkable and
+imports them, and what `verify` takes back is a plain `int` — the count the other verifier
+reported — so the module edge stays one-directional and no verifier can be handed evidence
+he does not hold. Two edges close back, both deliberately and both inside a function body:
+`verify.enforced_repudiation_bound` imports `analysis.repudiation_bound_with_abort` (the
+wiring between the floors `verify` enforces and the number they buy), and `verify.verify_all`
+imports `tally.exchange_matched_counts` (it is the one function that models *both*
+recipients, so it is the one that has to run their exchange). Every public name is
+re-exported from `sih141.protocol`, `analysis` and `tally` included, so Phase 3 never has to
+reach into a submodule; `tests/test_protocol_reconciliation.py` asserts that.
 
 ---
 
@@ -142,21 +163,47 @@ Section 7 states its price.
 Alice sends `(message, k_b)` to Bob over an authenticated classical channel. The signature
 *is* the private key; there is nothing else to send.
 
+### Phase C′ — the matched-count exchange
+
+Bob and Charlie each compute, from **their own** log and the declaration, how many positions
+they can score, and send that one integer to the other over the same private authenticated
+channel they tossed the coins on:
+
+```
+m_B = |{ i : c_i^B = d_i }|   ──►   Charlie
+m_C = |{ i : c_i^C = d_i }|   ──►   Bob
+```
+
+A count, never a log: neither verifier learns *which* positions the other matched, which
+matters because half of that is exactly what Phase A′ hid and a recipient forger's advantage
+is positional. Both then hold the same `M = m_B + m_C`, which is the quantity every
+repudiation bound is exponential in and which neither of them could compute alone. Section
+6b-iv is why this is worth a message; `tally.py` is the implementation and states the price,
+of which the sharp part is an ordering change: Charlie must hold the declaration to count
+against it, so **Bob's verdict is no longer local** — he forwards first and decides after.
+
 ### Phase C — verification
 
-Recipient `R` holding `[(i, c_i, o_i)]` and a declaration `[(d_i, w_i)]` computes
+Recipient `R` holding `[(i, c_i, o_i)]`, a declaration `[(d_i, w_i)]` and the count `m_{R̄}`
+his counterpart reported computes
 
 ```
 M_R = { i : c_i = d_i }
 e_R = |{ i ∈ M_R : o_i ≠ w_i }|
 r_R = e_R / |M_R|
 abort   if   |M_R| < m_min                     no verdict, not a rejection
+abort   if   |M_R| + m_{R̄} < M_min             the pooled floor
+abort   if   m_{R̄} < m_min                     his counterpart cannot score either
 accept  iff  r_R ≤ threshold(R),   threshold(Bob) = s_a,  threshold(Charlie) = s_v
 ```
 
-`m_min` is the matched-count floor (`verify.minimum_matched_count`), `1` for short keys and
-`36555` at `DEFAULT_PARAMS`. Section 6b-iii prices what the floor buys against a repudiating
-Alice, and states the one route it does not close.
+`m_min` is the per-verifier floor (`verify.minimum_matched_count`), `1` for short keys and
+`36555` at `DEFAULT_PARAMS`; `M_min` is the pooled floor
+(`verify.minimum_pooled_matched_count`), `74190` there. The three checks are tested in that
+order so that a failure is attributed to the smallest thing that explains it, and each
+carries its own `AbortReason`. The third is the joint consequence, and it is what makes
+"Bob accepted" imply "Charlie reached a verdict": Section 6b-iv shows that without it no
+choice of floors closes the split-coin route.
 
 Bob verifies, then forwards the declaration — never his evidence — to Charlie, who scores
 his own log at the looser cut.
@@ -517,84 +564,176 @@ a mean of `38400`):
 | Rule | Floor on `M` | Unconditional bound | Honest-run cost | Shipped? |
 | --- | --- | --- | --- | --- |
 | Bob's own floor alone | `m_min = 36555` | `4.4e−05` | `2.5e−31` | yes |
-| **both verifiers cleared it** — a reject verdict from Charlie means they did | `2·m_min = 73110` | **`1.9e−09`** | `2.5e−31` | **yes** |
-| pooled floor, closing the no-verdict route below | `M_min = 75000` | `1.1e−09` + `4.6e−11` abort route | `7.8e−16` | no — costs one extra message |
+| both verifiers cleared it | `2·m_min = 73110` | `1.9e−09` | `5.1e−31` | yes |
+| **pooled floor as well** | **`M_min = 74190`** | **`1.4e−09`** | `8.0e−31` | **yes** — Phase C′ |
 
-(costs from `matched_shortfall_probability`; the floor itself from
-`verify.minimum_matched_count`, derived in `verify.py`'s docstring from a Chernoff lower
-tail at a budget of `ε = 2⁻⁶⁴` per verifier.) The middle row is what
-`verify.enforced_repudiation_bound` returns and the only a-priori repudiation figure this
-package publishes. It lands within a factor of three of the figure that used to be
-published as unconditional — this time actually unconditional, and resting on a rule the
-code enforces rather than on an assumption about what Alice can see.
+(costs from `matched_shortfall_probability`, summed over the checks each rule performs; the
+floors from `verify.minimum_matched_count` and `verify.minimum_pooled_matched_count`, both
+derived from a Chernoff lower tail at a budget of `ε = 2⁻⁶⁴` per check.) The bottom row is
+what `verify.enforced_repudiation_bound` returns and the only a-priori repudiation figure
+this package publishes. It lands within a factor of two of the figure that used to be
+published as unconditional — this time actually unconditional, and resting on rules the code
+enforces rather than on an assumption about what Alice can see.
 
-**Read the event carefully, because the floor creates a third outcome.** What the table
-bounds is: Bob accepts, and Charlie *reaches a verdict of reject* — or holds no matched
-record at all, which 6b-i already covers. It does **not** cover Charlie holding a matched
-set that is non-empty but below *his* floor, on which he returns no verdict. Whether that
-counts as repudiation is a convention, and the readings differ sharply:
+**Why the middle row was not enough, which is how the bottom row got here.** What rows one
+and two bound is: Bob accepts, and Charlie *reaches a verdict of reject* — or holds no
+matched record at all, which 6b-i already covers. Neither covers Charlie holding a matched
+set that is non-empty but below *his* floor, on which he returns no verdict. Read as an
+abort that is fine; read as a transfer failure counted against the scheme it is a route the
+exponent does not close, and a log-reading Alice takes it:
 
-* As a **no-verdict abort** — which is how `verify.py` frames it, with its own reason code
-  and a `MatchedSetTooSmall` raise rather than an `accepted=False` — the bound is complete.
-  An honest run trips the floor with probability `~1e−31`, so the outcome is visibly
-  anomalous rather than a quiet rejection.
-* As a **transfer failure counted against the scheme**, the floor opens a route the exponent
-  does not close. A log-reading Alice aims `M` at exactly `2·m_min`, using only clean matched
-  records: Bob accepts whenever `m_B ≥ m_min`, Charlie is below his floor whenever
-  `m_C < m_min`, and one fair coin per record splits a total whose mean is `M/2 = m_min`. She
-  wins with probability `≈ 1/2`. No rate deviates, so no rate exponent applies.
+```
+declare exactly 2·m_min matched records, all correct, all on positions where
+the two raw logs used different bases  →  each record goes to exactly one
+verifier and the coins decide which
 
-Closing the second reading needs the counts compared. With a pooled floor `m_B + m_C ≥ M_min`
-on top of the per-verifier one, Charlie's below-floor abort demands `m_C < m_min` against a
-mean of `M/2 ≥ M_min/2`, which Hoeffding bounds by `exp(−2(M_min/2 − m_min)²/M_min)`, worst
-at `M = M_min`. At `DEFAULT_PARAMS` with `m_min = 36555` and `M_min = 75000`: repudiation
-`1.1e−9`, abort route `4.6e−11`, honest cost `7.8e−16` — an unconditional total near
-`1.2e−9`.
+    m_B ~ Bin(2·m_min, 1/2),  m_C = 2·m_min − m_B,  e_B = e_C = 0
+    m_B > m_min  ⇒  Bob accepts at rate 0, Charlie is below his floor
 
-**What is implemented, and what it measures.** `verify.py` enforces the per-verifier floor
-and no pooled comparison. `analysis.py` cannot check that — it depends only on `params` —
-so `repudiation_bound_with_abort` takes the floor as an argument;
-`verify.enforced_repudiation_bound` is the wiring that supplies the floor actually applied,
-and is what a reader should call instead of choosing a threshold.
+P(success) = (1 − P[m_B = m_min])/2 → 1/2
+```
 
-Both readings were then run, at `L = 360` (where `m_min = 17`, the smallest tested length
-whose floor exceeds the `M = 13` the attack pins) and at `DEMO_PARAMS`. The tests are in
-`tests/test_protocol_reconciliation.py`; the wider sweeps below were run separately.
+No rate deviates anywhere, so no rate exponent applies, and key length does not help because
+`m_min` grows with `L` and so does the target. Measured through the shipped seams with the
+per-verifier floor alone: **`78/200` at `L = 360`, `85/200` at `L = 600`** — `0.39` and
+`0.43` against closed-form predictions of `0.43` and `0.47`, and `0.4985` at
+`DEFAULT_PARAMS`. Not one of those runs was a reject verdict, so `enforced_repudiation_bound`
+was never violated; the route was always a *no-verdict*, which is exactly why it had to be
+closed rather than bounded.
 
-| Signer | Runs | Repudiation verdicts | What happened instead |
-| --- | --- | --- | --- |
-| starving (`M = 13`), `L = 600` | 40 | **0** | 40 no-verdict aborts at Bob |
-| starving (`M = 13`), `L = 360` | 16 | **0** | 16 no-verdict aborts at Bob |
-| aiming at `2·m_min`, `L = 600` | 40 | **0** | 14 Bob-accept/Charlie-no-verdict, 22 aborts at Bob, 4 clean transfers |
-| starving, `DEMO_PARAMS` (`m_min = 1`) | 40 | 22 | the floor is inert below `L = 267`; see below |
-| honest, `L = 600` / `L = 192` / `L = 1200` | 200 / 200 / 60 | — | **0** spurious aborts; smallest matched count `163` against a floor of `67` |
+### 6b-iv. The pooled floor: what closes it, and what it costs
 
-Three conclusions, and the third is a limitation rather than a result:
+The quantity the bound is exponential in is `M = m_B + m_C`, and neither verifier knows it.
+So Phase C′ has them exchange it — one integer each way. Two rules ride on that one message.
 
-1. **The attack of 6b-ii is prevented, not merely bounded.** It pins `M = 13` at *every* key
-   length, so at any `L` whose floor exceeds `13` — every `L ≥ 340`, and `DEFAULT_PARAMS` by
-   a factor of `2800` — both verifiers refuse to score and there is no verdict to repudiate.
-   It is a recorded outcome, not a crash: `run()` returns a transcript, `aborted` is `True`,
-   and `transferable`, `repudiated` and `is_complete` are all `False`.
-2. **The honest run is untouched.** Zero aborts in 460 seeded honest sessions across three
-   parameter sets, and the analytic form is stronger than any sample: the exact binomial
-   lower tail at the floor is below `ε = 2⁻⁶⁴` for every `L` tested from `192` to `115200`.
-3. **The no-verdict route above is real and is not closed.** Aiming `M` at `2·m_min` produced
-   Bob-accepts/Charlie-no-verdict in 14 of 40 runs. Under the framing `verify.py` uses that
-   is an abort, so `enforced_repudiation_bound` stands — **0 of 40** runs produced a reject
-   verdict. Under the stricter reading it is a transfer failure at rate `≈ 1/3`, and the
-   per-verifier floor does not bound it. Closing it needs the pooled row of the table above.
+**The pooled floor.** Derived exactly as `m_min` was, from the same `ε = 2⁻⁶⁴` applied to
+the pooled law:
 
-Below `L = 267` the Chernoff tail is vacuous at this budget and `m_min` clamps to `1`, so
-`DEMO_PARAMS` gets no protection: the same signer repudiated 22 times in 40 there. That is
-consistent rather than alarming — `DEMO_PARAMS` publishes `enforced_repudiation_bound =
-0.9995` and its docstring says no security claim attaches to it — but it is why a
-demonstration key must never be quoted as a security result.
+```
+M ~ Binomial(2L, 1/n)   exactly            μ_M = 2L/n
+d      = sqrt(2 ln(1/ε) / μ_M)
+M_min  = ⌈(1 − d)·μ_M⌉ = 74190             at DEFAULT_PARAMS
+```
 
-The honest per-run statement remains 6b-i at the observed `m_B + m_C`, which every
-transcript now carries as `repudiation_guarantee` and prints in `summary()`; the honest
-a-priori statement is the middle row of the table above. 6b-ii is quotable only with (IND)
-named beside it.
+*The law deserves a sentence, because the obvious derivation of it is invalid.* After Phase
+A′ `m_B` and `m_C` are **not** independent — given the records, `m_C = M − m_B` with sample
+correlation `−1`, measured in `tests/test_protocol_tally.py` — so convolving the two
+post-exchange marginals proves nothing, even though it lands on the same answer. What makes
+the law exact is **conservation**: the coins re-assign a fixed multiset of `2L` entries whose
+bases were drawn i.i.d. uniform, so `M` is a sum of `2L` independent indicators and the coins
+cannot move it at all. Measured both ways: `M` took exactly one value across 120 coin seeds
+on one fixed pair of logs while `m_B` took 21, and the empirical law over 20000 runs sits
+within `0.0064` of the exact `Binomial(2L, 1/3)` CDF (Kolmogorov 95% critical value
+`0.0096`).
+
+The floor is worth the message because it *strictly exceeds the total the attack aims at*.
+With `A = sqrt(2·μ·ln(1/ε))` and `μ = L/n`,
+
+```
+m_min = μ − A                M_min = 2μ − √2·A
+M_min − 2·m_min = (2 − √2)·A ≈ 0.586·A      growing like √L
+```
+
+— `1080` records at `DEFAULT_PARAMS`, `78` at `L = 600`, `61` at `L = 360`, and positive at
+every `L ≥ 140`. The margin **grows**, so the closure is not an artefact of a short
+demonstration key.
+
+**The joint consequence, which the same message also buys.** A pooled floor alone would not
+finish the job, and this is the part that is invisible in the exponent. Alice re-aims at
+`M = M_min` and needs only the coins to leave Charlie under his own floor — a deviation of
+`M_min/2 − m_min = (1 − √2/2)·A` out of `M_min ≈ 2μ` fair coins:
+
+```
+P ≤ exp(−2(M_min/2 − m_min)²/M_min)  →  ε^(3 − 2√2)  =  4.9e−04
+                                                exact tail  4.8e−05
+```
+
+**independent of `L`** — the deviation and the noise both grow like `√L`. Measured against
+the closed form: `2.8e−07` at `L = 600`, `1.3e−04` at `L = 6912`, `3.7e−04` at
+`DEFAULT_PARAMS`, rising to the asymptote. No key length closes it, and no choice of floors
+inside the `ε` budget closes it either, because the margin `M_min/2 − m_min` is capped by
+that same budget. What closes it is making the per-verifier floor's *consequence* joint: a
+verifier below his own floor takes the other down with him
+(`AbortReason.COUNTERPART_BELOW_FLOOR`). Then "Bob accepts" implies "Charlie reached a
+verdict", the asymmetric outcome leaves the outcome space entirely, and the failure space is
+exhausted by the two branches 6b-i already bounds.
+
+**The price, stated in full.**
+
+* **One classical message each way** between the recipients, on the channel they already
+  share for the coins. No new channel assumption.
+* **An ordering change.** Charlie must hold the declaration to count against it, so Bob
+  forwards before he decides: *Bob's verdict is no longer local*. A deployment orders it so
+  that a signature Bob would reject on his own rate is still never forwarded.
+* **A recipient can force an abort** by reporting a low count. Availability, not integrity: a
+  recipient could always refuse to participate, and *under*-reporting can only withhold an
+  acceptance, never manufacture one — every acceptance still needs the accepting verifier's
+  own rate to clear his own threshold on his own log.
+* **The guarantee is now conditional on the counterpart's report being honest**, which is a
+  new hypothesis and is listed as one. *Over*-reporting is the direction that costs: an
+  inflation of `δ` degrades Bob's bound from `exp(−M_min·gap²/8)` to
+  `exp(−(M_min−δ)·gap²/8)` — gracefully, and by exactly what was inflated. It grants no
+  new capability, though: non-repudiation protects Bob *from Alice*, and the party that
+  would have to inflate is Charlie, who can already deny Bob the transfer by rejecting
+  outright. The hypothesis is implied by the threat model that made the claim worth stating,
+  and it is written down rather than assumed.
+* **Three honest-abort tails instead of one**, `2.5e−31 + 2.5e−31 + 2.9e−31 = 8.0e−31`
+  against a per-check budget of `5.4e−20`.
+* **Nothing in key length.** `M_min` is a floor, not a longer key.
+
+**Measured, before and after.** Both arms run the identical signer and seeds; the difference
+is one callable (`count_exchange=no_count_exchange` versus the default), and the exchange
+consumes no randomness, so the two arms draw the same generator sequence.
+
+| Signer | `L` | Rule | Runs | Repudiation verdicts | Bob-accept / Charlie-no-verdict | Joint no-verdict |
+| --- | --- | --- | --- | --- | --- | --- |
+| aiming at `2·m_min` | 360 | per-verifier only | 200 | **0** | **78** | 0 |
+| aiming at `2·m_min` | 360 | **pooled** | 200 | **0** | **0** | 200 |
+| aiming at `2·m_min` | 600 | per-verifier only | 200 | **0** | **85** | 0 |
+| aiming at `2·m_min` | 600 | **pooled** | 200 | **0** | **0** | 200 |
+| aiming at `M_min`, coins rigged against Charlie | 360 | per-verifier only | 40 | 0 | **40** | 0 |
+| aiming at `M_min`, coins rigged against Charlie | 360 | **pooled** | 40 | 0 | **0** | 40 |
+| aiming at `M_min`, coins rigged against Charlie | 600 | per-verifier only | 40 | 0 | **40** | 0 |
+| aiming at `M_min`, coins rigged against Charlie | 600 | **pooled** | 40 | 0 | **0** | 40 |
+| starving (`M = 13`) | 360 | pooled | 16 | **0** | 0 | 16 |
+| starving (`M = 13`) | 192 (`DEMO`) | pooled | 16 | **0** | 0 | 16 |
+| honest | 360 / 600 | pooled | 60 / 60 | — | — | **0** spurious aborts |
+
+The rigged-coin rows isolate the joint consequence. Alice's best response to a pooled floor
+alone is a `4.9e−04` event, far out of reach of any feasible sample, so the run is *placed*
+at that point of the coin space with a symmetriser whose coin never comes up heads: Bob then
+holds every matched record and Charlie none. Under the per-verifier rule Bob accepts and
+Charlie cannot score — the residual transfer failure, realised. Under the shipped rule Bob
+records `counterpart-matched-count-below-floor` and reaches no verdict either.
+
+Four conclusions:
+
+1. **Both attacks are prevented, not merely bounded.** The `M = 13` starving signer and the
+   `M = 2·m_min` splitting signer now end in a joint no-verdict on every seed. Recorded
+   outcomes, not crashes: `run()` returns a transcript, `aborted` is `True`, and
+   `transferable`, `repudiated` and `is_complete` are all `False`.
+2. **`DEMO_PARAMS` gained a control it never had.** The two crossovers differ — `m_min` is
+   inert below `L = 267`, `M_min` only below `L = 134` — so at `L = 192` the pooled floor
+   (`22`) refuses the `M = 13` the per-verifier floor (`1`) could not. The parameter set
+   still publishes `enforced_repudiation_bound = 0.994` and still carries no security claim;
+   it simply no longer hands the attack a free win.
+3. **The honest run is untouched.** Zero aborts in 120 seeded honest sessions, and the
+   analytic form is stronger than any sample: the exact binomial lower tail is below
+   `ε = 2⁻⁶⁴` at both floors for every `L` tested from `150` to `115200`.
+4. **What remains outside the number is denial of service, and it is named.** A signer who
+   starves the evidence base aborts the run jointly; nothing is transferred and Bob holds no
+   signature he can be told he should have forwarded. No threshold defends against that —
+   Alice can equally decline to sign — and Section 8 says the same of the honest-abort
+   numbers.
+
+Below `L = 140` both Chernoff tails are vacuous at this budget, both floors clamp to `1`, and
+the same signer repudiates about half the time. That is consistent rather than alarming — a
+key that short publishes `enforced_repudiation_bound ≈ 0.999` and says no security claim
+attaches to it — but it is why a demonstration key must never be quoted as a security result.
+
+The honest per-run statement remains 6b-i at the observed `m_B + m_C`, which every transcript
+carries as `repudiation_guarantee` and prints in `summary()`; the honest a-priori statement
+is the bottom row of the table above. 6b-ii is quotable only with (IND) named beside it.
 
 ### 6c. The in-model bound, kept as a yardstick
 
@@ -658,7 +797,8 @@ sweep past the floor from a mistyped config.
 | `s_v` | `1/16 = 0.0625` | Three quarters of the floor. Sized by what it buys: `D(1/16 ‖ 1/12) = 0.003088` nats gives a recipient-forgery bound of `1.1e−103`. |
 | `s_a` | `1/64 = 0.015625` | A noise budget. A Werner-`p` resource gives `p_e = p/2`, so honest signatures survive up to `p = 3.125%`. |
 | `L` | `115200` | `115200/3 = 38400` matched positions per verifier; `E[M] = 76800`. With `gap = 3/64`, the 6b-i bound at that evidence is `exp(−21.09) = 6.9e−10`, and so is the 6b-ii average — *under (IND)*. A multiple of 3 so the expected matched count is an integer. |
-| `minimum_matched_count` | `36555` | Derived, not chosen: the Chernoff lower tail of `Bin(L, 1/3)` at a per-verifier honest-abort budget of `ε = 2⁻⁶⁴`. 4.8% below the mean; costs an honest verifier `2.5e−31`. **This is the parameter the unconditional repudiation number rests on** — `exp(−2·36555·gap²/8) = 1.9e−09` (`enforced_repudiation_bound`). It is a function of `L` and `\|B\|` alone, so it moves with `L` and needs no separate tuning. |
+| `minimum_matched_count` | `36555` | Derived, not chosen: the Chernoff lower tail of `Bin(L, 1/3)` at an honest-abort budget of `ε = 2⁻⁶⁴` per check. 4.8% below the mean; costs an honest verifier `2.5e−31`. A function of `L` and `\|B\|` alone, so it moves with `L` and needs no separate tuning. |
+| `minimum_pooled_matched_count` | `74190` | The same derivation applied to the pooled law `M ~ Bin(2L, 1/3)`, which is exact by *conservation* rather than by independence (6b-iv). 3.4% below `E[M] = 76800`; costs an honest run `2.9e−31`. **This is the parameter the unconditional repudiation number rests on** — `exp(−74190·gap²/8) = 1.4e−09` (`enforced_repudiation_bound`). It exceeds `2·m_min = 73110` by `1080`, which is what refuses the split-coin declaration rather than pricing it. |
 
 Cost, plainly: a full two-message-bit setup teleports `2 × 2 × 115200 = 460800` qubits.
 `DEMO_PARAMS` keeps the same thresholds and cuts `L` to 192 — the same decision rule, no
@@ -694,12 +834,12 @@ regime of an honest run.
 
 At `DEFAULT_PARAMS` with a 1% depolarising channel, all three numbers are small at once:
 abort `< 1e−9`, outside forgery `< 1e−100`, recipient forgery `1.1e−103` (bound; exact
-`2.2e−105`), and repudiation `1.9e−09` **unconditionally**, because `verify.py` enforces
-the 6b-iii floor — `6.9e−10` if you are additionally willing to assume (IND), and `≥ 1/2`
-for a log-reading signer against a verifier that does *not* abort, which is what the floor
-exists to prevent. The matched-count floor adds its own honest-run abort of `2.5e−31` per
-verifier, twenty-two orders of magnitude below the channel's, so it never becomes the
-dominant failure. That simultaneity is the only thing that makes the parameter set
+`2.2e−105`), and repudiation `1.4e−09` **unconditionally**, because `verify.py` enforces
+the 6b-iv floors — `6.9e−10` if you are additionally willing to assume (IND), and `≥ 1/2`
+for a log-reading signer against verifiers that do *not* abort, which is what the floors
+exist to prevent. The three matched-count checks add their own honest-run abort of
+`8.0e−31` per run, twenty-two orders of magnitude below the channel's, so they never become
+the dominant failure. That simultaneity is the only thing that makes the parameter set
 meaningful, and each of the four numbers has to be quoted with the hypothesis it carries.
 
 **A note on cost.** The exact functions are `O(L²)` summands — instant at `DEMO_PARAMS`,
@@ -723,6 +863,7 @@ attacked run and a clean run comparable rather than two different programs.
 | `resource_factory` | `() -> state` or `(ResourceContext) -> state` | The quantum channel. Called once per key position per recipient. Werner or amplitude-damped pairs are injected noise; a factory that degrades a subset of calls is an intermittent eavesdropper. |
 | `distributor` | signature of `distribute_public_key` | Phase A as a whole — an impersonator between Alice and the recipients, substituting his own states rather than degrading hers. |
 | `symmetriser` | signature of `symmetrise_records` | Phase A′. Pass `no_symmetrisation` to run the insecure variant and *measure* the repudiation attack rather than take Section 6a's word for it. |
+| `count_exchange` | signature of `exchange_matched_counts` | Phase C′ — again the recipients' step, not Alice's. Pass `no_count_exchange` to run the pre-pooled variant and *measure* the split-coin route of 6b-iii rather than take its word for it. |
 | `signer` | signature of `honest_signer` | Phase B — who is holding the pen. Receives the message bit, the keys, the parameters and the recipients' **raw** logs — *both* of them, bases included, which is what puts assumption (IND) out of reach of any a-priori repudiation figure. See 6b-ii. |
 | `forwarder` | `(Signature, ProtocolParams) -> Signature` | The Bob→Charlie classical hop. An attack *between* the two verifications. |
 | `run_id` | `str \| None` | Carried verbatim into the transcript for a replay ledger to key on. |
@@ -747,6 +888,11 @@ hands over is the two logs' *bases*, and those are enough to choose the matched 
 is what the averaged bound of 6b-ii needs and does not get. A repudiating Alice standing at
 this seam is therefore a supported experiment rather than an excluded one, and the figure
 she refutes is named accordingly.
+
+**The count exchange is the recipients', like Phase A′.** `count_exchange` replaces what
+*they* do, never what Alice does, and the honest default is the secure one. It is the seam
+the before/after table in 6b-iv switches, and because the exchange consumes no randomness the
+two arms draw the identical generator sequence — one callable apart, position for position.
 
 **Two declarations in the transcript.** `SessionTranscript.signature` is what Bob scored;
 `forwarded_signature` is what Charlie scored when the forwarding hop altered it, and `None`
@@ -775,6 +921,16 @@ and `is_complete` are all `False`; and `summary()` closes with `NO VERDICT` rath
 naming a composite event. **A Phase 4/5 aggregation must give aborted runs their own
 bucket** — an abort is not a detection. `to_dict()` gained an `"aborts"` key, optional on the
 way back in, so transcripts written before the rule still restore.
+
+**`pooled` records Phase C′**: the two counts, their total and both floors as the run
+applied them, in a `PooledMatchedCounts`. `counts_exchanged` is `False` on a run made with
+`no_count_exchange`, `summary()` prints an `UNPOOLED:` line for it, and such a run has **no
+unconditional non-repudiation guarantee below `1/2`**. `__post_init__` re-derives both floors
+from `params` and refuses a mismatch, for the same reason it re-derives thresholds: a
+recorded exchange is internally consistent whatever floors it quotes, so taking the field
+verbatim would let a run that failed the rule be re-labelled as one that passed it.
+`to_dict()` gained a `"pooled"` key, optional on the way back in — a transcript written
+before Phase C′ restores as one whose recipients did not compare counts, which is what it was.
 
 **`repudiation_guarantee` is the number a run quotes**, computed from `pooled_matched_count`
 (`M = m_B + m_C`, both counts against the *same* declaration, both from actual verdicts).

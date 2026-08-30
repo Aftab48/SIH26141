@@ -41,12 +41,25 @@ It costs a factor of four in the recipient-forger floor -- ``1/3`` before,
 **Phase B -- signing**: Alice sends ``(message, k_b)`` to Bob over an
 authenticated classical channel.
 
+**Phase C' -- the count exchange**: Bob and Charlie each announce how many
+positions they can score against the declaration, ``m_B`` and ``m_C``, over the
+same private channel they tossed the symmetrisation coins on
+(:func:`~sih141.protocol.tally.exchange_matched_counts`). One integer each way,
+and it buys the only floor that is about the evidence base the non-repudiation
+bound is actually exponential in, ``M = m_B + m_C``. Without it a signer who
+reads both recipients' logs can aim ``M`` at twice the per-verifier floor and
+split it, leaving Bob accepting a signature Charlie cannot score, about half the
+time and at every key length.
+
 **Phase C -- verification**: recipient ``R`` intersects its own bases with the
 declared ones to get the matched set ``M_R``, counts disagreements ``e_R`` on
 those positions only, and compares ``r_R = e_R / |M_R|`` against its threshold --
 ``s_a`` for Bob, ``s_v`` for Charlie. Unmatched positions carry no information
 and are discarded; see :mod:`sih141.protocol.records` for why counting them is
-the classic bug in this family of protocols.
+the classic bug in this family of protocols. A verdict is reached only if
+``m_R >= m_min``, ``m_B + m_C >= M_min`` and the *other* verifier also cleared
+``m_min``; otherwise the run records a no-verdict, which is neither an
+acceptance nor a rejection.
 
 Where the two thresholds come from, and why ``s_a < s_v < 1/2``, is derived in
 :mod:`sih141.protocol.params`.
@@ -73,18 +86,24 @@ Modules
     Phase B: :class:`~sih141.protocol.signature.Signature` and
     :func:`~sih141.protocol.signature.sign`. The signature *is* the private key,
     declared over an authenticated classical channel.
+:mod:`~sih141.protocol.tally`
+    Phase C': the recipients' matched-count exchange, the one extra classical
+    message, and the pooled floor it makes checkable.
+    :func:`~sih141.protocol.tally.no_count_exchange` is the seam Phase 3 uses to
+    run the pre-pooled variant and measure the split-coin attack.
 :mod:`~sih141.protocol.verify`
     Phase C: :func:`~sih141.protocol.verify.verify`,
     :func:`~sih141.protocol.verify.verify_all` and the
     :class:`~sih141.protocol.verify.VerificationResult` they return. This is
-    where the matched/unmatched split is enforced.
+    where the matched/unmatched split is enforced, and where all three
+    matched-count floors are applied.
 :mod:`~sih141.protocol.session`
     Orchestration: :class:`~sih141.protocol.session.QDSSession` runs the phases
     in order and freezes the result into a JSON-serialisable
-    :class:`~sih141.protocol.session.SessionTranscript`. Its five keyword-only
-    seams -- ``resource_factory``, ``distributor``, ``symmetriser``, ``signer``
-    and ``forwarder`` -- are how the Phase 3 attack suite attaches without
-    editing any protocol module.
+    :class:`~sih141.protocol.session.SessionTranscript`. Its six keyword-only
+    seams -- ``resource_factory``, ``distributor``, ``symmetriser``, ``signer``,
+    ``count_exchange`` and ``forwarder`` -- are how the Phase 3 attack suite
+    attaches without editing any protocol module.
 :mod:`~sih141.protocol.analysis`
     Closed forms only, no simulation: the matched-set and honest-rate
     statistics, the two forgery probabilities (outside adversary and the
@@ -171,6 +190,14 @@ from sih141.protocol.symmetrise import (
     no_symmetrisation,
     symmetrise_records,
 )
+from sih141.protocol.tally import (
+    CountExchange,
+    MatchedCountMessage,
+    PooledMatchedCounts,
+    exchange_matched_counts,
+    matched_count_message,
+    no_count_exchange,
+)
 from sih141.protocol.verify import (
     HONEST_ABORT_BUDGET,
     AbortReason,
@@ -178,8 +205,10 @@ from sih141.protocol.verify import (
     VerificationAbort,
     VerificationResult,
     enforced_repudiation_bound,
+    guaranteed_pooled_matched_count,
     matched_positions,
     minimum_matched_count,
+    minimum_pooled_matched_count,
     mismatch_positions,
     verify,
     verify_all,
@@ -226,12 +255,21 @@ __all__ = [
     "mismatch_positions",
     "verify",
     "verify_all",
-    # -- Phase C: the matched-count floor, and refusing to score below it ------ #
+    # -- Phase C': the recipients' matched-count exchange ---------------------- #
+    "CountExchange",
+    "MatchedCountMessage",
+    "PooledMatchedCounts",
+    "matched_count_message",
+    "exchange_matched_counts",
+    "no_count_exchange",
+    # -- Phase C: the matched-count floors, and refusing to score below them --- #
     "HONEST_ABORT_BUDGET",
     "AbortReason",
     "VerificationAbort",
     "MatchedSetTooSmall",
     "minimum_matched_count",
+    "minimum_pooled_matched_count",
+    "guaranteed_pooled_matched_count",
     "enforced_repudiation_bound",
     "verify_or_abort",
     # -- orchestration, and the Phase 3 attack seams -------------------------- #

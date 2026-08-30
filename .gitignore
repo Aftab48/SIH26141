@@ -5,3 +5,7 @@ __pycache__/
 venv/
 *.egg-info/
 results/
+
+# Working-journal entry files: the rendered JOURNAL.md is tracked instead.
+# Both are temporary and get dropped at the end of Phase 7.
+journal/entries/

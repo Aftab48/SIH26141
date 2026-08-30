@@ -54,9 +54,9 @@ bound quoted without its hypothesis is not a bound. Numbers are at `DEFAULT_PARA
 | --- | --- | --- |
 | **Unforgeability**, outside adversary | `< 1e−100` | She does not hold a verifier's log. Part of the stated adversary model. |
 | **Unforgeability**, recipient forger (the case that binds) | `1.1e−103` | The symmetrisation exchange reveals only the swapped entries. |
-| **Non-repudiation**, a-priori | **`1.9e−09`** | **Nothing.** The matched-count floor `verify.py` enforces, not an assumption about the signer. |
+| **Non-repudiation**, a-priori | **`1.4e−09`** | **Nothing.** The three matched-count floors `verify.py` enforces, not an assumption about the signer. |
 | **Non-repudiation**, per completed run | `6.9e−10` on a healthy run | **Nothing.** Conditions on the run's own evidence, `M = m_B + m_C`. |
-| Robustness — honest run aborts | `< 1e−9` on a 1% depolarising channel | Standard channel model. The matched-count floor adds `2.5e−31`. |
+| Robustness — honest run aborts | `< 1e−9` on a 1% depolarising channel | Standard channel model. The matched-count floors add `8.0e−31`. |
 
 ### The correction a reader should know about
 
@@ -73,25 +73,45 @@ The mathematics was never wrong; the advertising was. Three things replaced it:
    the observed `M`; every transcript carries it as `repudiation_guarantee` and prints it.
    The averaged form is renamed `averaged_repudiation_bound` and refuses to answer without
    naming its hypothesis.
-2. **A matched-count floor makes an unconditional number possible.** A verifier refuses to
+2. **Matched-count floors make an unconditional number possible.** A verifier refuses to
    score a matched set below `minimum_matched_count` (`36555` here, derived from a Chernoff
-   lower tail at a `2⁻⁶⁴` honest-abort budget — no tuning, no fitting, D4-clean). That
-   forces `M ≥ 2 × 36555` on any run reaching two verdicts, giving `1.9e−09` **with no
-   independence assumption at all** — within a factor of three of the number that used to be
-   published, this time actually earned. Measured: the attack above now produces **0
-   repudiations in 40 runs**, and **0 spurious aborts in 460 honest runs**.
-3. **What is still open is written down.** Without the floor, *no unconditional bound below
-   `1/2` exists* against a log-reading signer, at any key length — that is a proved
-   limitation, not a gap in the analysis. With the per-verifier floor, one route remains: a
-   signer aiming `M` at `2 × m_min` can leave the second verifier below *his* floor while
-   the first accepts (measured 14 of 40 runs). That ends in a **recorded no-verdict**, never
-   a reject verdict, so the bound above stands — but if a deployment counts a no-verdict as
-   a failed transfer, it needs a *pooled* floor and one extra classical message. Priced in
-   `docs/PHASE2.md` §6b-iii. It is not implemented.
+   lower tail at a `2⁻⁶⁴` honest-abort budget — no tuning, no fitting, D4-clean). Measured:
+   the `M = 13` attack above now produces **0 repudiations in 40 runs**, and **0 spurious
+   aborts in 460 honest runs**.
+3. **What was still open was written down, and has since been closed.** The per-verifier
+   floor left one route: a signer aiming the *pooled* count `M` at `2 × m_min` and letting
+   the symmetrisation coins split it leaves the first verifier accepting a signature the
+   second cannot score — no rate deviating anywhere, so no exponent applies. Measured at
+   **78/200** (`L = 360`) and **85/200** (`L = 600`), tending to `1/2`.
 
-Full derivations, the reproduction of the attack, and every measurement are in
-[`docs/PHASE2.md`](docs/PHASE2.md) §6b. The cross-module agreement between the floor and the
-bounds is pinned by `tests/test_protocol_reconciliation.py`.
+### Closing it: one extra classical message
+
+`tally.py` is Phase C′. Bob and Charlie each send the other a single integer — how many
+positions they can score — over the channel they already share for the symmetrisation
+coins. A count, never a log. That buys two rules:
+
+* a **pooled floor** `m_B + m_C ≥ M_min` with `M_min = 74190`, derived from the same
+  `2⁻⁶⁴` budget applied to `M ~ Binomial(2L, 1/3)` — exact by *conservation*, not by
+  independence, since after the exchange the two counts are perfectly dependent. It exceeds
+  `2 × m_min = 73110` by `1080` records, and the margin grows like `√L`, so the aimed-at
+  declaration is refused rather than priced; and
+* a **joint consequence**: a verifier below his own floor takes the other down with him. The
+  pooled floor alone would leave a best response worth `ε^(3−2√2) = 4.9e−04`
+  *independent of key length*; this removes the asymmetric outcome from the outcome space
+  entirely, so "Bob accepted" implies "Charlie reached a verdict".
+
+Result: **`1.4e−09`, unconditional, with nothing left to quote beside it** — and the attack
+measures **0/200** at both key lengths after the change. The price is one message each way,
+an honest-abort cost of `8.0e−31` per run against a `5.4e−20` budget, and one ordering
+change: Bob's verdict is no longer local, since he must forward the declaration and hear
+Charlie's count before he can accept. What remains outside the number is denial of service —
+a signer who starves the evidence base aborts the run jointly, transferring nothing, which
+no threshold defends against and which Alice could equally achieve by not signing.
+
+Full derivations, the reproduction of both attacks, and every measurement are in
+[`docs/PHASE2.md`](docs/PHASE2.md) §6b. The cross-module agreement between the floors and the
+bounds is pinned by `tests/test_protocol_reconciliation.py`, and the pooled law and floor by
+`tests/test_protocol_tally.py`.
 
 ## Roadmap
 
@@ -143,9 +163,11 @@ sih141/protocol/   the QDS protocol (Phase 2)
   symmetrise.py    Phase A′ — the recipients' private exchange, and the reason
                    non-repudiation holds at all
   signature.py     Phase B — the declaration
+  tally.py         Phase C′ — the recipients' matched-count exchange, one integer
+                   each way, and the pooled floor it makes checkable
   verify.py        Phase C — the matched/unmatched split, the accept rule, and the
-                   matched-count floor that makes an unconditional bound possible
-  session.py       orchestration, and the five seams Phase 3 attacks attach to
+                   three matched-count floors that make an unconditional bound possible
+  session.py       orchestration, and the six seams Phase 3 attacks attach to
   analysis.py      closed forms only, no simulation: forgery, repudiation, robustness
 tests/             pytest suite
 docs/              engineering notes per phase

@@ -14,13 +14,16 @@ the *order* of the steps, and the object that remembers what happened:
                                        between themselves (symmetrisation)
         .sign(b)             Phase B   Alice declares k_b over the
                                        authenticated classical channel
+        .exchange_counts()   Phase C'  Bob and Charlie announce to each other
+                                       how many positions each can score,
+                                       one integer each way
         .verify(Party.BOB)   Phase C   Bob scores his own log,  cut at s_a
         .transfer()          Phase C   Bob forwards to Charlie, who scores his
                                        own log, cut at s_v
         .transcript()                  the whole run as one frozen,
                                        JSON-serialisable record
 
-``run(b)`` performs the four calls in that order and returns the transcript.
+``run(b)`` performs the five calls in that order and returns the transcript.
 
 Why Phase A' is inside ``distribute()`` and not a seam of the distributor
 ------------------------------------------------------------------------
@@ -31,6 +34,26 @@ adversary standing in Alice's place can reach: a malicious ``distributor``
 returns records and the session symmetrises whatever it returns. There is a
 separate ``symmetriser`` seam for Phase 3, but it replaces *the recipients'*
 step, not Alice's, and the honest default is the secure one.
+
+Phase C' has exactly the same standing. It is the recipients' own step, on the
+same private channel, and its seam (``count_exchange``) replaces what *they* do,
+never what Alice does. What it moves is one integer each way -- how many
+positions each verifier can score against the declaration -- which is what makes
+the pooled matched-count floor checkable at all: the count every repudiation
+bound is exponential in is ``M = m_B + m_C``, and neither verifier knows it
+alone. Without it a signer who reads both raw logs aims ``M`` at twice the
+per-verifier floor, splits it with the symmetrisation coins, and leaves Bob
+accepting a signature Charlie cannot score, about half the time and at every key
+length. See :mod:`sih141.protocol.tally` and
+:ref:`sih141.protocol.verify <pooled-floor>`.
+
+The price is stated where it belongs, in ``tally``, but one part of it is this
+module's shape: **Bob's verdict is no longer local.** He cannot accept before
+Charlie has reported a count, and Charlie cannot count before he holds the
+declaration, so the declaration reaches Charlie before Bob decides. A deployment
+orders it so that a signature Bob would reject on his own rate is still never
+forwarded; a signature he would accept is simply no longer accepted on his own
+evidence alone.
 
 Why Charlie is in the constructor and not an option
 ---------------------------------------------------
@@ -140,11 +163,20 @@ comparable rather than two different programs.
     read the per-run conditional bound from the observed ``m_B + m_C``, which
     every transcript carries
     (:attr:`~sih141.protocol.verify.VerificationResult.matched_count`).
-    :func:`~sih141.protocol.verify.minimum_matched_count` now refuses to score
-    such a run at all, so any verdict this session emits rests on at least that
-    many matched positions per verifier -- which bounds how far the conditional
-    number can drift from the averaged one, but does not by itself make the
-    averaged one unconditional.
+
+    *It can also aim the total and let the coins split it,* which is the subtler
+    version and the one a per-verifier floor does not catch: a declaration whose
+    pooled matched count is exactly ``2 m_min``, all of it correct, leaves Bob
+    over his floor and Charlie under his about half the time, with no rate
+    deviating anywhere. Phase C'
+    (:meth:`QDSSession.exchange_counts`,
+    :mod:`sih141.protocol.tally`) closes it: the pooled floor refuses the aimed
+    total outright, and a verifier under his own floor takes the other down with
+    him, so "Bob accepts" now implies "Charlie reached a verdict". Every verdict
+    this session emits therefore rests on ``m_R >= m_min`` at *both* verifiers
+    and ``m_B + m_C >= M_min``, which is what
+    :func:`~sih141.protocol.verify.enforced_repudiation_bound` evaluates --
+    unconditionally, and without making the averaged number unconditional.
 
     One further seam-reachable behaviour is plumbing rather than an attack: a
     signer returning a signature for the other bit is refused by
@@ -162,12 +194,12 @@ comparable rather than two different programs.
     and a Phase 4 statistic would have read an attacked run as a clean one.
 
 Everything downstream of the seams is fixed: the matched/unmatched split, the
-matched-count floor, the two thresholds and the accept rule are computed by
-:func:`~sih141.protocol.verify.verify` from the record, the declaration and the
-parameter set alone, so no adversary can reach them. Phase A' is likewise not an
-Alice-side seam; see above.
+three matched-count floors, the two thresholds and the accept rule are computed
+by :func:`~sih141.protocol.verify.verify` from the record, the declaration, the
+counterpart's reported count and the parameter set alone, so no adversary can
+reach them. Phases A' and C' are likewise not Alice-side seams; see above.
 
-A verifier whose matched set falls below that floor reaches **no verdict** --
+A verifier whose evidence falls below one of those floors reaches **no verdict** --
 neither an acceptance nor a rejection. :meth:`QDSSession.run` records it and
 carries on, so a starved declaration costs a verdict rather than the whole run,
 and :class:`SessionTranscript` keeps verdicts and refusals in separate fields
@@ -259,11 +291,19 @@ from sih141.protocol.params import (
 from sih141.protocol.records import RecipientRecord
 from sih141.protocol.signature import Signature, sign
 from sih141.protocol.symmetrise import Symmetriser, symmetrise_records
+from sih141.protocol.tally import (
+    CountExchange,
+    MatchedCountMessage,
+    PooledMatchedCounts,
+    exchange_matched_counts,
+    matched_count_message,
+)
 from sih141.protocol.verify import (
     MatchedSetTooSmall,
     VerificationAbort,
     VerificationResult,
     minimum_matched_count,
+    minimum_pooled_matched_count,
     verify,
 )
 
@@ -522,6 +562,17 @@ class SessionTranscript:
         the transcript deliberately generates nothing, because a random
         identifier would break seed reproducibility and a seed-derived one would
         repeat exactly when a replay does.
+    pooled : PooledMatchedCounts or None, optional
+        What the recipients learned from each other in Phase C'
+        (:mod:`sih141.protocol.tally`): the two matched counts, their total, and
+        the two floors the run was scored under. ``None`` marks a run whose
+        recipients did **not** compare counts -- the pre-pooled variant, which
+        :func:`~sih141.protocol.tally.no_count_exchange` produces and which has
+        no unconditional non-repudiation guarantee below ``1/2``. A separate
+        field from ``results`` and ``aborts`` because it is neither: it is the
+        evidence base all three of them were decided on, and a Phase 5 table
+        that could not see it could not tell an aimed-low declaration from an
+        unlucky one.
 
     See Also
     --------
@@ -551,6 +602,7 @@ class SessionTranscript:
     forwarded_signature: Signature | None = None
     run_id: str | None = None
     aborts: tuple[VerificationAbort, ...] = ()
+    pooled: PooledMatchedCounts | None = None
 
     def __post_init__(self) -> None:
         """Coerce the sequence fields to tuples and check the run hangs together.
@@ -650,6 +702,15 @@ class SessionTranscript:
             seen.add(abort.party)
             _check_abort_against(abort, self.params, self.message_bit)
 
+        if self.pooled is not None:
+            if not isinstance(self.pooled, PooledMatchedCounts):
+                raise TypeError(
+                    f"pooled must be a PooledMatchedCounts or None, got "
+                    f"{type(self.pooled).__name__}; "
+                    f"tally.exchange_matched_counts returns exactly that."
+                )
+            _check_pooled_against(self.pooled, self.params, self.message_bit)
+
     # -- derived views ------------------------------------------------------ #
 
     @property
@@ -695,6 +756,21 @@ class SessionTranscript:
         :attr:`aborted` to tell "no verdict" from "not asked yet".
         """
         return self.bob is not None and self.charlie is not None
+
+    @property
+    def counts_exchanged(self) -> bool:
+        """bool: ``True`` iff the recipients ran Phase C'.
+
+        The pooled matched-count floor is checkable only after Bob and Charlie
+        have compared counts (:mod:`sih141.protocol.tally`), so this says which
+        rule the run's verdicts were reached under. ``False`` marks a run of the
+        *pre-pooled* variant -- one made with
+        :func:`sih141.protocol.tally.no_count_exchange`, which Phase 3 uses to
+        demonstrate the split-coin repudiation route. Such a run enforces the
+        per-verifier floor alone, has no unconditional non-repudiation guarantee
+        below ``1/2``, and :meth:`summary` says so out loud.
+        """
+        return self.pooled is not None
 
     @property
     def symmetrised(self) -> bool:
@@ -805,6 +881,15 @@ class SessionTranscript:
         * the recipients **symmetrised** (:attr:`symmetrised`), because the
           coins are the only randomness the bound uses and without them there
           are none.
+
+        Note what is *not* on that list: :attr:`counts_exchanged`. The per-run
+        bound is a statement about the ``M`` a run produced, and a run produces
+        one whether or not the recipients compared notes; what the exchange
+        changes is which ``M`` values were *reachable*, which is the a-priori
+        statement :func:`~sih141.protocol.verify.enforced_repudiation_bound`
+        makes. On a run that did exchange, this agrees with
+        :attr:`sih141.protocol.tally.PooledMatchedCounts.pooled` by
+        construction.
         """
         if self.forwarding_altered_signature or not self.symmetrised:
             return None
@@ -982,11 +1067,19 @@ class SessionTranscript:
                 "UNSYMMETRISED: the recipients did not exchange their copies, "
                 "so this run has no non-repudiation guarantee at any L."
             )
+        if not self.counts_exchanged:
+            lines.append(
+                "UNPOOLED: the recipients did not compare matched counts, so "
+                "only the per-verifier floor applied and a signer who splits "
+                "the evidence base repudiates at about 1/2 at any L."
+            )
         if self.forwarding_altered_signature:
             lines.append(
                 "FORWARDING ALTERED THE DECLARATION: Charlie scored a "
                 "different key from the one Bob was given."
             )
+        if self.pooled is not None:
+            lines.append(self.pooled.summary())
         lines.extend(result.summary() for result in self.results)
         lines.extend(abort.summary() for abort in self.aborts)
         guarantee = self.repudiation_guarantee
@@ -1029,7 +1122,8 @@ class SessionTranscript:
         -------
         dict
             Keys ``"params"``, ``"message_bit"``, ``"signature"``, ``"records"``,
-            ``"results"``, ``"aborts"``, ``"forwarded_signature"`` and
+            ``"results"``, ``"aborts"``, ``"pooled"``,
+            ``"forwarded_signature"`` and
             ``"run_id"``. Every leaf is an :class:`int`, :class:`float`,
             :class:`bool`, :class:`str` or a :class:`enum.StrEnum` member (which
             *is* a string), so the result passes to :func:`json.dumps`
@@ -1054,6 +1148,7 @@ class SessionTranscript:
             "records": [record.to_dict() for record in self.records],
             "results": [result.to_dict() for result in self.results],
             "aborts": [abort.to_dict() for abort in self.aborts],
+            "pooled": None if self.pooled is None else self.pooled.to_dict(),
             "forwarded_signature": (
                 None
                 if self.forwarded_signature is None
@@ -1070,10 +1165,11 @@ class SessionTranscript:
         ----------
         data : mapping
             Must contain ``"params"``, ``"message_bit"``, ``"signature"``,
-            ``"records"`` and ``"results"``. ``"forwarded_signature"`` and
-            ``"run_id"`` are optional and default to ``None``; ``"aborts"`` is
-            optional and defaults to empty, so a transcript written before the
-            matched-count abort rule existed still restores.
+            ``"records"`` and ``"results"``. ``"forwarded_signature"``,
+            ``"run_id"`` and ``"pooled"`` are optional and default to ``None``;
+            ``"aborts"`` is optional and defaults to empty, so a transcript
+            written before the matched-count abort rule or the count exchange
+            existed still restores.
 
         Returns
         -------
@@ -1113,6 +1209,14 @@ class SessionTranscript:
             aborts=tuple(
                 VerificationAbort.from_dict(item)
                 for item in data.get("aborts", ())
+            ),
+            # Optional for the same reason: a transcript written before the
+            # count exchange existed restores as one whose recipients did not
+            # compare counts, which is exactly what it was.
+            pooled=(
+                None
+                if data.get("pooled") is None
+                else PooledMatchedCounts.from_dict(data["pooled"])
             ),
         )
 
@@ -1187,6 +1291,13 @@ class QDSSession:
     signer : Signer or None, optional
         Keyword-only. The Phase B seam. ``None`` selects
         :func:`honest_signer`.
+    count_exchange : CountExchange or None, optional
+        Keyword-only. The Phase C' seam -- again the *recipients'* step, not
+        Alice's. ``None`` selects
+        :func:`~sih141.protocol.tally.exchange_matched_counts`. Phase 3 passes
+        :func:`~sih141.protocol.tally.no_count_exchange` to run the pre-pooled
+        variant and measure the split-coin repudiation route the exchange
+        closes.
     forwarder : Forwarder or None, optional
         Keyword-only. The Bob-to-Charlie hop. ``None`` selects
         :func:`honest_forwarder`, the identity.
@@ -1238,6 +1349,7 @@ class QDSSession:
         distributor: Distributor | None = None,
         symmetriser: Symmetriser | None = None,
         signer: Signer | None = None,
+        count_exchange: CountExchange | None = None,
         forwarder: Forwarder | None = None,
         run_id: str | None = None,
         rng: np.random.Generator | None = None,
@@ -1270,6 +1382,12 @@ class QDSSession:
             signer, "signer", "a callable with the signature of honest_signer"
         )
         _check_seam(
+            count_exchange,
+            "count_exchange",
+            "a callable with the signature of exchange_matched_counts; pass "
+            "no_count_exchange to run the pre-pooled variant deliberately",
+        )
+        _check_seam(
             forwarder,
             "forwarder",
             "a callable with the signature of honest_forwarder",
@@ -1290,6 +1408,11 @@ class QDSSession:
             symmetrise_records if symmetriser is None else symmetriser
         )
         self._signer: Signer = honest_signer if signer is None else signer
+        self._count_exchange: CountExchange = (
+            exchange_matched_counts
+            if count_exchange is None
+            else count_exchange
+        )
         self._forwarder: Forwarder = (
             honest_forwarder if forwarder is None else forwarder
         )
@@ -1301,6 +1424,8 @@ class QDSSession:
         self._records: dict[int, dict[Party, RecipientRecord]] = {}
         self._signature: Signature | None = None
         self._forwarded: Signature | None = None
+        self._pooled: PooledMatchedCounts | None = None
+        self._counts_compared = False
         self._results: dict[Party, VerificationResult] = {}
         self._aborts: dict[Party, VerificationAbort] = {}
 
@@ -1439,12 +1564,32 @@ class QDSSession:
     def aborts(self) -> dict[Party, VerificationAbort]:
         """dict: Verifiers who were asked and reached no verdict, keyed by party.
 
-        A verifier lands here instead of in :attr:`results` when the declaration
-        left him a matched set below
-        :func:`~sih141.protocol.verify.minimum_matched_count`. Empty on every
-        healthy run, and a party is never in both mappings.
+        A verifier lands here instead of in :attr:`results` when the evidence
+        base failed one of the matched-count floors -- his own, the pooled one,
+        or his counterpart's. Empty on every healthy run, and a party is never
+        in both mappings.
         """
         return dict(self._aborts)
+
+    @property
+    def pooled(self) -> PooledMatchedCounts | None:
+        """PooledMatchedCounts or None: what Phase C' produced.
+
+        ``None`` before :meth:`exchange_counts` has run, and also after it on a
+        session wired with
+        :func:`~sih141.protocol.tally.no_count_exchange`. Read
+        :attr:`counts_compared` to tell those two apart.
+        """
+        return self._pooled
+
+    @property
+    def counts_compared(self) -> bool:
+        """bool: ``True`` once Phase C' has been attempted.
+
+        Distinct from ``pooled is not None``, which is also ``False`` when the
+        seam deliberately skipped the comparison.
+        """
+        return self._counts_compared
 
     # -- Phase A ------------------------------------------------------------ #
 
@@ -1694,6 +1839,102 @@ class QDSSession:
         self._signature = signature
         return signature
 
+    # -- Phase C' ----------------------------------------------------------- #
+
+    def exchange_counts(self) -> PooledMatchedCounts | None:
+        """Run Phase C': Bob and Charlie compare how much evidence each holds.
+
+        Each recipient computes :func:`~sih141.protocol.tally.matched_count_message`
+        from **his own** post-symmetrisation log against the declaration, the two
+        messages cross, and the ``count_exchange`` seam combines them into the
+        :class:`~sih141.protocol.tally.PooledMatchedCounts` both of them end up
+        holding. Nothing but two integers moves between the verifiers here; the
+        reason that matters is in :mod:`sih141.protocol.tally`.
+
+        Idempotent, and called automatically by :meth:`verify` the first time a
+        verdict is asked for, so a caller who follows the older
+        ``distribute / sign / verify / transfer`` sequence still gets the pooled
+        rule. :meth:`run` calls it explicitly, in phase order, because the step
+        is a message rather than an implementation detail.
+
+        **Which declaration is counted.** The one Alice sent Bob -- the
+        declaration Bob forwards to Charlie in order to *ask* for a count.
+        Charlie therefore holds it before Bob's verdict is final, which is the
+        real ordering cost of the pooled rule: Bob's acceptance is no longer
+        local. If the ``forwarder`` seam later hands Charlie a *different*
+        declaration, the counts pooled here are not the counts Charlie scored,
+        the run is not one repudiation experiment but two, and
+        :attr:`SessionTranscript.pooled_matched_count` already returns ``None``
+        for it (:attr:`SessionTranscript.forwarding_altered_signature`).
+
+        Returns
+        -------
+        PooledMatchedCounts or None
+            ``None`` when the seam declined to compare -- which is what
+            :func:`~sih141.protocol.tally.no_count_exchange` does, and what a
+            Phase 3 experiment measuring the split-coin route wants.
+
+        Raises
+        ------
+        ValueError
+            If :meth:`sign` has not run: there is no declaration to count
+            against, and counting against a key nobody declared would pool two
+            numbers about nothing.
+        TypeError
+            If the ``count_exchange`` seam returned something that is neither a
+            :class:`~sih141.protocol.tally.PooledMatchedCounts` nor ``None``.
+
+        Notes
+        -----
+        Consumes no randomness (D3), so a session with the exchange and one
+        without draw the identical generator sequence and stay comparable
+        position by position.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from sih141.protocol.params import ProtocolParams
+        >>> from sih141.protocol.session import QDSSession
+        >>> session = QDSSession(
+        ...     ProtocolParams(key_length=600), rng=np.random.default_rng(4)
+        ... )
+        >>> _ = session.distribute()
+        >>> _ = session.sign(0)
+        >>> pooled = session.exchange_counts()
+        >>> pooled.pooled == pooled.bob_count + pooled.charlie_count
+        True
+        >>> pooled.meets_every_floor
+        True
+        """
+        if self._signature is None:
+            raise self._not_yet(
+                "there is no declaration for the recipients to count against",
+                "session.sign(message_bit)",
+            )
+        if self._counts_compared:
+            return self._pooled
+
+        bit = self._signature.message_bit
+        # Each message is built from that recipient's own log and nothing else:
+        # the count is local, the comparison is not.
+        messages: dict[Party, MatchedCountMessage] = {
+            party: matched_count_message(
+                self._signature, self._records[bit][party], self._params
+            )
+            for party in VERIFIERS
+        }
+        pooled = self._count_exchange(messages, self._params)
+        if pooled is not None and not isinstance(pooled, PooledMatchedCounts):
+            raise TypeError(
+                f"the count_exchange seam must return a PooledMatchedCounts or "
+                f"None, got {type(pooled).__name__}. Returning None means the "
+                f"recipients did not compare counts, which is what "
+                f"no_count_exchange does; anything else is a wiring error."
+            )
+        self._pooled = pooled
+        self._counts_compared = True
+        return pooled
+
     # -- Phase C ------------------------------------------------------------ #
 
     def verify(self, party: Party | str = Party.BOB) -> VerificationResult:
@@ -1724,14 +1965,16 @@ class QDSSession:
             :attr:`~sih141.protocol.params.Party.ALICE`, who verifies nothing;
             or for any reason :func:`sih141.protocol.verify.verify` raises.
         MatchedSetTooSmall
-            A :class:`ValueError` subclass, if the declaration left this
-            verifier a matched set below
-            :func:`~sih141.protocol.verify.minimum_matched_count`. The
-            corresponding :class:`~sih141.protocol.verify.VerificationAbort` is
-            recorded in :attr:`aborts` **before** the exception propagates, so a
-            caller that catches it -- :meth:`run` does -- still gets the run in
-            the transcript. It is not a rejection and must not be counted as
-            one.
+            A :class:`ValueError` subclass, if the evidence base failed one of
+            the matched-count floors: this verifier's own
+            (:func:`~sih141.protocol.verify.minimum_matched_count`), the pooled
+            one (:func:`~sih141.protocol.verify.minimum_pooled_matched_count`),
+            or the other verifier's own -- which takes this one down with it,
+            because the floor's consequence is joint. The corresponding
+            :class:`~sih141.protocol.verify.VerificationAbort` is recorded in
+            :attr:`aborts` **before** the exception propagates, so a caller that
+            catches it -- :meth:`run` does -- still gets the run in the
+            transcript. It is not a rejection and must not be counted as one.
         TypeError
             If ``party`` is neither a :class:`~sih141.protocol.params.Party` nor
             a string.
@@ -1761,9 +2004,20 @@ class QDSSession:
             # Charlie scores what the forwarding hop actually delivered, which
             # on an honest run is the same object Bob scored.
             declaration = self._forwarded
+        # Phase C' if it has not happened yet: a verifier applies the pooled
+        # floor, so he needs the number the other one sent him. Lazily here
+        # rather than only in run(), so that the older
+        # distribute/sign/verify/transfer sequence gets the pooled rule too.
+        pooled = self.exchange_counts()
+        counterpart = None if pooled is None else pooled.counterpart_of(resolved)
         try:
             # The module-level verify(), not this method.
-            result = verify(declaration, record, self._params)
+            result = verify(
+                declaration,
+                record,
+                self._params,
+                counterpart_matched=counterpart,
+            )
         except MatchedSetTooSmall as too_small:
             # Recorded *before* it propagates, so that run() -- and any harness
             # that catches it -- reports a no-verdict outcome instead of losing
@@ -1864,9 +2118,9 @@ class QDSSession:
     def run(self, message_bit: int) -> SessionTranscript:
         """Execute the entire protocol for one message bit and report.
 
-        Equivalent to :meth:`distribute`, :meth:`sign`, ``verify(Party.BOB)``,
-        :meth:`transfer`, :meth:`transcript` -- in that order, which is the
-        order the protocol fixes.
+        Equivalent to :meth:`distribute`, :meth:`sign`, :meth:`exchange_counts`,
+        ``verify(Party.BOB)``, :meth:`transfer`, :meth:`transcript` -- in that
+        order, which is the order the protocol fixes.
 
         A verifier who cannot score the declaration does **not** end the run.
         :exc:`~sih141.protocol.verify.MatchedSetTooSmall` is caught at each of
@@ -1912,6 +2166,11 @@ class QDSSession:
         """
         self.distribute()
         self.sign(message_bit)
+        # Phase C', explicitly and in order: the recipients compare matched
+        # counts before either of them reaches a verdict. verify() would trigger
+        # it anyway, but the step is one classical message each way and belongs
+        # in the list of phases rather than inside one of them.
+        self.exchange_counts()
         # Both Phase C steps record their own refusal on the session before
         # raising, so catching MatchedSetTooSmall here loses nothing: it turns
         # "this verifier reached no verdict" from a lost run into a line in the
@@ -1972,6 +2231,7 @@ class QDSSession:
             records=records,
             results=tuple(self._results.values()),
             aborts=tuple(self._aborts.values()),
+            pooled=self._pooled,
             # None whenever the hop was the identity, so an honest transcript
             # carries one declaration and compares equal across runs.
             forwarded_signature=(
@@ -2128,6 +2388,73 @@ def _check_abort_against(
             f"{abort.party.value}'s refusal is for message bit "
             f"{abort.message_bit} but this transcript is tagged with bit "
             f"{message_bit}. The bit selects which distribution was scored."
+        )
+
+
+def _check_pooled_against(
+    pooled: PooledMatchedCounts,
+    params: ProtocolParams,
+    message_bit: int,
+) -> None:
+    """Check one count exchange against the parameters the transcript claims.
+
+    The same persistence-boundary argument as :func:`_check_result_against` and
+    :func:`_check_abort_against`.
+    :class:`~sih141.protocol.tally.PooledMatchedCounts` enforces only its own
+    internal consistency, so an exchange quoting floors nobody applied survives
+    a JSON round trip unchallenged -- and floors are exactly the field an
+    editor would reach for to make a starved run look scored. Both are
+    re-derived from ``params`` and insisted on.
+
+    Parameters
+    ----------
+    pooled : PooledMatchedCounts
+        The recorded exchange.
+    params : ProtocolParams
+        The parameter set the transcript is tagged with.
+    message_bit : int
+        The bit the transcript is tagged with.
+
+    Raises
+    ------
+    ValueError
+        If the exchange's key length, either floor, or its message bit
+        disagrees with the transcript's own parameters.
+    """
+    if pooled.key_length != params.key_length:
+        raise ValueError(
+            f"the recorded count exchange reports key_length "
+            f"{pooled.key_length} but this transcript's parameters say "
+            f"{params.key_length}. Both floors are derived from the key "
+            f"length, so the two cannot be from the same run."
+        )
+    for name, recorded, expected in (
+        (
+            "per-verifier",
+            pooled.minimum_matched,
+            minimum_matched_count(params),
+        ),
+        (
+            "pooled",
+            pooled.minimum_pooled,
+            minimum_pooled_matched_count(params),
+        ),
+    ):
+        if recorded != expected:
+            raise ValueError(
+                f"the recorded count exchange quotes a {name} matched-count "
+                f"floor of {recorded} but this transcript's parameters put it "
+                f"at {expected} (L={params.key_length}, "
+                f"|B|={len(params.bases)}). A floor is derived from the "
+                f"parameter set, never a free field: an exchange carrying a "
+                f"floor nobody applied would make a run that failed the rule "
+                f"look like one that passed it."
+            )
+    if pooled.message_bit != message_bit:
+        raise ValueError(
+            f"the recorded count exchange is for message bit "
+            f"{pooled.message_bit} but this transcript is tagged with bit "
+            f"{message_bit}. The bit selects which distribution was counted."
         )
 
 

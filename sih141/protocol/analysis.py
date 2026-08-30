@@ -112,17 +112,20 @@ The empty matched set, and why it counts as "not accepted"
 A verifier may set the bar higher than ``m >= 1``
     A matched-count *floor* -- score only when ``m >= m_min`` for some
     ``m_min > 1``, abort otherwise -- is a strictly stronger rule, and
-    :mod:`sih141.protocol.verify` applies one as this is written. Every function
-    here uses the ``m >= 1`` convention, which lands as follows. Forgery and
-    recipient-forgery numbers are then *over*-estimates, since the forger must
-    clear a bar this module does not model: still bounds, merely looser.
-    :func:`honest_abort_probability` is an *under*-estimate by the floor's own
-    budget, which is ``1e-31`` at the shipped floor against an abort probability
-    of order ``1e-9``: negligible, but real, and additive.
-    :func:`repudiation_bound` is unaffected, because it conditions on the
-    observed counts and its Bob-accepts branch only shrinks. The floor's *use* as
-    a security control is section 4b-iii, which also states the one repudiation
-    route a per-verifier floor opens rather than closes.
+    :mod:`sih141.protocol.verify` applies three of them as this is written: each
+    verifier's own, the *pooled* ``m_B + m_C >= M_min``, and the requirement
+    that the other verifier cleared his. Every function here uses the ``m >= 1``
+    convention, which lands as follows. Forgery and recipient-forgery numbers
+    are then *over*-estimates, since the forger must clear bars this module does
+    not model: still bounds, merely looser.
+    :func:`honest_abort_probability` is an *under*-estimate by the floors' own
+    budget, which is ``8e-31`` for the three of them together at the shipped
+    parameters against an abort probability of order ``1e-9``: negligible, but
+    real, and additive. :func:`repudiation_bound` is unaffected, because it
+    conditions on the observed counts and its Bob-accepts branch only shrinks.
+    The floors' *use* as a security control is sections 4b-iii and 4b-iv, which
+    also state the repudiation route a per-verifier floor alone opens rather
+    than closes, and what closing it costs.
 
 2. The honest rate
 ------------------
@@ -345,8 +348,9 @@ family of Alice strategies (4a). One is an upper bound that holds whatever Alice
 does, evaluated at the matched count a run actually produced (4b-i). One is that
 bound averaged over the matched count, which is a smaller and much more quotable
 number and is true only under (IND) (4b-ii). Only 4b-i is a guarantee with no
-hypothesis attached; 4b-iii says what an unconditional a-priori guarantee would
-cost.
+hypothesis attached; 4b-iii says what an unconditional a-priori guarantee costs
+and what a *local* abort rule alone still leaves open, and 4b-iv is the pooled
+rule that closes it and the number the shipped code earns.
 
 *4a. The symmetric family, exactly.* Suppose Alice induces the **same**
 per-matched-position mismatch probability ``q`` on both recipients' copies --
@@ -516,51 +520,125 @@ which is :func:`repudiation_bound_with_abort`. It is a *local* rule -- Bob knows
 standard deviations below ``E[m_B] = 38400``) costs an honest run ``2.5e-31`` in
 extra abort probability (:func:`matched_shortfall_probability`) and buys a
 genuine unconditional ``4.4e-5``. Requiring *both* verifiers to have cleared it
--- which is what a reject verdict from Charlie means -- puts ``M >= 2 m_min``
-and buys ``1.9e-9``: see
-:func:`~sih141.protocol.verify.enforced_repudiation_bound`, which is that
-statement wired to the floor the code applies.
+puts ``M >= 2 m_min`` and buys ``1.9e-9``.
 
-**Exactly which event that bounds.** Bob accepts, and Charlie *reaches a verdict
-of reject* -- or holds no matched record at all, which section 4b-i showed is
-inside the same Hoeffding event. It does **not** cover a third outcome that the
-floor itself creates: Charlie holding a matched set that is non-empty but below
-*his* floor, on which he returns no verdict. Whether that is a repudiation
-success is a convention, and the two conventions differ sharply:
+**A local floor alone does not finish the job, and here is the hole it leaves.**
+What ``exp(-2 m_min gap^2/8)`` bounds is: Bob accepts, and Charlie *reaches a
+verdict of reject* -- or holds no matched record at all, which section 4b-i
+showed is inside the same Hoeffding event. It does **not** cover a third outcome
+that the floor itself creates: Charlie holding a matched set that is non-empty
+but below *his* floor, on which he returns no verdict. Read as a transfer failure
+counted against the scheme, that is a route the exponent does not close. A
+log-reading Alice aims ``M`` at ``2 m_min`` exactly, using only clean matched
+records: Bob accepts whenever ``m_B >= m_min``, Charlie is below his floor
+whenever ``m_C < m_min``, and one fair coin per record decides the split of a
+total whose mean is ``M/2 = m_min``. She wins with probability
 
-* As a **no-verdict abort** (which is how :mod:`sih141.protocol.verify` frames
-  it, with its own reason code), the bound above is complete. The run is visibly
-  anomalous -- an honest run trips the floor with probability ``~1e-31`` at the
-  shipped parameters -- and Bob has not transferred anything he can be told he
-  should have.
-* As a **transfer failure counted against the scheme**, the floor opens a route
-  the exponent does not close. A log-reading Alice aims ``M`` at ``2 m_min``
-  exactly, using only clean matched records: Bob accepts whenever
-  ``m_B >= m_min``, Charlie is below his floor whenever ``m_C < m_min``, and one
-  fair coin per record decides the split of a total whose mean is
-  ``M/2 = m_min``. She wins with probability ``~1/2``. The exponent is
-  irrelevant here because nothing about the *rate* is being deviated -- only the
-  count is.
+.. code-block:: text
 
-Closing the second reading needs the verifiers to compare counts. With a pooled
-floor ``m_B + m_C >= M_min`` on top of the per-verifier one, Charlie's
-below-floor abort demands ``m_C < m_min`` against a mean of ``M/2 >= M_min/2``,
-which Hoeffding bounds by ``exp(-2 (M_min/2 - m_min)^2 / M_min)``, worst at
-``M = M_min``. At :data:`~sih141.protocol.params.DEFAULT_PARAMS` with
-``m_min = 36555`` and ``M_min = 75000``: repudiation ``1.1e-9``, the abort route
-``4.6e-11``, honest cost ``7.8e-16``. That is an unconditional total of about
-``1.2e-9`` -- within a factor of two of the figure that used to be published as
-unconditional, and this time actually unconditional. It costs one extra classical
-message, because ``m_B + m_C`` is not local to either verifier.
+    (1 - P[Bin(2 m_min, 1/2) = m_min]) / 2   ->   1/2      as m_min grows
 
-**What is implemented.** As this is written :mod:`sih141.protocol.verify`
-enforces a per-verifier floor (``minimum_matched_count``, ``36555`` at the
-shipped defaults), which is the rule this function prices: ``4.4e-5``,
-unconditional, for the first reading above. There is no pooled comparison, so the
-second reading is not covered by anything. This module cannot check either --
-``analysis`` depends only on ``params`` and never imports ``verify`` -- so pass
-the floor the deployment actually enforces and read the result as the statement
-above, not as a blanket guarantee.
+-- ``0.43`` at ``L = 360``, ``0.47`` at ``L = 600``, ``0.4985`` at
+:data:`~sih141.protocol.params.DEFAULT_PARAMS`. The exponent is irrelevant
+because nothing about the *rate* is being deviated; only the count is. Measured
+through the shipped seams with the per-verifier floor alone: ``78/200`` at
+``L = 360`` and ``85/200`` at ``L = 600``.
+
+.. _pooled-floor-analysis:
+
+**4b-iv. The pooled floor, which is what closes it.** The quantity the bound is
+exponential in is ``M = m_B + m_C``, and neither verifier knows it. So they
+exchange it: one integer each way over the channel they already share for the
+symmetrisation coins (:mod:`sih141.protocol.tally`). Two rules ride on that one
+message, and they do different jobs.
+
+*The pooled floor itself.* ``M >= M_min``, with ``M_min`` derived exactly as
+``m_min`` was, from the same ``eps = 2**-64`` budget applied to the pooled law:
+
+.. code-block:: text
+
+    M ~ Binomial(2L, 1/n)          exactly, and not by independence
+    d      = sqrt(2 ln(1/eps) n / (2L))
+    M_min  = ceil((1 - d) 2L/n)    = 74190 at DEFAULT_PARAMS
+
+The law needs a word, because the obvious derivation of it is invalid. After the
+symmetrisation exchange ``m_B`` and ``m_C`` are **not** independent -- given the
+records, ``m_C = M - m_B`` exactly -- so convolving the two marginals proves
+nothing even though it happens to give the right answer. What makes the law exact
+is *conservation*: the coins re-assign a fixed multiset of ``2L`` entries whose
+bases were drawn i.i.d. uniform, so ``M`` is a sum of ``2L`` independent
+indicators and the coins cannot move it at all.
+
+The floor is worth having because it strictly exceeds the total the attack aims
+at. Writing ``A = sqrt(2 mu ln(1/eps))`` with ``mu = L/n``,
+
+.. code-block:: text
+
+    m_min = mu - A         M_min = 2 mu - sqrt(2) A
+    M_min - 2 m_min = (2 - sqrt 2) A ~ 0.586 A > 0,  growing like sqrt(L)
+
+``1080`` records at :data:`~sih141.protocol.params.DEFAULT_PARAMS`, ``78`` at
+``L = 600``, and positive at every ``L >= 140``. A declaration aimed at
+``2 m_min`` is therefore refused outright rather than priced.
+
+*The joint consequence, which the same message also buys.* The pooled floor alone
+would not be enough, and it is worth being exact about why, because the failure
+is invisible in the exponent. Against a pooled floor Alice simply re-aims at
+``M = M_min`` and hopes the coins leave Charlie under his own floor: a deviation
+of ``M_min/2 - m_min = (1 - sqrt2/2) A`` out of ``M_min ~ 2 mu`` fair coins, so
+
+.. code-block:: text
+
+    P <= exp(-2 (M_min/2 - m_min)^2 / M_min)  ->  eps ** (3 - 2 sqrt 2)
+                                              =  4.9e-4       (exact tail 4.8e-5)
+
+**independent of ``L``**: the deviation grows like ``sqrt(L)`` and so does the
+noise. No key length closes it, and no choice of the two floors inside the
+``eps`` budget closes it either, because the margin ``M_min/2 - m_min`` is
+capped by that same budget. What closes it is making the *consequence* of the
+per-verifier floor joint: a verifier below his own floor takes the other down
+with him (:attr:`~sih141.protocol.verify.AbortReason.COUNTERPART_BELOW_FLOOR`).
+Then "Bob accepts" implies "Charlie reached a verdict", the third outcome is not
+in the outcome space at all, and the failure space is exhausted by the two
+branches 4b-i already bounds.
+
+**What is implemented, and what it is worth.**
+:mod:`sih141.protocol.verify` applies all three floors -- ``m_B >= m_min``,
+``m_C >= m_min``, ``m_B + m_C >= M_min`` -- so a verdict implies
+``M >= max(2 m_min, M_min)`` and
+
+.. code-block:: text
+
+    P(repudiation) <= exp(-max(2 m_min, M_min) gap^2 / 8) = 1.41e-9
+
+at :data:`~sih141.protocol.params.DEFAULT_PARAMS`, for every Alice strategy,
+under both readings of the third outcome, with nothing left to quote beside it.
+That is :func:`~sih141.protocol.verify.enforced_repudiation_bound`. The honest
+cost is three exact binomial lower tails, ``2.5e-31 + 2.5e-31 + 2.9e-31 =
+8.0e-31`` at those parameters, against a per-check budget of ``5.4e-20``.
+
+This module cannot check any of it -- ``analysis`` depends only on ``params`` and
+never imports ``verify`` -- so :func:`repudiation_bound_with_abort` takes the
+floor as an argument, and the caller is responsible for passing one the
+deployment actually enforces.
+
+**What remains outside the number, named rather than left implicit.** Three
+things, none of them a repudiation:
+
+* *Denial of service.* A signer who starves the evidence base makes the run abort
+  jointly. Nothing is transferred and Bob holds no signature he can be told he
+  should have forwarded. No threshold defends against it -- Alice can equally
+  decline to sign -- and section 5 says the same of the honest-abort numbers.
+* *A recipient forcing an abort.* The pooled rule lets either verifier take the
+  run down by reporting a low count. That is the same availability question: a
+  recipient could always refuse to participate, and a false report can only
+  withhold an acceptance, never manufacture one, since every acceptance still
+  requires the accepting verifier's own rate to clear his own threshold on his
+  own log.
+* *The ordering cost.* Bob cannot accept before Charlie has reported, so the
+  declaration reaches Charlie before Bob's verdict is final. Bob's verdict is no
+  longer local. That is a change to the protocol's shape, not to its arithmetic,
+  and :mod:`sih141.protocol.tally` states it in those terms.
 
 *The older in-model bound* -- split at the midpoint, apply Hoeffding to whichever
 of the two verifiers must deviate, optionally sharpen to relative entropy --
@@ -686,12 +764,15 @@ functions for the short key lengths where a cross-check against simulation is
 affordable. That is the regime ``tests/test_protocol_analysis.py`` works in.
 :func:`matched_shortfall_probability` is ``O(L)`` and also cheap.
 
-A report that has to print one repudiation number *before* a run exists has three
-choices and no fourth: :func:`repudiation_bound_with_abort` at a floor the
-verifier actually enforces (nothing in this package enforces one yet),
+A report that has to print one repudiation number *before* a run exists should
+print :func:`~sih141.protocol.verify.enforced_repudiation_bound` --
+:func:`repudiation_bound_with_abort` evaluated at the pooled floor the shipped
+verifier really applies, ``1.41e-9`` at
+:data:`~sih141.protocol.params.DEFAULT_PARAMS`. The alternatives are
 :func:`averaged_repudiation_bound` with (IND) printed beside it, or the honest
-``1/2`` of section 4b-iii. Printing the averaged figure alone is the specific
-mistake this module now refuses to make convenient.
+``1/2`` of section 4b-iii for a deployment that enforces no floor at all.
+Printing the averaged figure alone is the specific mistake this module refuses to
+make convenient.
 
 All summation is done in log space with a max-shifted exponential sum, so
 probabilities far below ``1e-308`` underflow to ``0.0`` only at the final
@@ -2504,10 +2585,11 @@ def averaged_repudiation_bound(
             "the strategy in section 4b-ii pins M = 13 at every L and repudiates "
             "with probability 1/2. Use repudiation_bound(params, "
             "matched_records=<observed m_B + m_C>) for the per-run guarantee, or "
-            "repudiation_bound_with_abort(params, minimum_matched_records=...) "
-            "for an a-priori one, evaluated at the matched-count floor your "
-            "verifier actually enforces and read with the event it covers "
-            "(section 4b-iii) rather than as a blanket number."
+            "verify.enforced_repudiation_bound(params) for the a-priori one the "
+            "shipped floors earn. repudiation_bound_with_abort(params, "
+            "minimum_matched_records=...) is the same expression at a floor you "
+            "name, and must be read with the event it covers (sections 4b-iii "
+            "and 4b-iv) rather than as a blanket number."
         )
     exponent = checked.gap**2 / 8.0
     coin_term = _averaged_exponential_bound(
@@ -2544,32 +2626,33 @@ def repudiation_bound_with_abort(
     needs no extra communication, since Bob knows his own count. A **pooled** one
     -- abort unless ``m_B + m_C >= M_min`` -- is stronger for the same standard
     deviation, because the pooled count is twice as large, but costs one extra
-    classical message between the verifiers. Either way the argument here is the
-    floor on ``M``, so pass whichever floor the rule guarantees.
+    classical message between the verifiers
+    (:mod:`sih141.protocol.tally`). Either way the argument here is the floor on
+    ``M``, so pass whichever floor the rule guarantees.
 
     **Read the event carefully.** What is bounded is: Bob accepts, and Charlie
     either reaches a verdict of *reject* or holds no matched record at all. A
-    floor applied at Charlie as well creates a third outcome -- a non-empty
-    matched set below his floor, on which he returns no verdict -- and this
-    expression does not cover it. Section 4b-iii gives the attack that reading
-    admits (a log-reading Alice aims ``M`` at ``2 m_min`` and splits the coins,
-    winning with probability ``~1/2``) and the pooled floor that closes it. This
-    is not a subtlety that can be deferred: it is the difference between a
-    guarantee and a guarantee-shaped number.
+    per-verifier floor applied at Charlie as well creates a third outcome -- a
+    non-empty matched set below his floor, on which he returns no verdict -- and
+    this expression does not cover it. Section 4b-iii gives the attack that
+    outcome admits (a log-reading Alice aims ``M`` at ``2 m_min`` and splits the
+    coins, winning with probability ``~1/2``, measured ``85/200`` at
+    ``L = 600``). Whether this function's number is a guarantee or a
+    guarantee-shaped one therefore depends entirely on what the deployment does
+    about that outcome, and section 4b-iv gives the two rules that close it: the
+    pooled floor, and making the per-verifier floor's consequence *joint* so
+    that a verifier below his own floor takes the other down with him.
 
-    As this is written :mod:`sih141.protocol.verify` enforces a per-verifier
-    floor (:func:`~sih141.protocol.verify.minimum_matched_count`, ``36555`` at
-    :data:`~sih141.protocol.params.DEFAULT_PARAMS`, framed there as a no-verdict
-    abort rather than a rejection) and no pooled comparison. This module cannot
-    check that -- ``analysis`` depends only on ``params`` -- so the floor is an
-    argument, and the caller is responsible for passing one the deployment
-    actually enforces. **Rather than choose one, call
+    :mod:`sih141.protocol.verify` applies both, so on the shipped code "Bob
+    accepts" implies "Charlie reached a verdict" and the third outcome does not
+    exist. This module cannot check that -- ``analysis`` depends only on
+    ``params`` -- so the floor is an argument, and the caller is responsible for
+    passing one the deployment actually enforces. **Rather than choose one, call
     :func:`~sih141.protocol.verify.enforced_repudiation_bound`**, which reads
-    the shipped floor and evaluates this function at ``2 m_min`` -- both
-    verifiers must clear the floor to reach a verdict, so a *reject verdict*
-    from Charlie means ``M >= 2 m_min``. That is ``1.9e-09`` at the shipped
-    defaults, and it is the only a-priori repudiation figure this package is
-    entitled to publish.
+    the shipped floors and evaluates this function at
+    ``max(2 m_min, M_min)``. That is ``1.41e-09`` at the shipped defaults, and
+    it is the only a-priori repudiation figure this package is entitled to
+    publish.
 
     Parameters
     ----------
@@ -2600,35 +2683,44 @@ def repudiation_bound_with_abort(
 
     Examples
     --------
-    Both rows use the floor :mod:`sih141.protocol.verify` actually enforces,
-    ``m_min = 36555``, so the numbers here are the shipped ones rather than an
-    illustration. Bob's own floor alone buys ``4.4e-05``; requiring both
-    verifiers to have cleared it -- which a *reject verdict* from Charlie does --
-    buys ``1.9e-09``, within a factor of three of the number that used to be
-    published as unconditional. The honest-run cost is far below every other
-    failure probability in the scheme, which is what makes the rule worth having.
+    All three rows use floors :mod:`sih141.protocol.verify` actually enforces, so
+    the numbers are the shipped ones rather than an illustration. Bob's own floor
+    alone buys ``4.4e-05``; both verifiers' own floors buy ``1.9e-09``; the
+    pooled floor buys ``1.4e-09`` and, unlike the other two, leaves no third
+    outcome to be quoted beside it. The honest-run cost is far below every other
+    failure probability in the scheme, which is what makes the rules worth
+    having.
 
     >>> from sih141.protocol.analysis import (
     ...     matched_shortfall_probability, repudiation_bound_with_abort
     ... )
     >>> from sih141.protocol.params import DEFAULT_PARAMS
-    >>> from sih141.protocol.verify import minimum_matched_count
+    >>> from sih141.protocol.verify import (
+    ...     minimum_matched_count, minimum_pooled_matched_count
+    ... )
     >>> floor = minimum_matched_count(DEFAULT_PARAMS)
-    >>> floor
-    36555
+    >>> pooled_floor = minimum_pooled_matched_count(DEFAULT_PARAMS)
+    >>> floor, pooled_floor
+    (36555, 74190)
     >>> local = repudiation_bound_with_abort(
     ...     DEFAULT_PARAMS, minimum_matched_records=floor
     ... )
     >>> both = repudiation_bound_with_abort(
     ...     DEFAULT_PARAMS, minimum_matched_records=2 * floor
     ... )
-    >>> f"{local:.1e}", f"{both:.1e}"
-    ('4.4e-05', '1.9e-09')
+    >>> pooled = repudiation_bound_with_abort(
+    ...     DEFAULT_PARAMS, minimum_matched_records=pooled_floor
+    ... )
+    >>> f"{local:.1e}", f"{both:.1e}", f"{pooled:.1e}"
+    ('4.4e-05', '1.9e-09', '1.4e-09')
     >>> cost = matched_shortfall_probability(
     ...     DEFAULT_PARAMS, minimum_matched=floor
     ... )
-    >>> f"{cost:.1e}"
-    '2.5e-31'
+    >>> pooled_cost = matched_shortfall_probability(
+    ...     DEFAULT_PARAMS, minimum_matched=pooled_floor, pooled=True
+    ... )
+    >>> f"{cost:.1e}", f"{pooled_cost:.1e}"
+    ('2.5e-31', '2.9e-31')
     """
     checked = _as_params(params)
     floor = _as_matched(minimum_matched_records, name="minimum_matched_records")
@@ -2658,13 +2750,24 @@ def matched_shortfall_probability(
     :data:`~sih141.protocol.params.DEFAULT_PARAMS` against a mean of ``38400``,
     so the shipped floor of ``36555``
     (:func:`~sih141.protocol.verify.minimum_matched_count`, eleven standard
-    deviations low) costs an honest verifier ``2.5e-31`` while flooring ``M`` at
-    ``73110`` across the pair. That asymmetry -- a Gaussian-tail cost against an
-    exponential-in-``m_min`` gain -- is the whole argument for the abort rule.
+    deviations low) costs an honest verifier ``2.5e-31``. The pooled count is
+    twice as large with only ``sqrt(2)`` times the spread, so the shipped pooled
+    floor of ``74190``
+    (:func:`~sih141.protocol.verify.minimum_pooled_matched_count`) costs
+    ``2.9e-31`` while flooring ``M`` a further ``1080`` records above the
+    ``73110`` the two per-verifier floors give. That asymmetry -- a Gaussian-tail
+    cost against an exponential-in-the-floor gain -- is the whole argument for
+    the abort rules.
+
+    The pooled law is ``Binomial(2L, 1/n)`` *exactly*, but not because the two
+    verifiers' counts are independent: after the symmetrisation exchange they are
+    perfectly dependent given the records. It is exact because the coins conserve
+    the multiset of ``2L`` entries, whose bases were drawn i.i.d. -- see section
+    4b-iv, and ``tests/test_protocol_tally.py``, which measures both halves.
 
     Like every other honest-run number here this one assumes (IND); an adversary
     who chooses the declaration from the logs can drive the matched count to
-    ``0`` at will, which is precisely why the rule is worth having.
+    ``0`` at will, which is precisely why the rules are worth having.
 
     Parameters
     ----------
