@@ -104,14 +104,51 @@ comparable rather than two different programs.
     so its outcome is never offered to the signer, which is the whole basis of
     the non-repudiation bound.
 
-    A signer that reads *both* recipients' raw logs is still an adversary
-    holding two parties' private evidence, which no claim here covers; a forging
-    Bob reads ``records[b][Party.BOB]`` and nothing else. Two further
-    seam-reachable behaviours are plumbing rather than attacks: a signer that
-    declares, per position, a basis the verifier did not log drives the matched
-    set to zero and makes :func:`~sih141.protocol.verify.verify` raise (see its
-    module docstring), and a signer returning a signature for the other bit is
-    refused by :meth:`QDSSession.sign`.
+    .. _two-log-signer:
+
+    **Security caveat: the seam hands over BOTH recipients' raw logs, which is
+    more than any single adversary in the threat model holds.** A forging Bob
+    legitimately reads ``records[b][Party.BOB]`` and nothing else; a repudiating
+    Alice holds neither log. A signer that reads both is therefore outside the
+    model the scheme's bounds are stated for -- but it is squarely *inside* what
+    this file makes reachable, and two published consequences follow, so it is
+    named here rather than scoped away. Nothing below is a defect in the
+    mathematics; each is a limit on what a number may be published as.
+
+    *It can empty the matched set outright.* A declaration that avoids both raw
+    logs at every position leaves nothing for either verifier: after the
+    exchange each verifier's entry is one of the two raw entries, and both were
+    avoided, so ``|M_B| = |M_C| = 0`` with probability ``1`` -- measured 20/20
+    at ``L = 600``. (Avoiding only *Bob's* log is defused by Phase A', which
+    leaves ``E|M_B| = L/6``; it is the *pair* of logs that is fatal.) It forges
+    nothing and repudiates nothing, since no verdict is reached, but it used to
+    surface as an uncaught :exc:`ValueError` in the middle of
+    :meth:`QDSSession.run` -- a verifier an attacker could crash, and a run an
+    experiment harness silently lost. It is now a recorded no-verdict outcome:
+    see :class:`~sih141.protocol.verify.VerificationAbort` and
+    :attr:`SessionTranscript.aborts`.
+
+    *It can starve the matched set without emptying it.* The same signer can pin
+    ``|M_B| + |M_C|`` at a handful of positions for any ``L``, where honest
+    operation gives ``2L/|B|``. The repudiation bound in
+    :mod:`sih141.protocol.analysis`, in its default form, averages over
+    ``M ~ Binomial(2L, 1/|B|)``, and that average assumes **the declared bases
+    are independent of the recipients' logged bases** -- exactly the assumption
+    this seam breaks. The bound *conditional* on an observed matched count is
+    not violated; what would be wrong is quoting the ``M``-averaged number as if
+    it held unconditionally against every signer. Phase 3 and Phase 5 should
+    read the per-run conditional bound from the observed ``m_B + m_C``, which
+    every transcript carries
+    (:attr:`~sih141.protocol.verify.VerificationResult.matched_count`).
+    :func:`~sih141.protocol.verify.minimum_matched_count` now refuses to score
+    such a run at all, so any verdict this session emits rests on at least that
+    many matched positions per verifier -- which bounds how far the conditional
+    number can drift from the averaged one, but does not by itself make the
+    averaged one unconditional.
+
+    One further seam-reachable behaviour is plumbing rather than an attack: a
+    signer returning a signature for the other bit is refused by
+    :meth:`QDSSession.sign`.
 
 ``forwarder`` -- the Bob-to-Charlie classical hop
     Callable taking ``(signature, params)`` and returning the declaration
@@ -125,10 +162,17 @@ comparable rather than two different programs.
     and a Phase 4 statistic would have read an attacked run as a clean one.
 
 Everything downstream of the seams is fixed: the matched/unmatched split, the
-two thresholds and the accept rule are computed by
-:func:`~sih141.protocol.verify.verify` from the record and the declaration
-alone, so no adversary can reach them. Phase A' is likewise not an Alice-side
-seam; see above.
+matched-count floor, the two thresholds and the accept rule are computed by
+:func:`~sih141.protocol.verify.verify` from the record, the declaration and the
+parameter set alone, so no adversary can reach them. Phase A' is likewise not an
+Alice-side seam; see above.
+
+A verifier whose matched set falls below that floor reaches **no verdict** --
+neither an acceptance nor a rejection. :meth:`QDSSession.run` records it and
+carries on, so a starved declaration costs a verdict rather than the whole run,
+and :class:`SessionTranscript` keeps verdicts and refusals in separate fields
+(:attr:`~SessionTranscript.results` and :attr:`~SessionTranscript.aborts`) so
+that no Phase 4 or Phase 5 statistic can conflate the two.
 
 What the session is not
 -----------------------
@@ -201,6 +245,7 @@ from typing import Any, Final, Protocol
 import numpy as np
 
 from sih141.core.rng import resolve_rng
+from sih141.protocol.analysis import repudiation_bound
 from sih141.protocol.distribute import ResourceFactory, distribute_public_key
 from sih141.protocol.keys import PrivateKey, generate_key_pair
 from sih141.protocol.params import (
@@ -214,7 +259,13 @@ from sih141.protocol.params import (
 from sih141.protocol.records import RecipientRecord
 from sih141.protocol.signature import Signature, sign
 from sih141.protocol.symmetrise import Symmetriser, symmetrise_records
-from sih141.protocol.verify import VerificationResult, verify
+from sih141.protocol.verify import (
+    MatchedSetTooSmall,
+    VerificationAbort,
+    VerificationResult,
+    minimum_matched_count,
+    verify,
+)
 
 __all__ = [
     "MESSAGE_BITS",
@@ -446,7 +497,17 @@ class SessionTranscript:
     results : tuple of VerificationResult
         The verdicts reached, in the order they were reached -- Bob's first,
         then Charlie's after the transfer. May be shorter than two if a run was
-        abandoned part-way.
+        abandoned part-way, or if a verifier reached no verdict at all (see
+        ``aborts``).
+    aborts : tuple of VerificationAbort, optional
+        The verifiers who reached **no verdict**, because the declaration left
+        them a matched set below
+        :func:`~sih141.protocol.verify.minimum_matched_count`. Empty on every
+        healthy run. A separate field from ``results``, and a separate type,
+        because a refusal to score is neither an acceptance nor a rejection: a
+        plumbing failure counted as a rejection would show up in a Phase 5 table
+        as a forgery detection that never happened. A party appears in exactly
+        one of the two, never both.
     forwarded_signature : Signature or None, optional
         The declaration **Charlie** scored, when it differs from
         :attr:`signature`. ``None`` on every honest run, where Bob forwards what
@@ -489,6 +550,7 @@ class SessionTranscript:
     results: tuple[VerificationResult, ...]
     forwarded_signature: Signature | None = None
     run_id: str | None = None
+    aborts: tuple[VerificationAbort, ...] = ()
 
     def __post_init__(self) -> None:
         """Coerce the sequence fields to tuples and check the run hangs together.
@@ -499,8 +561,9 @@ class SessionTranscript:
             If any field is of the wrong type.
         ValueError
             If ``message_bit`` is not ``0``/``1``, if either signature declares a
-            different bit, if two results belong to the same party, or if a
-            result's ``threshold`` or ``key_length`` disagrees with ``params``.
+            different bit, if one party holds two outcomes (two verdicts, two
+            refusals, or one of each), or if a result's ``threshold`` or an
+            outcome's ``key_length`` disagrees with ``params``.
         """
         if not isinstance(self.params, ProtocolParams):
             raise TypeError(
@@ -569,6 +632,24 @@ class SessionTranscript:
             seen.add(result.party)
             _check_result_against(result, self.params, self.message_bit)
 
+        object.__setattr__(self, "aborts", tuple(self.aborts))
+        for position, abort in enumerate(self.aborts):
+            if not isinstance(abort, VerificationAbort):
+                raise TypeError(
+                    f"aborts[{position}] must be a VerificationAbort, got "
+                    f"{type(abort).__name__}"
+                )
+            if abort.party in seen:
+                raise ValueError(
+                    f"{abort.party.value} appears in both results and aborts, "
+                    f"or twice in aborts. Phase C leaves each verifier with "
+                    f"exactly one outcome -- a verdict or a refusal to score, "
+                    f"never both -- and a party in both fields would let "
+                    f"'did Charlie accept?' depend on which field is read."
+                )
+            seen.add(abort.party)
+            _check_abort_against(abort, self.params, self.message_bit)
+
     # -- derived views ------------------------------------------------------ #
 
     @property
@@ -587,8 +668,32 @@ class SessionTranscript:
         return self.results_by_party.get(Party.CHARLIE)
 
     @property
+    def aborts_by_party(self) -> dict[Party, VerificationAbort]:
+        """dict: The refusals to score, keyed by party, in the order recorded."""
+        return {abort.party: abort for abort in self.aborts}
+
+    @property
+    def aborted(self) -> bool:
+        """bool: ``True`` iff some verifier reached no verdict at all.
+
+        Distinct from ``not is_complete``, which is also ``True`` for a run
+        simply abandoned before :meth:`QDSSession.transfer`. This one says a
+        verifier *was* asked and refused to score, because the declaration left
+        him a matched set below
+        :func:`~sih141.protocol.verify.minimum_matched_count`. On an honest run
+        it is ``False`` with probability at least
+        ``1 - 2 * HONEST_ABORT_BUDGET``; when it is ``True``, the declaration or
+        the distribution is what to investigate, not the verifiers.
+        """
+        return bool(self.aborts)
+
+    @property
     def is_complete(self) -> bool:
-        """bool: ``True`` when both verifiers have reached a verdict."""
+        """bool: ``True`` when both verifiers have reached a verdict.
+
+        ``False`` on an aborted run: a refusal to score is not a decision. Read
+        :attr:`aborted` to tell "no verdict" from "not asked yet".
+        """
         return self.bob is not None and self.charlie is not None
 
     @property
@@ -682,6 +787,82 @@ class SessionTranscript:
             and not self.charlie.accepted
         )
 
+    @property
+    def pooled_matched_count(self) -> int | None:
+        """int or None: ``M = m_B + m_C`` as this run actually produced it.
+
+        The evidence base the non-repudiation guarantee is stated over. ``None``
+        unless the run is a repudiation experiment at all, which needs three
+        things:
+
+        * both verifiers reached a **verdict** -- a refusal to score
+          (:attr:`aborts`) has no matched count to contribute, and counting it
+          as zero would flatter the bound rather than weaken it;
+        * both scored the **same declaration**, since ``m_B + m_C = M`` and
+          ``e_B + e_C = E`` are conserved only across one fixed pair of records
+          against one fixed declaration -- a run the forwarding hop altered
+          (:attr:`forwarding_altered_signature`) is not one experiment but two;
+        * the recipients **symmetrised** (:attr:`symmetrised`), because the
+          coins are the only randomness the bound uses and without them there
+          are none.
+        """
+        if self.forwarding_altered_signature or not self.symmetrised:
+            return None
+        bob, charlie = self.bob, self.charlie
+        if bob is None or charlie is None:
+            return None
+        return bob.matched_count + charlie.matched_count
+
+    @property
+    def repudiation_guarantee(self) -> float | None:
+        """float or None: the per-run repudiation bound, from the observed ``M``.
+
+        **The number this run is entitled to quote**, and the reason the
+        property exists: it is
+        :func:`sih141.protocol.analysis.repudiation_bound` evaluated at
+        :attr:`pooled_matched_count`, which conditions on the two records *and*
+        on the declaration and therefore holds for every Alice strategy with no
+        independence assumption of any kind.
+
+        Do **not** quote
+        :func:`~sih141.protocol.analysis.averaged_repudiation_bound` for a run.
+        Its ``6.9e-10`` at :data:`~sih141.protocol.params.DEFAULT_PARAMS`
+        averages over ``M ~ Binomial(2L, 1/|B|)``, which is the law of the
+        matched count only while the declaration is independent of the
+        recipients' logged bases -- an assumption the ``Signer`` seam breaks by
+        construction (see :ref:`two-log-signer`). This property reads ``M`` off
+        the run instead, so a starved run reports a number near ``1`` and says
+        so, rather than inheriting a guarantee it did not earn.
+
+        ``None`` exactly when :attr:`pooled_matched_count` is, plus the
+        degenerate ``M = 0`` case, which cannot arise alongside two verdicts
+        under the shipped floor.
+
+        See Also
+        --------
+        sih141.protocol.verify.enforced_repudiation_bound : The a-priori
+            counterpart, evaluated at the floor
+            :func:`~sih141.protocol.verify.minimum_matched_count` enforces
+            rather than at an observed count.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from sih141.protocol.params import ProtocolParams
+        >>> from sih141.protocol.session import QDSSession
+        >>> transcript = QDSSession(
+        ...     ProtocolParams(key_length=600), rng=np.random.default_rng(3)
+        ... ).run(0)
+        >>> transcript.pooled_matched_count > 2 * 600 // 3 - 60
+        True
+        >>> 0.0 < transcript.repudiation_guarantee < 1.0
+        True
+        """
+        pooled = self.pooled_matched_count
+        if pooled is None or pooled < 1:
+            return None
+        return repudiation_bound(self.params, matched_records=pooled)
+
     def records_for(self, message_bit: int) -> dict[Party, RecipientRecord]:
         """Return the logs distributed for one message bit, keyed by party.
 
@@ -724,8 +905,10 @@ class SessionTranscript:
         ------
         ValueError
             If ``party`` names no verifier, or reached no verdict in this run --
-            distinguishing "rejected" from "never asked", which a ``None`` or a
-            ``False`` would not.
+            distinguishing "rejected" from "never asked" and from "asked and
+            refused to score", none of which a ``None`` or a ``False`` would
+            keep apart. When the party appears in :attr:`aborts` the message
+            quotes the refusal.
         TypeError
             If ``party`` is neither a :class:`~sih141.protocol.params.Party` nor
             a string.
@@ -734,12 +917,25 @@ class SessionTranscript:
         result = self.results_by_party.get(resolved)
         if result is None:
             reached = sorted(item.value for item in self.results_by_party)
+            abort = self.aborts_by_party.get(resolved)
+            because = (
+                f" He was asked and refused to score: {abort.summary()}"
+                if abort is not None
+                else ""
+            )
+            advice = (
+                " Read transcript.aborts for the refusal."
+                if abort is not None
+                else (
+                    " Run the session to completion with "
+                    "QDSSession.run(message_bit), or call verify(Party.BOB) "
+                    "and then transfer()."
+                )
+            )
             raise ValueError(
                 f"{resolved.value} reached no verdict in this run; verdicts "
                 f"present: {reached or 'none'}. This is not a rejection: no "
-                f"decision was made. Run the session to completion with "
-                f"QDSSession.run(message_bit), or call verify(Party.BOB) and "
-                f"then transfer()."
+                f"decision was made.{because}{advice}"
             )
         return result
 
@@ -750,8 +946,20 @@ class SessionTranscript:
         -------
         str
             One line of context followed by one line per verdict, each from
-            :meth:`~sih141.protocol.verify.VerificationResult.summary`, and a
-            closing line naming the outcome in protocol terms.
+            :meth:`~sih141.protocol.verify.VerificationResult.summary`, then one
+            line per refusal to score from
+            :meth:`~sih141.protocol.verify.VerificationAbort.summary`, then --
+            on any run that is a repudiation experiment -- the evidence line
+            carrying :attr:`pooled_matched_count` and
+            :attr:`repudiation_guarantee`, and a closing line naming the outcome
+            in protocol terms. The evidence line is printed rather than left to
+            be looked up because the number a reader reaches for otherwise is
+            the ``M``-averaged one, which is not valid against a signer who
+            reads the recipients' logs. On a run where a
+            verifier reached no verdict the closing line says so instead of
+            naming a composite event, because none of ``TRANSFERABLE``,
+            ``REPUDIATION`` and ``REJECTED`` is true of a run with no decision
+            in it.
 
         Examples
         --------
@@ -780,7 +988,23 @@ class SessionTranscript:
                 "different key from the one Bob was given."
             )
         lines.extend(result.summary() for result in self.results)
-        if not self.is_complete:
+        lines.extend(abort.summary() for abort in self.aborts)
+        guarantee = self.repudiation_guarantee
+        if guarantee is not None:
+            lines.append(
+                f"EVIDENCE: M = m_B + m_C = {self.pooled_matched_count} matched "
+                f"records, so P(repudiation | this run) <= {guarantee:.3e}. "
+                f"This is the per-run bound and the only one that assumes "
+                f"nothing about the signer."
+            )
+        if self.aborted:
+            refused = ", ".join(abort.party.value for abort in self.aborts)
+            lines.append(
+                f"NO VERDICT: {refused} could not score this declaration -- the "
+                f"matched set was below the floor. This is not a rejection and "
+                f"must not be counted as one."
+            )
+        elif not self.is_complete:
             lines.append("INCOMPLETE: not every verifier reached a verdict.")
         elif self.transferable:
             lines.append("TRANSFERABLE: Bob accepted and Charlie accepted.")
@@ -804,8 +1028,9 @@ class SessionTranscript:
         Returns
         -------
         dict
-            Keys ``"params"``, ``"message_bit"``, ``"signature"``, ``"records"``
-            and ``"results"``. Every leaf is an :class:`int`, :class:`float`,
+            Keys ``"params"``, ``"message_bit"``, ``"signature"``, ``"records"``,
+            ``"results"``, ``"aborts"``, ``"forwarded_signature"`` and
+            ``"run_id"``. Every leaf is an :class:`int`, :class:`float`,
             :class:`bool`, :class:`str` or a :class:`enum.StrEnum` member (which
             *is* a string), so the result passes to :func:`json.dumps`
             unchanged.
@@ -828,6 +1053,7 @@ class SessionTranscript:
             "signature": self.signature.to_dict(),
             "records": [record.to_dict() for record in self.records],
             "results": [result.to_dict() for result in self.results],
+            "aborts": [abort.to_dict() for abort in self.aborts],
             "forwarded_signature": (
                 None
                 if self.forwarded_signature is None
@@ -845,7 +1071,9 @@ class SessionTranscript:
         data : mapping
             Must contain ``"params"``, ``"message_bit"``, ``"signature"``,
             ``"records"`` and ``"results"``. ``"forwarded_signature"`` and
-            ``"run_id"`` are optional and default to ``None``.
+            ``"run_id"`` are optional and default to ``None``; ``"aborts"`` is
+            optional and defaults to empty, so a transcript written before the
+            matched-count abort rule existed still restores.
 
         Returns
         -------
@@ -879,6 +1107,13 @@ class SessionTranscript:
                 None if forwarded is None else Signature.from_dict(forwarded)
             ),
             run_id=data.get("run_id"),
+            # Optional, and defaulting to none, so that a transcript written
+            # before the abort rule existed still restores: it can only have
+            # recorded verdicts.
+            aborts=tuple(
+                VerificationAbort.from_dict(item)
+                for item in data.get("aborts", ())
+            ),
         )
 
     def to_json(self, **kwargs: Any) -> str:
@@ -1067,9 +1302,15 @@ class QDSSession:
         self._signature: Signature | None = None
         self._forwarded: Signature | None = None
         self._results: dict[Party, VerificationResult] = {}
+        self._aborts: dict[Party, VerificationAbort] = {}
 
     def __repr__(self) -> str:
-        """Return a debugging representation naming the phase reached."""
+        """Return a debugging representation naming the phase reached.
+
+        Refusals to score are named as well as verdicts, because "verified by
+        B" and "verified by B, no verdict from Charlie" are very different runs
+        and the first would otherwise stand for both.
+        """
         if self._signature is None:
             stage = "distributed" if self._keys is not None else "new"
         else:
@@ -1078,8 +1319,13 @@ class QDSSession:
                 for party in VERIFIERS
                 if party in self._results
             )
-            stage = f"signed bit {self._signature.message_bit}" + (
-                f", verified by {reached}" if reached else ""
+            refused = ", ".join(
+                party.value for party in VERIFIERS if party in self._aborts
+            )
+            stage = (
+                f"signed bit {self._signature.message_bit}"
+                + (f", verified by {reached}" if reached else "")
+                + (f", no verdict from {refused}" if refused else "")
             )
         return (
             f"QDSSession(L={self._params.key_length}, "
@@ -1188,6 +1434,17 @@ class QDSSession:
     def results(self) -> dict[Party, VerificationResult]:
         """dict: Verdicts so far, keyed by party, in the order reached."""
         return dict(self._results)
+
+    @property
+    def aborts(self) -> dict[Party, VerificationAbort]:
+        """dict: Verifiers who were asked and reached no verdict, keyed by party.
+
+        A verifier lands here instead of in :attr:`results` when the declaration
+        left him a matched set below
+        :func:`~sih141.protocol.verify.minimum_matched_count`. Empty on every
+        healthy run, and a party is never in both mappings.
+        """
+        return dict(self._aborts)
 
     # -- Phase A ------------------------------------------------------------ #
 
@@ -1466,6 +1723,15 @@ class QDSSession:
             If :meth:`sign` has not run; if ``party`` is
             :attr:`~sih141.protocol.params.Party.ALICE`, who verifies nothing;
             or for any reason :func:`sih141.protocol.verify.verify` raises.
+        MatchedSetTooSmall
+            A :class:`ValueError` subclass, if the declaration left this
+            verifier a matched set below
+            :func:`~sih141.protocol.verify.minimum_matched_count`. The
+            corresponding :class:`~sih141.protocol.verify.VerificationAbort` is
+            recorded in :attr:`aborts` **before** the exception propagates, so a
+            caller that catches it -- :meth:`run` does -- still gets the run in
+            the transcript. It is not a rejection and must not be counted as
+            one.
         TypeError
             If ``party`` is neither a :class:`~sih141.protocol.params.Party` nor
             a string.
@@ -1473,7 +1739,9 @@ class QDSSession:
         Notes
         -----
         Pure and repeatable: verifying twice recomputes the same verdict from
-        the same frozen inputs and consumes no randomness (D3).
+        the same frozen inputs and consumes no randomness (D3). Each verifier
+        holds exactly one current outcome, so a call that reaches a verdict
+        clears any refusal recorded for that party, and vice versa.
         """
         if self._signature is None:
             raise self._not_yet(
@@ -1493,8 +1761,22 @@ class QDSSession:
             # Charlie scores what the forwarding hop actually delivered, which
             # on an honest run is the same object Bob scored.
             declaration = self._forwarded
-        # The module-level verify(), not this method.
-        result = verify(declaration, record, self._params)
+        try:
+            # The module-level verify(), not this method.
+            result = verify(declaration, record, self._params)
+        except MatchedSetTooSmall as too_small:
+            # Recorded *before* it propagates, so that run() -- and any harness
+            # that catches it -- reports a no-verdict outcome instead of losing
+            # the run. A starved matched set is a plumbing failure, never a
+            # rejection, so it is stored in a different field and a different
+            # type from the verdicts.
+            self._results.pop(resolved, None)
+            self._aborts[resolved] = too_small.abort
+            raise
+        # Phase C leaves each verifier exactly one current outcome. Re-verifying
+        # Charlie against a forwarded declaration after an abort on the
+        # unforwarded one must replace the refusal, not sit beside it.
+        self._aborts.pop(resolved, None)
         self._results[resolved] = result
         return result
 
@@ -1528,24 +1810,31 @@ class QDSSession:
             If the ``forwarder`` seam returned something that is not a
             :class:`~sih141.protocol.signature.Signature`.
         ValueError
-            If Bob has not verified yet -- there is nothing to *transfer* before
-            the holder has a verdict, and running the two verifications in the
-            wrong order would misrepresent what Bob knew when he forwarded -- or
-            if the forwarded declaration is for another message bit.
+            If Bob has not run Phase C at all -- there is nothing to *transfer*
+            before the holder has looked, and running the two verifications in
+            the wrong order would misrepresent what Bob knew when he forwarded
+            -- or if the forwarded declaration is for another message bit.
+        MatchedSetTooSmall
+            A :class:`ValueError` subclass, propagated from ``verify`` if the
+            forwarded declaration leaves *Charlie* a matched set below the
+            floor. His :class:`~sih141.protocol.verify.VerificationAbort` is
+            recorded in :attr:`aborts` first; :meth:`run` catches it.
 
         Notes
         -----
-        A rejection at Bob does not block the call. A real Bob forwards only
-        what he accepted, so the honest composite event is ``bob.accepted and
-        charlie.accepted``; but Phase 3 needs Charlie's verdict on runs Bob
-        rejected too, to measure both error rates of the pair rather than one,
-        so the refusal is left to the transcript's derived properties instead of
-        being baked in here.
+        Neither a rejection nor an abort at Bob blocks the call. A real Bob
+        forwards only what he accepted, so the honest composite event is
+        ``bob.accepted and charlie.accepted``; but Phase 3 needs Charlie's
+        outcome on runs Bob rejected too, to measure both error rates of the
+        pair rather than one, and on runs Bob could not score at all, because a
+        declaration that starves one verifier almost always starves the other
+        and the transcript should say so rather than stop at the first
+        refusal. So the refusal is left to the transcript's derived properties
+        instead of being baked in here.
         """
-        bob = self._results.get(Party.BOB)
-        if bob is None:
+        if Party.BOB not in self._results and Party.BOB not in self._aborts:
             raise self._not_yet(
-                "Bob has reached no verdict, so there is nothing for him to "
+                "Bob has not run Phase C, so there is nothing for him to "
                 "forward",
                 "session.verify(Party.BOB)",
             )
@@ -1579,6 +1868,15 @@ class QDSSession:
         :meth:`transfer`, :meth:`transcript` -- in that order, which is the
         order the protocol fixes.
 
+        A verifier who cannot score the declaration does **not** end the run.
+        :exc:`~sih141.protocol.verify.MatchedSetTooSmall` is caught at each of
+        the two Phase C steps and the refusal, already recorded by
+        :meth:`verify`, is carried into
+        :attr:`SessionTranscript.aborts`; the other verifier is still asked. So
+        an attacker who starves the matched set -- a signer reading both raw
+        logs can drive it to zero, see :ref:`two-log-signer` -- costs the
+        harness a verdict, not a run, and cannot crash a verifier.
+
         Parameters
         ----------
         message_bit : int
@@ -1587,13 +1885,17 @@ class QDSSession:
         Returns
         -------
         SessionTranscript
-            The complete run, frozen and JSON-serialisable.
+            The run, frozen and JSON-serialisable.
+            :attr:`~SessionTranscript.is_complete` says whether both verifiers
+            reached a verdict, :attr:`~SessionTranscript.aborted` whether either
+            refused to score.
 
         Raises
         ------
         ValueError
             As the individual phases; in particular if the session has already
-            been used.
+            been used. **Not** for a matched set too small to score: that is an
+            outcome and is recorded, never raised out of here.
 
         Examples
         --------
@@ -1605,13 +1907,26 @@ class QDSSession:
         >>> second = QDSSession(params, rng=np.random.default_rng(3)).run(0)
         >>> first == second
         True
-        >>> first.transferable
-        True
+        >>> first.transferable, first.aborted
+        (True, False)
         """
         self.distribute()
         self.sign(message_bit)
-        self.verify(Party.BOB)
-        self.transfer()
+        # Both Phase C steps record their own refusal on the session before
+        # raising, so catching MatchedSetTooSmall here loses nothing: it turns
+        # "this verifier reached no verdict" from a lost run into a line in the
+        # transcript. Only that one exception is caught -- a wiring error still
+        # fails loudly, and the second verifier is still asked, because a
+        # declaration that starves one usually starves both and the transcript
+        # should say so rather than stop at the first refusal.
+        try:
+            self.verify(Party.BOB)
+        except MatchedSetTooSmall:
+            pass
+        try:
+            self.transfer()
+        except MatchedSetTooSmall:
+            pass
         return self.transcript()
 
     def transcript(self) -> SessionTranscript:
@@ -1620,10 +1935,11 @@ class QDSSession:
         Returns
         -------
         SessionTranscript
-            The parameters, the declaration, all four classical logs and the
-            verdicts reached so far, in protocol order. Records are ordered by
-            message bit and then by :data:`~sih141.protocol.params.VERIFIERS`;
-            verdicts in the order they were reached.
+            The parameters, the declaration, all four classical logs, the
+            verdicts reached so far and any refusals to score, in protocol
+            order. Records are ordered by message bit and then by
+            :data:`~sih141.protocol.params.VERIFIERS`; verdicts and refusals in
+            the order they were reached.
 
         Raises
         ------
@@ -1655,6 +1971,7 @@ class QDSSession:
             signature=self._signature,
             records=records,
             results=tuple(self._results.values()),
+            aborts=tuple(self._aborts.values()),
             # None whenever the hop was the identity, so an honest transcript
             # carries one declaration and compares equal across runs.
             forwarded_signature=(
@@ -1748,6 +2065,68 @@ def _check_result_against(
         raise ValueError(
             f"{result.party.value}'s verdict is for message bit "
             f"{result.message_bit} but this transcript is tagged with bit "
+            f"{message_bit}. The bit selects which distribution was scored."
+        )
+
+
+def _check_abort_against(
+    abort: VerificationAbort,
+    params: ProtocolParams,
+    message_bit: int,
+) -> None:
+    """Check one refusal to score against the parameters the transcript claims.
+
+    The same persistence-boundary argument as :func:`_check_result_against`.
+    :class:`~sih141.protocol.verify.VerificationAbort` enforces only its own
+    internal consistency, so a refusal quoting another run's key length -- or a
+    floor that was never this parameter set's -- survives a JSON round trip
+    unchallenged and would put a fabricated shortfall in front of a Phase 5
+    reader. The floor is re-derived from ``params`` and insisted on.
+
+    Parameters
+    ----------
+    abort : VerificationAbort
+        One refusal.
+    params : ProtocolParams
+        The parameter set the transcript is tagged with.
+    message_bit : int
+        The bit the transcript is tagged with.
+
+    Raises
+    ------
+    ValueError
+        If the refusal's key length, expected matched count, floor or message
+        bit disagrees with the transcript's own parameters.
+    """
+    if abort.key_length != params.key_length:
+        raise ValueError(
+            f"{abort.party.value}'s refusal reports key_length "
+            f"{abort.key_length} but this transcript's parameters say "
+            f"{params.key_length}. The shortfall it records would be measured "
+            f"against the wrong number of positions."
+        )
+    expected_floor = minimum_matched_count(params)
+    if abort.minimum_matched != expected_floor:
+        raise ValueError(
+            f"{abort.party.value}'s refusal quotes a matched-count floor of "
+            f"{abort.minimum_matched} but this transcript's parameters put it "
+            f"at {expected_floor} (L={params.key_length}, "
+            f"|B|={len(params.bases)}). The floor is derived from the "
+            f"parameter set, never a free field: a refusal carrying a floor "
+            f"nobody applied would make a scored run look starved, or a "
+            f"starved one look scored."
+        )
+    if abort.expected_matched != params.expected_matched:
+        raise ValueError(
+            f"{abort.party.value}'s refusal reports an honest mean of "
+            f"{abort.expected_matched!r} but this transcript's parameters give "
+            f"L/|B| = {params.expected_matched!r}. That number is what makes "
+            f"the shortfall legible, so it has to be this run's."
+        )
+    if abort.message_bit != message_bit:
+        raise ValueError(
+            f"{abort.party.value}'s refusal is for message bit "
+            f"{abort.message_bit} but this transcript is tagged with bit "
             f"{message_bit}. The bit selects which distribution was scored."
         )
 

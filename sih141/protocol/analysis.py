@@ -27,6 +27,41 @@ All six of ``a_i``, ``v_i``, ``c_i`` for Bob, ``c_i`` for Charlie are drawn
 independently and uniformly (``a_i, c_i`` over ``B``; ``v_i`` over ``{+1, -1}``),
 independently across positions. Everything below is an application of that.
 
+0. Assumption (IND), stated once and referenced everywhere
+----------------------------------------------------------
+**(IND) -- the declaration** ``(d_i, w_i)`` **is statistically independent of the
+recipients' logged bases** ``c_i``.
+
+Every statement in this module that *averages over a matched count* -- ``m ~
+Binomial(L, 1/n)``, ``M ~ Binomial(2L, 1/n)``, and therefore every bound obtained
+without passing an explicit observed count -- needs (IND), and is not merely
+loose without it but false. The reason is structural, not technical: the matched
+set is ``{i : c_i == d_i}``, so whoever chooses ``d`` while knowing ``c`` chooses
+the matched set, and a bound whose exponent is linear in the size of that set is
+then a bound on a quantity the adversary picked. He picks it small.
+
+(IND) holds for an honest signer, and it holds for the adversaries of sections 3
+and 3b *as modelled there*, because each ``c_i`` is drawn privately at receipt
+time in Phase A, before any signature exists, and is never published. It does
+**not** hold automatically at the shipped seams:
+:class:`sih141.protocol.session.QDSSession` hands the ``Signer`` seam both
+recipients' raw logs, so an adversary standing in Alice's place reads every
+``c_i`` and violates (IND) outright. Section 4b-ii names that strategy and gives
+the measured damage; sections 3 and 3b say what the same leak would do to the
+forgery numbers.
+
+(IND) is a property of the *interface*, not a theorem about the protocol. Nothing
+in this module can check it, so nothing in this module assumes it silently: the
+one number that used to be published as unconditional --
+:func:`repudiation_bound` averaged over ``M`` -- now lives in
+:func:`averaged_repudiation_bound` behind a mandatory
+``signer_sees_recipient_bases`` argument, and :func:`repudiation_bound` itself
+takes the observed count.
+
+What survives without (IND) is every bound *conditioned on the observed matched
+count*. Those use only the recipients' private coins, or the Born rule, and never
+the law of ``m``. They are what a run should quote.
+
 1. The matched set
 ------------------
 Recipient ``R`` measures position ``i`` in a basis ``c_i`` drawn uniformly from
@@ -51,6 +86,14 @@ See :func:`matched_statistics`. ``E[m] = L/3`` is why the useful length of a key
 is a third of its nominal length, and why every bound below is exponential in
 ``m`` rather than in ``L``.
 
+That binomial law is the first and largest consumer of (IND). "``c_i`` is uniform
+and independent of ``d_i``" is (IND) written out for one position; a declaration
+computed *from* the logged bases has ``P(i in M_R)`` equal to ``0`` or ``1`` at
+the adversary's choice, and then ``m`` is not ``Binomial(L, 1/n)``, not
+concentrated near ``L/3``, and not anything else this module can predict. Every
+appearance of ``Binomial(L, 1/n)`` or ``Binomial(2L, 1/n)`` below carries that
+hypothesis with it.
+
 The empty matched set, and why it counts as "not accepted"
     ``m = 0`` happens with probability ``(1 - 1/n)**L`` and makes ``r_R = 0/0``.
     :func:`sih141.protocol.verify.verify` raises there rather than inventing a
@@ -65,6 +108,21 @@ The empty matched set, and why it counts as "not accepted"
     bases outside ``B`` entirely, force ``m = 0`` at every position and be
     accepted with probability 1. The convention here closes that door, and
     :func:`forgery_probability` is computed under it.
+
+A verifier may set the bar higher than ``m >= 1``
+    A matched-count *floor* -- score only when ``m >= m_min`` for some
+    ``m_min > 1``, abort otherwise -- is a strictly stronger rule, and
+    :mod:`sih141.protocol.verify` applies one as this is written. Every function
+    here uses the ``m >= 1`` convention, which lands as follows. Forgery and
+    recipient-forgery numbers are then *over*-estimates, since the forger must
+    clear a bar this module does not model: still bounds, merely looser.
+    :func:`honest_abort_probability` is an *under*-estimate by the floor's own
+    budget, which is ``1e-31`` at the shipped floor against an abort probability
+    of order ``1e-9``: negligible, but real, and additive.
+    :func:`repudiation_bound` is unaffected, because it conditions on the
+    observed counts and its Bob-accepts branch only shrinks. The floor's *use* as
+    a security control is section 4b-iii, which also states the one repudiation
+    route a per-verifier floor opens rather than closes.
 
 2. The honest rate
 ------------------
@@ -124,7 +182,16 @@ against the *declared* bases, not against Alice's.
 
 *What she does not control.* The verifier's basis draws ``c_i``. Those were made
 privately at receipt time in Phase A, before any signature existed, and are never
-published.
+published. **This is (IND), and it is a hypothesis rather than a theorem.** It is
+load-bearing here in exactly the way section 0 describes: if some seam handed Eve
+the verifier's log she would stop being an adversary who cannot steer the matched
+set. Her optimal play would then be to declare a basis that misses ``c_i`` at
+every position but one, sit on a matched set of size ``m = 1``, and guess that
+single outcome -- accepted with probability ``1/2``, against a ``forgery_bound``
+of ``e^-15091``. The conditional form ``forgery_bound(params, matched=1) = 0.68``
+is the honest number for that adversary -- it dominates her true ``1/2`` -- and
+it is the same repair as section 4b-i: condition on the count instead of
+averaging over it.
 
 *Out of scope.* An adversary who touches the quantum channel (intercept-resend,
 a tampered entanglement resource) is a Phase 3 attack on the *resource*, not a
@@ -233,6 +300,22 @@ because given "scored" the mismatch indicator is Bernoulli(``rho``) independentl
 across positions. Hence :func:`recipient_forgery_probability` and, by the same
 generating-function average, :func:`recipient_forgery_bound`.
 
+*What he must not hold, and it is (IND) again.* The pair ``(p_s, rho)`` is
+computed against Charlie's **retained** positions -- the half of the exchange Bob
+did not supply -- and it presumes Bob does not know the bases Charlie logged
+there. He is already granted a great deal (his own ``L`` records, the identity of
+the swapped positions, Charlie's entry verbatim on each of them); one more item
+would end the analysis rather than shift it. Knowing Charlie's retained bases,
+Bob declares a basis that misses them at every retained position, so Charlie's
+matched set consists only of positions Bob himself supplied, ``rho`` collapses
+from ``1/12`` to ``0``, and Charlie accepts with probability ``1`` at every ``L``.
+So ``recipient_forgery_bound``'s averaging over ``m ~ Bin(L, p_s)`` is not a
+statement about a two-thirds scored fraction that happens to hold; it is a
+statement that holds while the exchange leaks nothing but the swapped entries.
+:mod:`sih141.protocol.symmetrise` is where that is either true or false, and the
+conditional form ``recipient_forgery_bound(params, matched=m)`` is again what
+survives if it is false.
+
 *Optimality.* ``rho`` is not merely the compliant rate; no measurement strategy
 beats it. On a retained position Bob must guess Charlie's outcome in the
 declared basis from his own copy. Let his POVM be ``{E_k}`` and his declaration
@@ -256,10 +339,14 @@ exponent it buys rather than as insurance against an unquantified attack.
 Alice repudiates when she gets Bob to accept a signature that Charlie will
 reject: she can then deny having signed, and Bob cannot forward what he holds.
 
-**Two different statements live here, and conflating them is how this module
-previously went wrong.** One is the exact probability under a *particular*,
-narrow family of Alice strategies; the other is an upper bound that holds
-whatever Alice does. Only the second is a security guarantee.
+**Several different statements live here, and conflating them is how this module
+went wrong twice.** One is the exact probability under a *particular*, narrow
+family of Alice strategies (4a). One is an upper bound that holds whatever Alice
+does, evaluated at the matched count a run actually produced (4b-i). One is that
+bound averaged over the matched count, which is a smaller and much more quotable
+number and is true only under (IND) (4b-ii). Only 4b-i is a guarantee with no
+hypothesis attached; 4b-iii says what an unconditional a-priori guarantee would
+cost.
 
 *4a. The symmetric family, exactly.* Suppose Alice induces the **same**
 per-matched-position mismatch probability ``q`` on both recipients' copies --
@@ -289,15 +376,20 @@ probability ``1`` at every ``L``, exceeding anything 4a computes by an unbounded
 margin. :func:`repudiation_probability` says so in its own docstring and points
 here.
 
-*4b. The guarantee, uniform over every Alice strategy.* This is what the
-symmetrisation exchange (:mod:`sih141.protocol.symmetrise`) buys, and the
-derivation deliberately assumes nothing about Alice at all.
+*4b. What the symmetrisation exchange actually buys.* Three statements, in
+decreasing order of strength. They were previously published as one, which is the
+error this section exists to prevent from returning.
+
+**4b-i. The conditional guarantee -- uniform over every Alice strategy, and it
+assumes nothing whatever.** This is what the exchange
+(:mod:`sih141.protocol.symmetrise`) buys.
 
 Fix the two recipients' raw records -- whatever she prepared, however
-asymmetric, adaptive or entangled. The only randomness left is the recipients'
-private coins, one per position, each deciding which verifier scores which of
-the two records. Two conservation facts follow immediately, because the coins
-only *split* a fixed collection:
+asymmetric, adaptive or entangled -- and fix the declaration, whatever she
+computed it from, the two raw logs included. The only randomness left is the
+recipients' private coins, one per position, each deciding which verifier scores
+which of the two records. Two conservation facts follow immediately, because the
+coins only *split* a fixed collection:
 
 .. code-block:: text
 
@@ -327,21 +419,148 @@ coin outcomes, so its range is ``0``; every other position has range at most
 
 .. code-block:: text
 
-    P(repudiation | records) <= exp(-2 ((gap/4) M)^2 / M)
-                              = exp(-M gap^2 / 8)
+    P(repudiation | records, declaration) <= exp(-2 ((gap/4) M)^2 / M)
+                                          = exp(-M gap^2 / 8)
 
-conditional on the records, hence for **every** Alice strategy. The one case the
-argument does not cover is ``m_C = 0``, where Charlie's "rejection" carries no
-evidence; that is bounded separately by ``P(m_C = 0) = (1 - 1/n)^L``. Averaging
-over ``M ~ Bin(2L, 1/n)`` -- the recipients' own basis draws, which Alice does
-not control either -- is exact by the generating-function identity of section 3:
+which is :func:`repudiation_bound`, and which takes the observed
+``M = m_B + m_C`` as a **mandatory** argument. Note what is not in it: no ``q``,
+no independence assumption about the two recipients, no model of Alice, and no
+(IND) -- the declaration was fixed before any of the randomness used here was
+drawn, so it does not matter what it was computed from.
+
+*The* ``m_C = 0`` *corner is inside the event, not outside it.* Charlie failing
+to accept splits into ``m_C >= 1 and r_C > s_v``, handled above, and ``m_C = 0``,
+where there is no rate to deviate. The second branch is not an exception:
+``m_C = 0`` forces ``m_B = M`` and ``e_B = E``, Bob's acceptance then reads
+``E <= s_a M``, and ``W - E[W] = (E - s M)/2 <= (s_a - s) M / 2 = -(gap/4) M`` --
+the same deviation event, reached non-strictly, and Hoeffding's inequality is
+non-strict. Earlier versions of this module added ``(1 - 1/n)^L`` for that corner.
+The term was never needed, and it was the one ingredient of the "guarantee" that
+was a statement about the recipients' *basis draws* rather than their coins,
+i.e. an (IND) statement smuggled into a bound advertised as assumption-free. It
+is gone from the conditional form.
+
+**4b-ii. The M-averaged number -- needs (IND), and the shipped Signer seam gives
+(IND) away.** Averaging ``exp(-M gap^2/8)`` over ``M ~ Bin(2L, 1/n)`` is exact by
+the generating-function identity of section 3, so
 
 .. code-block:: text
 
-    P_rep <= (1 - 1/n)^L + (1 - 1/n + exp(-gap^2/8)/n)^(2L)
+    P_rep <= (1 - 1/n)^L + (1 - 1/n + exp(-gap^2/8)/n)^(2L)     [needs (IND)]
 
-which is :func:`repudiation_bound`. Note what is *not* in it: no ``q``, no
-independence assumption about the two recipients, no model of Alice.
+is a bound *on the average over the recipients' basis draws*, which at
+:data:`~sih141.protocol.params.DEFAULT_PARAMS` is ``6.9173e-10``. This is
+:func:`averaged_repudiation_bound`, and it was published here as the
+unconditional non-repudiation guarantee. **It is not one.** ``M ~ Bin(2L, 1/n)``
+is the law of the matched count only while (IND) holds, and
+:class:`~sih141.protocol.session.QDSSession` hands the ``Signer`` seam both
+recipients' raw logs.
+
+The strategy, concretely, and it needs no quantum resource at all. Alice reads
+the two raw logs. At every position she declares a basis that appears in
+*neither* log -- with ``n = 3`` there is always one, two when the logs agree --
+so that position is matched at neither verifier. She keeps twelve exceptions:
+eleven positions where the logs used different bases, where she declares Bob's
+basis and Bob's outcome (one matched record, correct, whoever ends up holding
+it); and one position where the two logs used the *same* basis and recorded
+*opposite* outcomes, where she declares that basis and Bob's outcome (two matched
+records, exactly one of them wrong). Then
+
+.. code-block:: text
+
+    M = 11 + 2 = 13    for every L, with probability 1
+    P(repudiation) = P(the wrong record lands on Charlie) = 1/2   exactly
+
+because exactly one of the ``13`` matched records is wrong and one coin decides
+who scores it. If it goes to Charlie, Bob holds between ``1`` and ``12`` matched
+records and none of them is wrong (``r_B = 0 <= s_a``, and he does have evidence,
+so he accepts), while Charlie holds that mismatch among at most ``12`` matched
+records (``r_C >= 1/12 > s_v``, so he rejects). If it goes to Bob instead,
+``r_B >= 1/12 > s_a`` and he rejects, which is the other half of the coin.
+Measured through this file's own simulator: ``M = 13`` in every trial at both
+``L = 600`` and ``L = 115200``, and a repudiation frequency of ``0.45`` to
+``0.53`` -- against the ``6.9e-10`` above, and matching the ``0.46`` to ``0.58``
+an independent audit measured with a different construction. Note that Charlie
+holds evidence in every one of those runs: this is a rejection on a mismatch
+rate, not the empty-matched-set corner, so it is not repaired by anything
+:mod:`sih141.protocol.verify` does about ``m_C = 0``.
+
+The conditional bound is untouched by all of this:
+``repudiation_bound(params, matched_records=13) = 0.9964``, and ``0.5 < 0.9964``.
+The mathematics was never wrong. The advertising was.
+
+**4b-iii. Is there an honest unconditional number? Only with an abort rule.**
+Worst-casing over ``M`` instead of averaging is legitimate and useless:
+``exp(-M gap^2/8)`` decreases in ``M``, ``M = 0`` makes repudiation impossible
+(Bob has nothing to accept), so the supremum over everything else is
+``exp(-gap^2/8) = 0.99973`` at the shipped parameters. Nor is that slack: the
+strategy above achieves ``1/2`` at every ``L``, so **no unconditional bound below
+``1/2`` exists for a signer who can read the recipients' logged bases**, at any
+key length whatever. Key length does not help, because the failure is not
+statistical.
+
+What does help is refusing to score an anomalously small matched set. Suppose Bob
+declines to accept unless his own ``|M_B| >= m_min``. Repudiation needs Bob to
+accept, so on that event ``M >= m_B >= m_min``, and off it there is nothing to
+bound:
+
+.. code-block:: text
+
+    P(repudiation) <= exp(-m_min gap^2 / 8)      every Alice strategy, no (IND)
+
+which is :func:`repudiation_bound_with_abort`. It is a *local* rule -- Bob knows
+``m_B`` without asking anyone -- and it is nearly free, because on an honest run
+``m_B ~ Bin(L, 1/n)`` is tightly concentrated: at
+:data:`~sih141.protocol.params.DEFAULT_PARAMS` the shipped floor
+``m_min = 36555`` (:func:`~sih141.protocol.verify.minimum_matched_count`, eleven
+standard deviations below ``E[m_B] = 38400``) costs an honest run ``2.5e-31`` in
+extra abort probability (:func:`matched_shortfall_probability`) and buys a
+genuine unconditional ``4.4e-5``. Requiring *both* verifiers to have cleared it
+-- which is what a reject verdict from Charlie means -- puts ``M >= 2 m_min``
+and buys ``1.9e-9``: see
+:func:`~sih141.protocol.verify.enforced_repudiation_bound`, which is that
+statement wired to the floor the code applies.
+
+**Exactly which event that bounds.** Bob accepts, and Charlie *reaches a verdict
+of reject* -- or holds no matched record at all, which section 4b-i showed is
+inside the same Hoeffding event. It does **not** cover a third outcome that the
+floor itself creates: Charlie holding a matched set that is non-empty but below
+*his* floor, on which he returns no verdict. Whether that is a repudiation
+success is a convention, and the two conventions differ sharply:
+
+* As a **no-verdict abort** (which is how :mod:`sih141.protocol.verify` frames
+  it, with its own reason code), the bound above is complete. The run is visibly
+  anomalous -- an honest run trips the floor with probability ``~1e-31`` at the
+  shipped parameters -- and Bob has not transferred anything he can be told he
+  should have.
+* As a **transfer failure counted against the scheme**, the floor opens a route
+  the exponent does not close. A log-reading Alice aims ``M`` at ``2 m_min``
+  exactly, using only clean matched records: Bob accepts whenever
+  ``m_B >= m_min``, Charlie is below his floor whenever ``m_C < m_min``, and one
+  fair coin per record decides the split of a total whose mean is
+  ``M/2 = m_min``. She wins with probability ``~1/2``. The exponent is
+  irrelevant here because nothing about the *rate* is being deviated -- only the
+  count is.
+
+Closing the second reading needs the verifiers to compare counts. With a pooled
+floor ``m_B + m_C >= M_min`` on top of the per-verifier one, Charlie's
+below-floor abort demands ``m_C < m_min`` against a mean of ``M/2 >= M_min/2``,
+which Hoeffding bounds by ``exp(-2 (M_min/2 - m_min)^2 / M_min)``, worst at
+``M = M_min``. At :data:`~sih141.protocol.params.DEFAULT_PARAMS` with
+``m_min = 36555`` and ``M_min = 75000``: repudiation ``1.1e-9``, the abort route
+``4.6e-11``, honest cost ``7.8e-16``. That is an unconditional total of about
+``1.2e-9`` -- within a factor of two of the figure that used to be published as
+unconditional, and this time actually unconditional. It costs one extra classical
+message, because ``m_B + m_C`` is not local to either verifier.
+
+**What is implemented.** As this is written :mod:`sih141.protocol.verify`
+enforces a per-verifier floor (``minimum_matched_count``, ``36555`` at the
+shipped defaults), which is the rule this function prices: ``4.4e-5``,
+unconditional, for the first reading above. There is no pooled comparison, so the
+second reading is not covered by anything. This module cannot check either --
+``analysis`` depends only on ``params`` and never imports ``verify`` -- so pass
+the floor the deployment actually enforces and read the result as the statement
+above, not as a blanket guarantee.
 
 *The older in-model bound* -- split at the midpoint, apply Hoeffding to whichever
 of the two verifiers must deviate, optionally sharpen to relative entropy --
@@ -351,7 +570,8 @@ only within family 4a. It is retained because it is the right yardstick for
 two is instructive: 4b's exponent is ``gap^2/8`` per matched *record* against
 4a's ``gap^2/2`` per matched *position* -- a factor of two once the two counts
 are put on the same footing -- and that factor, together with the smaller usable
-``gap``, is the whole cost of making the statement true.
+``gap``, is the whole cost of making the statement true. What it does not buy,
+and what no exponent can buy, is freedom from the counting assumption itself.
 
 5. Robustness
 -------------
@@ -375,17 +595,33 @@ and the whole-run abort probability (either verifier aborting) follows from the
 independence of the two records: ``P_B + P_C - P_B P_C`` exactly, or the union
 bound ``P_B + P_C`` for the bounded version.
 
+This is the one section where averaging over ``m`` needs nothing beyond honesty:
+on an honest run the declaration *is* the key Alice drew before either recipient
+chose a basis, so (IND) holds by construction. What these numbers do not describe
+is a party who *wants* an abort. A signer reading the recipients' logs drives
+both matched sets to ``0`` and fails the run with probability ``1``; that is a
+denial of service against availability, not a break of the signature, no
+threshold defends against it, and it is named here so that its absence from the
+numbers is deliberate.
+
 Where each bound is loose
 -------------------------
 Stated plainly, because a bound quoted without its slack is a number nobody can
 argue with.
 
 *Averaging over* ``m``
-    Not a source of looseness at all. ``E[exp(-mc)] = (1 - 1/n + e^-c/n)^L`` is
-    an identity, so :func:`forgery_bound` and friends give away nothing by
-    treating ``m`` as random. The commonly seen alternative -- "assume ``m =
-    L/3``" -- is not a bound in either direction, and is why ``matched=`` is an
-    opt-in argument here rather than the default.
+    Not a source of looseness -- a source of *assumption*, which is a different
+    and worse axis, so it is listed first. ``E[exp(-mc)] = (1 - 1/n + e^-c/n)^L``
+    is an identity and gives away nothing, but it is an identity about a random
+    variable whose law is ``Binomial(L, 1/n)``, and that law is (IND). An
+    adversary who violates (IND) does not make the average loose; he makes it
+    describe a different experiment from the one being run. Every averaged number
+    in this module is therefore conditional on a hypothesis about the *interface*
+    -- see section 0 -- and the repudiation case, where the interface actually
+    fails, is section 4b-ii. The commonly seen alternative, "assume ``m = L/3``",
+    is worse still: not a bound in either direction, and it hides the same
+    assumption behind a constant. That is why ``matched=`` is an explicit
+    argument here, and why :func:`repudiation_bound` makes it mandatory.
 
 *Forgery, Hoeffding*
     The Bernoulli parameter is exactly ``1/2``, so Hoeffding's assumption of
@@ -404,9 +640,12 @@ argue with.
     comes from *adding* the two verifiers' conditions when in any realisation
     only one of them has to be extreme; a sharper treatment would buy a factor
     of order two in the exponent. What it is *not* loose about is the adversary:
-    the derivation conditions on the records and uses only the recipients'
-    private coins, so there is no strategy class it fails to cover and no ``q``
-    to maximise over.
+    the derivation conditions on the records **and on the declaration**, and uses
+    only the recipients' private coins, so there is no strategy class it fails to
+    cover and no ``q`` to maximise over. That property belongs to the conditional
+    statement at the observed ``M``; it does **not** survive the average over
+    ``M``, which is a separate claim needing (IND) and is the one that was
+    over-advertised. See section 4b.
 
     The in-model expression is much tighter and covers much less. At the shipped
     thresholds :func:`symmetric_repudiation_bound` has exponent
@@ -441,10 +680,18 @@ number of terms. Instant at :data:`~sih141.protocol.params.DEMO_PARAMS`; at
 :func:`repudiation_probability`, whose rejection branch sums the *long* tail at
 every matched count. **The bounds are O(1)** -- they are closed forms, not sums
 -- so a sweep, a report table or a dashboard should quote
-:func:`forgery_bound`, :func:`recipient_forgery_bound` and
-:func:`repudiation_bound`, and reserve the exact functions for the short key
-lengths where a cross-check against simulation is affordable. That is the
-regime ``tests/test_protocol_analysis.py`` works in.
+:func:`forgery_bound`, :func:`recipient_forgery_bound` and, for repudiation,
+:func:`repudiation_bound` at the run's own ``m_B + m_C``; and reserve the exact
+functions for the short key lengths where a cross-check against simulation is
+affordable. That is the regime ``tests/test_protocol_analysis.py`` works in.
+:func:`matched_shortfall_probability` is ``O(L)`` and also cheap.
+
+A report that has to print one repudiation number *before* a run exists has three
+choices and no fourth: :func:`repudiation_bound_with_abort` at a floor the
+verifier actually enforces (nothing in this package enforces one yet),
+:func:`averaged_repudiation_bound` with (IND) printed beside it, or the honest
+``1/2`` of section 4b-iii. Printing the averaged figure alone is the specific
+mistake this module now refuses to make convenient.
 
 All summation is done in log space with a max-shifted exponential sum, so
 probabilities far below ``1e-308`` underflow to ``0.0`` only at the final
@@ -498,6 +745,7 @@ __all__ = [
     "max_accepted_mismatches",
     "matched_statistics",
     "matched_count_distribution",
+    "matched_shortfall_probability",
     "depolarising_error_rate",
     "honest_statistics",
     "forgery_probability",
@@ -506,6 +754,8 @@ __all__ = [
     "recipient_forgery_bound",
     "repudiation_probability",
     "repudiation_bound",
+    "averaged_repudiation_bound",
+    "repudiation_bound_with_abort",
     "symmetric_repudiation_bound",
     "honest_abort_probability",
     "honest_abort_bound",
@@ -636,7 +886,7 @@ def _as_probability(value: Any, name: str) -> float:
     return result
 
 
-def _as_matched(matched: Any) -> int:
+def _as_matched(matched: Any, *, name: str = "matched") -> int:
     """Coerce and check an explicit matched-set size.
 
     Parameters
@@ -644,6 +894,8 @@ def _as_matched(matched: Any) -> int:
     matched : int
         The number of matched positions to condition on. Must be positive: with
         an empty matched set there is no rate and therefore no bound to state.
+    name : str, optional
+        Argument name quoted in the error messages.
 
     Returns
     -------
@@ -659,23 +911,64 @@ def _as_matched(matched: Any) -> int:
     """
     if isinstance(matched, bool):
         raise TypeError(
-            f"matched must be a positive integer, got the boolean {matched!r}"
+            f"{name} must be a positive integer, got the boolean {matched!r}"
         )
     if not isinstance(matched, numbers.Integral):
         raise TypeError(
-            f"matched must be a positive integer, got {type(matched).__name__}; "
+            f"{name} must be a positive integer, got {type(matched).__name__}; "
             f"it counts positions."
         )
     value = int(matched)
     if value < 1:
         raise ValueError(
-            f"matched must be at least 1, got {value}. Conditioning on an empty "
+            f"{name} must be at least 1, got {value}. Conditioning on an empty "
             f"matched set states a bound on a decision that is never taken -- "
             f"verify() raises there. Pass matched=None to average over the "
             f"Binomial(L, 1/|B|) distribution of the matched-set size instead, "
             f"which handles m = 0 correctly."
         )
     return value
+
+
+def _as_matched_records(matched_records: Any) -> int:
+    """Coerce the observed total matched-record count ``M = m_B + m_C``.
+
+    Parameters
+    ----------
+    matched_records : int
+        The number of matched records held by the two verifiers *together*,
+        as observed on the run being reported. There is no ``None`` here on
+        purpose; see the error message.
+
+    Returns
+    -------
+    int
+        ``matched_records`` as a plain int.
+
+    Raises
+    ------
+    TypeError
+        If ``matched_records`` is a boolean or not an integer.
+    ValueError
+        If ``matched_records`` is ``None``, or is not positive.
+    """
+    if matched_records is None:
+        raise ValueError(
+            "repudiation_bound requires the observed matched-record count "
+            "M = m_B + m_C; there is no averaged default. Averaging over "
+            "M ~ Binomial(2L, 1/|B|) assumes the declared bases are "
+            "independent of the recipients' logged bases (assumption (IND) in "
+            "this module's docstring), which a signer reading both raw logs "
+            "violates -- that adversary pins M at 13 for every L and repudiates "
+            "with probability 1/2, against an averaged bound of 6.9e-10 at the "
+            "shipped defaults. Pass matched_records=bob.matched_count + "
+            "charlie.matched_count from the run's two VerificationResults for "
+            "the per-run guarantee, "
+            "repudiation_bound_with_abort(...) for an a-priori one, or "
+            "averaged_repudiation_bound(params, signer_sees_recipient_bases="
+            "False) if (IND) is genuinely enforced by your deployment."
+        )
+    return _as_matched(matched_records, name="matched_records")
 
 
 def _as_method(method: Any) -> BoundMethod:
@@ -1010,7 +1303,11 @@ class MatchedStatistics:
 
         Falls as ``1 / sqrt(L)``, which is why the bounds may be stated in terms
         of ``E[|M_R|]`` without much loss once ``L`` is large -- and why they are
-        nevertheless averaged over ``m`` here, since averaging is free.
+        nevertheless averaged over ``m`` here, since averaging is exact rather
+        than approximate. Both statements describe a matched count that is
+        binomial, i.e. both assume (IND); an adversary who chooses the
+        declaration from the recipient's log is not near ``E[|M_R|]`` at all,
+        and this ratio says nothing about him.
         """
         return math.sqrt(self.variance) / self.expected
 
@@ -1023,6 +1320,12 @@ def matched_statistics(params: ProtocolParams) -> MatchedStatistics:
     indicators are independent across positions: ``|M_R| ~ Binomial(L, 1/|B|)``.
     Section 1 of the module docstring derives it, including the fact that the
     same distribution holds against a *forged* declaration.
+
+    That last clause is assumption (IND), not a theorem: it holds for any
+    declaration chosen without sight of the recipient's logged bases, and fails
+    outright for one chosen with it, where ``|M_R|`` is whatever the adversary
+    wants it to be. Everything returned here is a statement about an honest run
+    or an (IND)-respecting adversary.
 
     Parameters
     ----------
@@ -1068,6 +1371,11 @@ def matched_count_distribution(params: ProtocolParams) -> np.ndarray:
     Entry ``m`` is ``C(L, m) (1/|B|)^m (1 - 1/|B|)^(L-m)``. Computed in log space
     from exact log-factorials, so the tail entries are accurate rather than
     catastrophically cancelled.
+
+    The binomial law is assumption (IND) -- see section 0 of the module
+    docstring. This is the distribution of the matched count on an honest run, or
+    against any declaration chosen without sight of the recipient's logged bases;
+    it is not the distribution an adversary with that sight produces.
 
     Parameters
     ----------
@@ -1175,6 +1483,11 @@ def honest_statistics(
     ``p_e``, ``e_R | m ~ Binomial(m, p_e)`` and section 2 of the module docstring
     gives ``E[r_R] = p_e`` and ``Var[r_R] = p_e (1 - p_e) E[1/m]``, the
     expectation being over ``m ~ Binomial(L, 1/|B|)`` conditioned on ``m >= 1``.
+
+    An honest run satisfies (IND) by construction -- Alice declares the key she
+    drew before either recipient chose a basis -- so the averaging here needs no
+    hypothesis beyond honesty itself. It is a description of a good run, not a
+    bound on a bad one.
 
     Parameters
     ----------
@@ -1492,6 +1805,14 @@ def forgery_probability(
 
     Notes
     -----
+    **It also assumes (IND).** The sum above weights ``P(Bin(L, 1/|B|) = m)``,
+    which is the law of the matched count only while Eve's declared bases are
+    independent of the verifier's logged ones -- section 0. That is part of the
+    stated adversary model rather than an oversight (Eve holds no record and the
+    ``c_i`` are never published), but it is an assumption about what the
+    surrounding code lets her see, and if it fails her acceptance probability
+    rises to ``1/2`` regardless of ``L``. See section 3 for that calculation.
+
     **This is the weakest adversary in the model, and it is not the number a
     security claim should quote.** Eve holds nothing; a recipient holds his own
     measurement record and, after symmetrisation, half of the other verifier's
@@ -1561,9 +1882,12 @@ def forgery_bound(
         :mod:`sih141.protocol.params`.
     matched : int or None, optional
         If given, condition on exactly this many matched positions and return the
-        conditional bound. If ``None`` (the default), average over the matched
-        count, which is exact and is the honest thing to report for a run whose
-        ``m`` is not yet known.
+        conditional bound -- which needs no assumption about how the declaration
+        was chosen. If ``None`` (the default), average over the matched count,
+        which is exact under (IND) and is the honest thing to report for a run
+        whose ``m`` is not yet known *and* whose forger cannot see the
+        verifier's logged bases. Section 0 says what happens when she can; the
+        short version is that ``matched=1`` is then the honest number.
 
     Returns
     -------
@@ -1656,6 +1980,12 @@ def recipient_forgery_probability(
 
     and then the same double binomial sum as :func:`forgery_probability`, under
     the same convention that an empty scored set is not an acceptance.
+
+    ``m ~ Bin(L, p_s)`` presumes the forger cannot see the bases his target
+    logged on the *retained* positions -- assumption (IND) in the shape it takes
+    for this adversary, spelled out in section 3b. He is granted everything else:
+    his own records, which positions were swapped, and Charlie's entry verbatim
+    on each of them. One more item and there is no bound at all.
 
     Parameters
     ----------
@@ -1758,6 +2088,13 @@ def recipient_forgery_bound(
         relevant count here is ``Bin(L, p_s)`` with ``p_s = 2/3``, not the
         ``Bin(L, 1/n)`` of an outside forger.
 
+        The averaged form assumes the forger cannot see the bases his *target*
+        logged on the retained positions -- section 3b. That is (IND) again, in
+        the shape it takes for this adversary, and it is a statement about what
+        :mod:`sih141.protocol.symmetrise` reveals. If it fails, ``rho`` collapses
+        to ``0`` and no bound below ``1`` exists; the conditional form remains
+        exactly as valid as the rate it is fed.
+
     Returns
     -------
     float
@@ -1858,7 +2195,8 @@ def repudiation_probability(
 
     See Also
     --------
-    repudiation_bound : The guarantee, uniform over *every* Alice strategy.
+    repudiation_bound : The guarantee, uniform over *every* Alice strategy, at
+        the matched-record count a run actually produced.
     symmetric_repudiation_bound : The uniform-in-``q`` bound for this family.
 
     Notes
@@ -1871,6 +2209,13 @@ def repudiation_probability(
     fraction of positions repudiates with probability ``1`` against
     *unsymmetrised* records at every ``L``, exceeding
     ``sup_q repudiation_probability`` without limit.
+
+    The narrowness cuts one useful way: because the family is defined by a
+    single ``q`` applied to states Alice prepared, it contains no strategy that
+    reads the recipients' logs, so the ``m ~ Bin(L, 1/|B|)`` factors here are
+    consistent with the family rather than assumed on top of it. That is the only
+    sense in which this expression is safe from the failure of section 4b-ii, and
+    it is bought by covering almost nothing.
 
     What makes the scheme safe is not this function but the symmetrisation
     exchange, and the statement that covers every strategy is
@@ -1945,32 +2290,31 @@ def _kl_repudiation_exponent(s_a: float, s_v: float) -> float:
     return objective(0.5 * (low + high))
 
 
-def repudiation_bound(
-    params: ProtocolParams, *, matched_records: int | None = None
-) -> float:
-    """Upper bound on repudiation, valid for **every** Alice strategy.
+def repudiation_bound(params: ProtocolParams, *, matched_records: int) -> float:
+    """Per-run repudiation bound, valid for **every** Alice strategy.
 
-    The scheme's non-repudiation guarantee, and the only function in this module
-    that is one. Section 4b of the module docstring derives it; the structure is
-    what matters here:
+    The scheme's non-repudiation guarantee, and the only statement in this module
+    that is one with no hypothesis attached. Section 4b-i of the module docstring
+    derives it; the structure is what matters here:
 
-    * It conditions on the two recipients' raw records -- whatever Alice
-      prepared, however asymmetric, adaptive or entangled. There is no adversary
-      model left to be wrong about, and in particular no per-position ``q``.
+    * It conditions on the two recipients' raw records **and on the
+      declaration** -- whatever Alice prepared, however asymmetric, adaptive or
+      entangled, and whatever she computed the declaration from, both raw logs
+      included. There is no adversary model left to be wrong about, no
+      per-position ``q``, and no independence assumption of any kind.
     * The only randomness used is the recipients' private symmetrisation coins
       (:mod:`sih141.protocol.symmetrise`), which Alice can neither see nor
       influence. Those coins split a *fixed* total of matched and mismatched
-      records between the two verifiers, so ``m_B + m_C`` and ``e_B + e_C`` are
-      constants and repudiation demands a large deviation of the split.
+      records between the two verifiers, so ``M = m_B + m_C`` and ``e_B + e_C``
+      are constants and repudiation demands a large deviation of the split.
     * Hoeffding over ``L`` independent two-point coin variables, of which at
-      most ``M`` have non-zero range, gives ``exp(-M gap**2 / 8)``; the
-      ``m_C = 0`` corner, where Charlie rejects for want of evidence rather than
-      because of it, is added separately as ``(1 - 1/|B|)**L``.
+      most ``M`` have non-zero range, gives the result. The ``m_C = 0`` corner
+      needs no separate term: it forces ``m_B = M`` and ``e_B = E``, and Bob's
+      acceptance then *is* the deviation event, reached non-strictly.
 
     .. code-block:: text
 
-        P_rep <= (1 - 1/n)^L + E[exp(-M gap^2 / 8)],   M ~ Bin(2L, 1/n)
-              =  (1 - 1/n)^L + (1 - 1/n + exp(-gap^2/8)/n)^(2L)
+        P(repudiation | records, declaration)  <=  exp(-M gap^2 / 8)
 
     **Without symmetrisation this bound does not apply and no bound does**: the
     protocol variant produced by
@@ -1981,12 +2325,260 @@ def repudiation_bound(
     ----------
     params : ProtocolParams
         The parameter set.
-    matched_records : int or None, optional
-        Condition on this many matched records **across the two verifiers
-        together** -- ``M = m_B + m_C``, whose mean is ``2L/|B|``, not the
-        per-verifier ``L/|B|``. ``None`` (the default) averages over
-        ``M ~ Binomial(2L, 1/|B|)``, which is exact and is the honest thing to
-        report before a run has happened.
+    matched_records : int
+        The number of matched records held by the two verifiers **together**,
+        ``M = m_B + m_C``, as *observed on the run being reported*. Mandatory,
+        and mandatory on purpose: the averaged form is a different claim needing
+        a different function (:func:`averaged_repudiation_bound`). Note the
+        count is over the pair, so its honest-run mean is ``2L/|B|``, not the
+        per-verifier ``L/|B|``.
+
+        Passing an *expected* count rather than an observed one -- ``2L//3``,
+        say -- quietly restores the assumption this signature exists to expose,
+        because the expectation is only the right number while the declaration is
+        independent of the recipients' logged bases. Read ``M`` off the run:
+        ``result_bob.matched_count + result_charlie.matched_count``.
+
+        Both counts must be against the **same** declaration. The conservation
+        laws ``m_B + m_C = M`` and ``e_B + e_C = E`` hold because the two
+        verifiers score one fixed pair of records against one fixed declaration;
+        a run in which the forwarding hop altered the signature between them
+        (:attr:`sih141.protocol.session.SessionTranscript.forwarded_signature`)
+        is not a repudiation experiment at all, and no count from it belongs
+        here.
+
+    Returns
+    -------
+    float
+        An upper bound in ``[0, 1]``, decreasing in ``matched_records``.
+
+    Raises
+    ------
+    TypeError
+        If ``params`` is not a :class:`ProtocolParams` or ``matched_records`` is
+        not an integer.
+    ValueError
+        If ``matched_records`` is ``None`` or is not positive.
+
+    See Also
+    --------
+    averaged_repudiation_bound : The same bound averaged over ``M``, which needs
+        assumption (IND) and must not be quoted as unconditional.
+    repudiation_bound_with_abort : The a-priori guarantee an abort rule buys.
+    symmetric_repudiation_bound : The tighter bound for the narrow model.
+    repudiation_probability : The exact in-model probability.
+
+    Notes
+    -----
+    Small ``M`` is not a hypothetical. A signer who reads both recipients' raw
+    logs -- which :class:`~sih141.protocol.session.QDSSession` hands the
+    ``Signer`` seam -- can pin ``M = 13`` at every ``L`` and repudiate with
+    probability exactly ``1/2`` (section 4b-ii). This function reports ``0.9964``
+    for that run, which is correct, useless as reassurance, and exactly the point:
+    a bound that stays near ``1`` when the evidence is thin is telling the truth
+    about a run with thin evidence.
+
+    Examples
+    --------
+    >>> from sih141.protocol.analysis import repudiation_bound
+    >>> from sih141.protocol.params import DEFAULT_PARAMS
+    >>> f"{repudiation_bound(DEFAULT_PARAMS, matched_records=76800):.2e}"
+    '6.90e-10'
+    >>> round(repudiation_bound(DEFAULT_PARAMS, matched_records=13), 4)
+    0.9964
+    """
+    checked = _as_params(params)
+    limit = _as_matched_records(matched_records)
+    exponent = checked.gap**2 / 8.0
+    return _conditional_or_averaged(
+        2 * checked.key_length, checked.match_probability, exponent, limit
+    )
+
+
+def averaged_repudiation_bound(
+    params: ProtocolParams, *, signer_sees_recipient_bases: bool
+) -> float:
+    """Repudiation bound averaged over ``M``. **Requires assumption (IND).**
+
+    The number this package published for a year as its non-repudiation
+    guarantee, ``6.9e-10`` at :data:`~sih141.protocol.params.DEFAULT_PARAMS`. It
+    is a real bound and it is not a guarantee, because it averages the per-run
+    bound of :func:`repudiation_bound` over
+
+    .. code-block:: text
+
+        M ~ Binomial(2L, 1/n)      <-- this line is the assumption
+
+        P_rep <= (1 - 1/n)^L + (1 - 1/n + exp(-gap^2/8)/n)^(2L)
+
+    and ``M`` has that law only while the declared bases are independent of the
+    recipients' logged bases -- assumption (IND) of the module docstring. The
+    matched set is ``{i : c_i == d_i}``, so a signer who reads the logs chooses
+    it, and chooses it small.
+
+    **The concrete strategy that breaks it.** Alice reads both raw logs (the
+    ``Signer`` seam of :class:`~sih141.protocol.session.QDSSession` is handed
+    them), declares at every position a basis appearing in neither log, and keeps
+    twelve exceptions: eleven where she declares Bob's basis and Bob's outcome,
+    and one -- where the two logs used the same basis and recorded opposite
+    outcomes -- where she declares that basis and Bob's outcome. Then ``M = 13``
+    with probability ``1`` at every ``L``, one of the thirteen matched records is
+    wrong, one exchange coin decides who scores it, and she repudiates with
+    probability exactly ``1/2``. Measured: ``0.45`` to ``0.53`` over this
+    package's own simulator at ``L = 600`` and ``L = 115200``; an independent
+    audit measured ``0.46`` to ``0.58`` with a different construction. Against
+    ``6.9e-10``. The per-run bound at that ``M`` is ``0.9964`` and is not
+    violated.
+
+    Parameters
+    ----------
+    params : ProtocolParams
+        The parameter set.
+    signer_sees_recipient_bases : bool
+        Mandatory, and an assertion about the deployment rather than a switch.
+        Pass ``False`` to state that no party able to choose the declaration can
+        see either recipient's logged bases -- then (IND) holds and the returned
+        number means what it says. ``True`` raises: there is no averaged bound in
+        that case, and the honest options are named in the message.
+
+    Returns
+    -------
+    float
+        An upper bound in ``[0, 1]``, valid under (IND).
+
+    Raises
+    ------
+    TypeError
+        If ``params`` is not a :class:`ProtocolParams`, or
+        ``signer_sees_recipient_bases`` is not a bool.
+    ValueError
+        If ``signer_sees_recipient_bases`` is ``True``.
+
+    See Also
+    --------
+    repudiation_bound : The per-run guarantee, which needs no assumption.
+    repudiation_bound_with_abort : The a-priori guarantee an abort rule buys.
+
+    Notes
+    -----
+    The ``(1 - 1/n)**L`` term is a legacy allowance for the ``m_C = 0`` corner.
+    Section 4b-i shows the corner is already inside the Hoeffding event, so the
+    term is pure slack -- at the shipped defaults it is ``e^-46679``, i.e. ``0.0``
+    in double precision -- but it is retained here because it is the expression
+    printed in :mod:`sih141.protocol.params` and ``docs/PHASE2.md``, and dropping
+    it would make the published figure and the code disagree by a term that
+    cannot matter. It is *also* a statement about the recipients' basis draws
+    rather than their coins, so it is (IND)-dependent too, which is a second
+    reason it has no business in :func:`repudiation_bound`.
+
+    Examples
+    --------
+    >>> from sih141.protocol.analysis import averaged_repudiation_bound
+    >>> from sih141.protocol.params import DEFAULT_PARAMS
+    >>> assuming_ind = averaged_repudiation_bound(
+    ...     DEFAULT_PARAMS, signer_sees_recipient_bases=False
+    ... )
+    >>> f"{assuming_ind:.2e}"
+    '6.92e-10'
+    >>> averaged_repudiation_bound(
+    ...     DEFAULT_PARAMS, signer_sees_recipient_bases=True
+    ... )
+    Traceback (most recent call last):
+        ...
+    ValueError: no averaged repudiation bound is valid when the signer can see...
+    """
+    checked = _as_params(params)
+    if not isinstance(signer_sees_recipient_bases, bool):
+        raise TypeError(
+            f"signer_sees_recipient_bases must be a bool, got "
+            f"{type(signer_sees_recipient_bases).__name__}. It asserts a fact "
+            f"about the deployment -- whether anyone who can choose the "
+            f"declaration can also read the recipients' logged bases -- not a "
+            f"rate or a count."
+        )
+    if signer_sees_recipient_bases:
+        raise ValueError(
+            "no averaged repudiation bound is valid when the signer can see the "
+            "recipients' logged bases: the matched set is {i : c_i == d_i}, so "
+            "she chooses M rather than drawing it from Binomial(2L, 1/|B|), and "
+            "the strategy in section 4b-ii pins M = 13 at every L and repudiates "
+            "with probability 1/2. Use repudiation_bound(params, "
+            "matched_records=<observed m_B + m_C>) for the per-run guarantee, or "
+            "repudiation_bound_with_abort(params, minimum_matched_records=...) "
+            "for an a-priori one, evaluated at the matched-count floor your "
+            "verifier actually enforces and read with the event it covers "
+            "(section 4b-iii) rather than as a blanket number."
+        )
+    exponent = checked.gap**2 / 8.0
+    coin_term = _averaged_exponential_bound(
+        2 * checked.key_length, checked.match_probability, exponent
+    )
+    # Legacy allowance for the m_C = 0 corner; slack, but it is the published
+    # expression. See the Notes section.
+    empty = (1.0 - checked.match_probability) ** checked.key_length
+    return min(1.0, coin_term + empty)
+
+
+def repudiation_bound_with_abort(
+    params: ProtocolParams, *, minimum_matched_records: int
+) -> float:
+    """A-priori repudiation bound for a verifier that aborts on thin evidence.
+
+    The honest answer to "what unconditional number can this scheme quote?".
+    Section 4b-iii of the module docstring: without an abort rule, none below
+    ``1/2``, because a signer who reads the recipients' logs repudiates with
+    probability ``1/2`` at every key length. With one, the per-run bound of
+    :func:`repudiation_bound` evaluated at the floor the rule enforces:
+
+    .. code-block:: text
+
+        P(repudiation)  <=  exp(-m_min gap^2 / 8)
+
+    for **every** Alice strategy, with no (IND) and no model of her at all. The
+    argument is one line. Repudiation requires Bob to accept, the rule lets him
+    accept only when his own matched set has at least ``m_min`` entries, and
+    ``M = m_B + m_C >= m_B``; so on the repudiation event ``M >= m_min``, and off
+    it there is nothing to bound.
+
+    Two rules qualify. A **local** one -- Bob refuses unless ``|M_B| >= m_min`` --
+    needs no extra communication, since Bob knows his own count. A **pooled** one
+    -- abort unless ``m_B + m_C >= M_min`` -- is stronger for the same standard
+    deviation, because the pooled count is twice as large, but costs one extra
+    classical message between the verifiers. Either way the argument here is the
+    floor on ``M``, so pass whichever floor the rule guarantees.
+
+    **Read the event carefully.** What is bounded is: Bob accepts, and Charlie
+    either reaches a verdict of *reject* or holds no matched record at all. A
+    floor applied at Charlie as well creates a third outcome -- a non-empty
+    matched set below his floor, on which he returns no verdict -- and this
+    expression does not cover it. Section 4b-iii gives the attack that reading
+    admits (a log-reading Alice aims ``M`` at ``2 m_min`` and splits the coins,
+    winning with probability ``~1/2``) and the pooled floor that closes it. This
+    is not a subtlety that can be deferred: it is the difference between a
+    guarantee and a guarantee-shaped number.
+
+    As this is written :mod:`sih141.protocol.verify` enforces a per-verifier
+    floor (:func:`~sih141.protocol.verify.minimum_matched_count`, ``36555`` at
+    :data:`~sih141.protocol.params.DEFAULT_PARAMS`, framed there as a no-verdict
+    abort rather than a rejection) and no pooled comparison. This module cannot
+    check that -- ``analysis`` depends only on ``params`` -- so the floor is an
+    argument, and the caller is responsible for passing one the deployment
+    actually enforces. **Rather than choose one, call
+    :func:`~sih141.protocol.verify.enforced_repudiation_bound`**, which reads
+    the shipped floor and evaluates this function at ``2 m_min`` -- both
+    verifiers must clear the floor to reach a verdict, so a *reject verdict*
+    from Charlie means ``M >= 2 m_min``. That is ``1.9e-09`` at the shipped
+    defaults, and it is the only a-priori repudiation figure this package is
+    entitled to publish.
+
+    Parameters
+    ----------
+    params : ProtocolParams
+        The parameter set.
+    minimum_matched_records : int
+        The floor on ``M = m_B + m_C`` that the abort rule guarantees on any run
+        a verifier is willing to accept. For a local rule at Bob this is his own
+        ``m_min``; for a pooled rule it is ``M_min``.
 
     Returns
     -------
@@ -1996,35 +2588,152 @@ def repudiation_bound(
     Raises
     ------
     TypeError
-        If ``params`` is not a :class:`ProtocolParams` or ``matched_records`` is
-        not an integer.
+        If ``params`` is not a :class:`ProtocolParams` or
+        ``minimum_matched_records`` is not an integer.
     ValueError
-        If ``matched_records`` is not positive.
+        If ``minimum_matched_records`` is not positive.
 
     See Also
     --------
-    symmetric_repudiation_bound : The tighter bound for the narrow model.
-    repudiation_probability : The exact in-model probability.
+    matched_shortfall_probability : What the rule costs an honest run.
+    repudiation_bound : The same bound at an observed rather than a floored ``M``.
 
     Examples
     --------
-    >>> from sih141.protocol.analysis import repudiation_bound
+    Both rows use the floor :mod:`sih141.protocol.verify` actually enforces,
+    ``m_min = 36555``, so the numbers here are the shipped ones rather than an
+    illustration. Bob's own floor alone buys ``4.4e-05``; requiring both
+    verifiers to have cleared it -- which a *reject verdict* from Charlie does --
+    buys ``1.9e-09``, within a factor of three of the number that used to be
+    published as unconditional. The honest-run cost is far below every other
+    failure probability in the scheme, which is what makes the rule worth having.
+
+    >>> from sih141.protocol.analysis import (
+    ...     matched_shortfall_probability, repudiation_bound_with_abort
+    ... )
     >>> from sih141.protocol.params import DEFAULT_PARAMS
-    >>> f"{repudiation_bound(DEFAULT_PARAMS):.2e}"
-    '6.92e-10'
-    >>> f"{repudiation_bound(DEFAULT_PARAMS, matched_records=76800):.2e}"
-    '6.90e-10'
+    >>> from sih141.protocol.verify import minimum_matched_count
+    >>> floor = minimum_matched_count(DEFAULT_PARAMS)
+    >>> floor
+    36555
+    >>> local = repudiation_bound_with_abort(
+    ...     DEFAULT_PARAMS, minimum_matched_records=floor
+    ... )
+    >>> both = repudiation_bound_with_abort(
+    ...     DEFAULT_PARAMS, minimum_matched_records=2 * floor
+    ... )
+    >>> f"{local:.1e}", f"{both:.1e}"
+    ('4.4e-05', '1.9e-09')
+    >>> cost = matched_shortfall_probability(
+    ...     DEFAULT_PARAMS, minimum_matched=floor
+    ... )
+    >>> f"{cost:.1e}"
+    '2.5e-31'
     """
     checked = _as_params(params)
-    limit = None if matched_records is None else _as_matched(matched_records)
+    floor = _as_matched(minimum_matched_records, name="minimum_matched_records")
     exponent = checked.gap**2 / 8.0
-    coin_term = _conditional_or_averaged(
-        2 * checked.key_length, checked.match_probability, exponent, limit
+    return _conditional_or_averaged(
+        2 * checked.key_length, checked.match_probability, exponent, floor
     )
-    # Charlie holding no evidence at all is a rejection the coin argument does
-    # not cover, because there is no rate to deviate.
-    empty = (1.0 - checked.match_probability) ** checked.key_length
-    return min(1.0, coin_term + empty)
+
+
+def matched_shortfall_probability(
+    params: ProtocolParams, *, minimum_matched: int, pooled: bool = False
+) -> float:
+    """Probability that an **honest** run falls short of an abort threshold.
+
+    The price of the rule :func:`repudiation_bound_with_abort` presumes, stated
+    as the number it costs robustness. On an honest run the matched count is
+    binomial -- ``Bin(L, 1/|B|)`` for one verifier's own count, ``Bin(2L, 1/|B|)``
+    for the two pooled -- so
+
+    .. code-block:: text
+
+        P(shortfall) = P(Bin(trials, 1/n) < minimum_matched)
+
+    summed exactly, in log space, over the whole lower tail.
+
+    The count is concentrated: its standard deviation is ``sqrt(2L/9) = 160`` at
+    :data:`~sih141.protocol.params.DEFAULT_PARAMS` against a mean of ``38400``,
+    so the shipped floor of ``36555``
+    (:func:`~sih141.protocol.verify.minimum_matched_count`, eleven standard
+    deviations low) costs an honest verifier ``2.5e-31`` while flooring ``M`` at
+    ``73110`` across the pair. That asymmetry -- a Gaussian-tail cost against an
+    exponential-in-``m_min`` gain -- is the whole argument for the abort rule.
+
+    Like every other honest-run number here this one assumes (IND); an adversary
+    who chooses the declaration from the logs can drive the matched count to
+    ``0`` at will, which is precisely why the rule is worth having.
+
+    Parameters
+    ----------
+    params : ProtocolParams
+        The parameter set.
+    minimum_matched : int
+        The abort threshold. The returned probability is for *strictly* fewer
+        than this many matched entries, matching the rule "accept only if the
+        count is at least ``minimum_matched``". With ``minimum_matched=1`` this
+        is exactly :attr:`MatchedStatistics.empty_probability`.
+    pooled : bool, optional
+        ``False`` (the default) for one verifier's own count, ``Bin(L, 1/|B|)``,
+        which is the locally checkable rule. ``True`` for the two verifiers'
+        counts pooled, ``Bin(2L, 1/|B|)``, which is the rule needing one extra
+        classical message.
+
+    Returns
+    -------
+    float
+        A probability in ``[0, 1]``.
+
+    Raises
+    ------
+    TypeError
+        If ``params`` is not a :class:`ProtocolParams`, ``minimum_matched`` is
+        not an integer, or ``pooled`` is not a bool.
+    ValueError
+        If ``minimum_matched`` is not positive.
+
+    See Also
+    --------
+    repudiation_bound_with_abort : What the rule buys.
+    matched_statistics : Mean, variance and the ``m = 0`` corner.
+
+    Examples
+    --------
+    >>> from sih141.protocol.analysis import (
+    ...     matched_shortfall_probability, matched_statistics
+    ... )
+    >>> from sih141.protocol.params import DEFAULT_PARAMS, ProtocolParams
+    >>> params = ProtocolParams(key_length=30)
+    >>> matched_shortfall_probability(params, minimum_matched=1) == (
+    ...     matched_statistics(params).empty_probability
+    ... )
+    True
+    >>> cost = matched_shortfall_probability(
+    ...     DEFAULT_PARAMS, minimum_matched=73110, pooled=True
+    ... )
+    >>> f"{cost:.1e}"
+    '1.4e-60'
+    """
+    checked = _as_params(params)
+    threshold = _as_matched(minimum_matched, name="minimum_matched")
+    if not isinstance(pooled, bool):
+        raise TypeError(
+            f"pooled must be a bool, got {type(pooled).__name__}. It selects "
+            f"which count the abort rule reads -- one verifier's own "
+            f"Binomial(L, 1/|B|) or the pair's Binomial(2L, 1/|B|) -- not a "
+            f"count itself."
+        )
+    trials = 2 * checked.key_length if pooled else checked.key_length
+    if threshold > trials:
+        return 1.0
+    log_factorial = _log_factorial_table(trials)
+    log_pmf = _log_binomial_pmf_table(
+        trials, checked.match_probability, log_factorial
+    )
+    total = _logsumexp(log_pmf[:threshold])
+    return 0.0 if total == -math.inf else min(1.0, math.exp(total))
 
 
 def symmetric_repudiation_bound(
@@ -2067,7 +2776,9 @@ def symmetric_repudiation_bound(
     -------
     float
         An upper bound in ``[0, 1]`` on ``sup_q repudiation_probability(q)``,
-        and on nothing wider.
+        and on nothing wider. In particular it is *not* an upper bound on
+        repudiation: :func:`repudiation_bound` at the observed ``M`` is, and it
+        is the larger number.
 
     Raises
     ------
@@ -2089,9 +2800,14 @@ def symmetric_repudiation_bound(
     >>> from sih141.protocol.params import DEFAULT_PARAMS
     >>> f"{symmetric_repudiation_bound(DEFAULT_PARAMS, matched=38400):.2e}"
     '4.77e-19'
-    >>> symmetric_repudiation_bound(DEFAULT_PARAMS) < repudiation_bound(
-    ...     DEFAULT_PARAMS
-    ... )
+
+    The in-model number is far below the guarantee at the same evidence -- 38400
+    matched positions each, so 76800 matched records -- which is the price of
+    covering every strategy rather than one family:
+
+    >>> symmetric_repudiation_bound(
+    ...     DEFAULT_PARAMS, matched=38400
+    ... ) < repudiation_bound(DEFAULT_PARAMS, matched_records=76800)
     True
     """
     checked = _as_params(params)
@@ -2161,6 +2877,18 @@ def honest_abort_probability(
     --------
     honest_abort_bound : The exponential bound, for which ``method="kl"`` matters
         a great deal at small ``p_e``.
+
+    Notes
+    -----
+    This is the one family of numbers here where averaging over ``m`` is not an
+    assumption about an adversary: the declaration on an honest run *is* Alice's
+    own key, drawn before either recipient chose a basis, so (IND) holds by
+    construction. What the number does not cover is a party who wants an abort --
+    a signer who reads the recipients' logs can drive both matched sets to ``0``
+    and force a failure with probability ``1``. That is a denial of service, not
+    a break of the signature, and no threshold defends against it; it is out of
+    scope here and is called out in section 0 so that the omission is deliberate
+    rather than implied.
 
     Examples
     --------

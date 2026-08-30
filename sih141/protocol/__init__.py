@@ -108,6 +108,7 @@ from sih141.protocol.analysis import (
     BoundMethod,
     HonestStatistics,
     MatchedStatistics,
+    averaged_repudiation_bound,
     binary_kl_divergence,
     depolarising_error_rate,
     forgery_bound,
@@ -117,11 +118,13 @@ from sih141.protocol.analysis import (
     honest_abort_probability,
     honest_statistics,
     matched_count_distribution,
+    matched_shortfall_probability,
     matched_statistics,
     max_accepted_mismatches,
     recipient_forgery_bound,
     recipient_forgery_probability,
     repudiation_bound,
+    repudiation_bound_with_abort,
     repudiation_probability,
     symmetric_repudiation_bound,
 )
@@ -169,11 +172,18 @@ from sih141.protocol.symmetrise import (
     symmetrise_records,
 )
 from sih141.protocol.verify import (
+    HONEST_ABORT_BUDGET,
+    AbortReason,
+    MatchedSetTooSmall,
+    VerificationAbort,
     VerificationResult,
+    enforced_repudiation_bound,
     matched_positions,
+    minimum_matched_count,
     mismatch_positions,
     verify,
     verify_all,
+    verify_or_abort,
 )
 
 __all__ = [
@@ -216,6 +226,14 @@ __all__ = [
     "mismatch_positions",
     "verify",
     "verify_all",
+    # -- Phase C: the matched-count floor, and refusing to score below it ------ #
+    "HONEST_ABORT_BUDGET",
+    "AbortReason",
+    "VerificationAbort",
+    "MatchedSetTooSmall",
+    "minimum_matched_count",
+    "enforced_repudiation_bound",
+    "verify_or_abort",
     # -- orchestration, and the Phase 3 attack seams -------------------------- #
     "MESSAGE_BITS",
     "Distributor",
@@ -235,6 +253,7 @@ __all__ = [
     "max_accepted_mismatches",
     "matched_statistics",
     "matched_count_distribution",
+    "matched_shortfall_probability",
     "depolarising_error_rate",
     "honest_statistics",
     "forgery_probability",
@@ -243,6 +262,8 @@ __all__ = [
     "recipient_forgery_bound",
     "repudiation_probability",
     "repudiation_bound",
+    "averaged_repudiation_bound",
+    "repudiation_bound_with_abort",
     "symmetric_repudiation_bound",
     "honest_abort_probability",
     "honest_abort_bound",

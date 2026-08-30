@@ -52,6 +52,7 @@ What is pinned, in order of how badly it fails silently
 from __future__ import annotations
 
 import math
+from functools import partial
 
 import numpy as np
 import pytest
@@ -61,6 +62,7 @@ from sih141.protocol.analysis import (
     FORGER_MATCHED_MISMATCH_PROBABILITY,
     HonestStatistics,
     MatchedStatistics,
+    averaged_repudiation_bound,
     binary_kl_divergence,
     depolarising_error_rate,
     forgery_bound,
@@ -70,11 +72,13 @@ from sih141.protocol.analysis import (
     honest_abort_probability,
     honest_statistics,
     matched_count_distribution,
+    matched_shortfall_probability,
     matched_statistics,
     max_accepted_mismatches,
     recipient_forgery_bound,
     recipient_forgery_probability,
     repudiation_bound,
+    repudiation_bound_with_abort,
     repudiation_probability,
     symmetric_repudiation_bound,
 )
@@ -888,10 +892,17 @@ def test_recipient_forgery_bound_is_trivial_at_or_above_the_floor() -> None:
 #       exactly that family, so the cross-check is a check of the arithmetic --
 #       and only of the arithmetic. It cannot, by construction, detect that the
 #       family is too narrow, which is why it is labelled as a model check.
-#   4b. `repudiation_bound` is the guarantee. It conditions on the records and
-#       uses only the recipients' private exchange coins, so it must dominate
-#       the in-model probability *and* the out-of-model asymmetric attack that
-#       the family cannot express. Both are asserted.
+#   4b. `repudiation_bound` is the guarantee. It conditions on the records, on
+#       the declaration, and on the observed matched-record count, and uses only
+#       the recipients' private exchange coins, so it must dominate the in-model
+#       probability *and* the out-of-model asymmetric attack that the family
+#       cannot express. Both are asserted.
+#   4b-ii. `averaged_repudiation_bound` is that bound averaged over
+#       M ~ Bin(2L, 1/n), which is a *different claim*: it holds only while the
+#       declaration is independent of the recipients' logged bases. A signer who
+#       reads both raw logs violates it by nine orders of magnitude, and the
+#       simulation below is that adversary. The test exists so that the averaged
+#       figure can never again be presented as unconditional.
 # =========================================================================== #
 
 
@@ -1018,10 +1029,16 @@ def test_the_guarantee_dominates_an_attack_the_model_cannot_express() -> None:
     The same attack against *unsymmetrised* records succeeds with probability 1,
     which is asserted too -- it is the reason the guarantee needs the exchange
     and the reason the older bound was wrong rather than merely loose.
+
+    The bound compared against here is the *averaged* one, and that is legitimate
+    for this adversary and only for this adversary: she draws her declaration
+    before either recipient's basis is drawn, so assumption (IND) holds by
+    construction of the simulation and ``M ~ Bin(2L, 1/n)`` really is the law of
+    the matched count. An Alice who reads the logs is the next test.
     """
     params = ProtocolParams(key_length=90, s_a=1 / 64, s_v=1 / 16)
     trials = 20_000
-    bound = repudiation_bound(params)
+    bound = averaged_repudiation_bound(params, signer_sees_recipient_bases=False)
     rng = _rng(20)
     n_bases = len(params.bases)
     shape = (trials, params.key_length)
@@ -1097,20 +1114,329 @@ def test_the_guarantee_dominates_an_attack_the_model_cannot_express() -> None:
 
 
 def test_repudiation_bound_reproduces_the_documented_default_figure() -> None:
-    """The guarantee at ``M = 76800`` is the ``6.9e-10`` quoted in params.
+    """``6.9e-10`` is the *averaged* figure, and it is labelled as such.
 
     Recomputed here from the expression rather than read off, so the params
     docstring and the implementation are two statements that have to agree. Note
     ``matched_records`` counts matched records across *both* verifiers, which is
-    ``2L/|B|``, not the per-verifier ``L/|B|``.
+    ``2L/|B|``, not the per-verifier ``L/|B|``, and that the per-run bound
+    carries no ``(1 - 1/|B|)**L`` term: that corner is inside the Hoeffding
+    event, and the term is retained only in the averaged expression because it is
+    the one published in ``params`` and ``docs/PHASE2.md``.
     """
     conditional = repudiation_bound(DEFAULT_PARAMS, matched_records=76800)
     assert conditional == pytest.approx(
         math.exp(-76800 * DEFAULT_PARAMS.gap**2 / 8.0)
-        + (1.0 - DEFAULT_PARAMS.match_probability) ** DEFAULT_PARAMS.key_length
     )
-    assert repudiation_bound(DEFAULT_PARAMS) == pytest.approx(6.9e-10, rel=0.02)
-    assert repudiation_bound(DEFAULT_PARAMS) < 1e-9
+    averaged = averaged_repudiation_bound(
+        DEFAULT_PARAMS, signer_sees_recipient_bases=False
+    )
+    assert averaged == pytest.approx(6.9e-10, rel=0.02)
+    assert averaged < 1e-9
+    # The published figure and the per-run guarantee at the expected M agree to
+    # the width of the legacy slack term, which underflows to zero here.
+    assert averaged == pytest.approx(conditional, rel=0.01)
+
+
+def test_repudiation_bound_pins_the_audited_adversarial_case() -> None:
+    """``M = 13`` gives ``0.9964``, and that is the honest number for that run.
+
+    The audited attack (see the simulation below) pins the total matched-record
+    count at 13 and repudiates at roughly one half. The per-run bound at that
+    count is ``0.9964``: not violated, not reassuring, and correct. Pinned to
+    four decimals so that no future edit can quietly reintroduce an averaged
+    number in its place -- an averaged number at these parameters is ``6.9e-10``,
+    which the same run beats by nine orders of magnitude.
+    """
+    assert repudiation_bound(DEFAULT_PARAMS, matched_records=13) == (
+        pytest.approx(0.9964, abs=5e-5)
+    )
+    # It dominates every repudiation frequency the audit or this file measured.
+    assert repudiation_bound(DEFAULT_PARAMS, matched_records=13) > 0.58
+    # And it is a bound, not a constant: more evidence, more guarantee.
+    assert repudiation_bound(DEFAULT_PARAMS, matched_records=76800) < 1e-9
+
+
+def _simulate_log_reading_repudiation(
+    trials: int,
+    params: ProtocolParams,
+    rng: np.random.Generator,
+    *,
+    singles: int = 11,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Alice reads both raw logs and declares against them. Returns ``(M, rep)``.
+
+    Written from the specification, like every other simulator in this file, and
+    using no quantum resource at all -- the attack is entirely classical.
+
+    Phase A is honest: Alice draws ``(a_i, v_i)``, each recipient draws its own
+    basis and measures. Phase B is not. Alice reads both raw logs and declares,
+    at every position, a basis that appears in *neither* of them, which exists
+    for ``|B| = 3`` whatever the two logs say. That position is then matched at
+    neither verifier however the exchange coin falls. She keeps twelve
+    exceptions:
+
+    * one position where the two logs used the **same** basis and recorded
+      **opposite** outcomes: she declares that basis and Bob's outcome, so both
+      raw records are matched and exactly one of them is wrong;
+    * ``singles`` positions where the logs used **different** bases: she declares
+      Bob's basis and Bob's outcome, so exactly one raw record is matched there
+      and it is correct.
+
+    Hence ``M = singles + 2 = 13`` with probability 1 at every ``L``, and the
+    single wrong record is handed to Bob or to Charlie by one fair coin: if it
+    goes to Charlie he holds one mismatch in at most twelve matched records
+    (``r_C >= 1/12 > s_v``, rejects) while Bob holds only clean ones
+    (``r_B = 0 <= s_a``, accepts). So repudiation has probability exactly ``1/2``,
+    it does not depend on ``L``, and -- worth noting, because it is what makes
+    this attack independent of the empty-matched-set question -- Charlie always
+    holds evidence, so his rejection is on a rate rather than on a missing set.
+    """
+    n_bases = len(params.bases)
+    alice_bases, alice_bits = _draw_key(trials, params.key_length, n_bases, rng)
+    bob_bases, bob_bits = _measure(alice_bases, alice_bits, n_bases, rng)
+    charlie_bases, charlie_bits = _measure(
+        alice_bases, alice_bits, n_bases, rng
+    )
+
+    # The basis in neither log: the third one when they differ, a neighbour when
+    # they agree. Both are still inside B, so nothing here needs a symbol the
+    # verifier would refuse.
+    assert n_bases == 3, "the construction needs a third basis to hide in"
+    declared_bases = np.where(
+        bob_bases == charlie_bases,
+        (bob_bases + 1) % n_bases,
+        3 - bob_bases - charlie_bases,
+    ).astype(np.int8)
+    declared_bits = np.zeros_like(declared_bases)
+
+    for trial in range(trials):
+        both = np.flatnonzero(
+            (bob_bases[trial] == charlie_bases[trial])
+            & (bob_bits[trial] != charlie_bits[trial])
+        )
+        one = np.flatnonzero(bob_bases[trial] != charlie_bases[trial])
+        assert both.size >= 1 and one.size >= singles, "L too short for the attack"
+        chosen = np.concatenate(([both[0]], one[:singles]))
+        declared_bases[trial, chosen] = bob_bases[trial, chosen]
+        declared_bits[trial, chosen] = bob_bits[trial, chosen]
+
+    swap = rng.integers(
+        0, 2, size=declared_bases.shape, dtype=np.int8
+    ).astype(bool)
+    verdicts = []
+    counts = []
+    for own, other, threshold in (
+        ((bob_bases, bob_bits), (charlie_bases, charlie_bits), params.s_a),
+        ((charlie_bases, charlie_bits), (bob_bases, bob_bits), params.s_v),
+    ):
+        held_bases = np.where(swap, other[0], own[0]).astype(np.int8)
+        held_bits = np.where(swap, other[1], own[1]).astype(np.int8)
+        matched, mismatches = _score(
+            declared_bases, declared_bits, held_bases, held_bits
+        )
+        counts.append(matched)
+        verdicts.append(_accepts(matched, mismatches, threshold))
+    return counts[0] + counts[1], verdicts[0] & ~verdicts[1]
+
+
+@pytest.mark.parametrize("key_length", [600, 115200])
+def test_a_log_reading_signer_breaks_the_averaged_bound(key_length: int) -> None:
+    """The CRITICAL finding, kept as a test: ``6.9e-10`` is not unconditional.
+
+    ``QDSSession`` hands the ``Signer`` seam both recipients' **raw** logs. A
+    signer who reads them chooses the matched set, because the matched set is
+    ``{i : c_i == d_i}``, and the averaging over ``M ~ Bin(2L, 1/n)`` that turns
+    the per-run bound into the quotable ``6.9e-10`` is exactly the assumption
+    that she does not. Measured here at two key lengths three orders of magnitude
+    apart, to show the failure is structural rather than a small-``L`` artefact:
+
+    * ``M = 13`` in every trial, at both key lengths;
+    * a repudiation frequency near ``1/2``, at both key lengths;
+    * which is *above* the averaged bound at ``L = 115200`` by nine orders of
+      magnitude, and below the per-run bound ``repudiation_bound(..., 13)``.
+
+    The per-run guarantee is never violated, at any key length, by any strategy.
+    That is the whole distinction this test exists to keep alive.
+    """
+    params = ProtocolParams(key_length=key_length, s_a=1 / 64, s_v=1 / 16)
+    trials = 400 if key_length <= 1000 else 64
+    counts, repudiated = _simulate_log_reading_repudiation(
+        trials, params, _rng(21 + key_length % 7)
+    )
+    observed = float(repudiated.mean())
+    standard_error = math.sqrt(max(observed * (1.0 - observed), 1.0 / trials) / trials)
+
+    assert np.unique(counts).tolist() == [13], (
+        f"the attack is supposed to pin M at 13, got {np.unique(counts)}"
+    )
+    # Exactly one fair coin decides the run, so 1/2 up to five standard errors.
+    _assert_close_to_proportion(
+        observed, 0.5, trials, label=f"log-reading repudiation, L={key_length}"
+    )
+    # The per-run guarantee holds, as it must, for this and every strategy.
+    per_run = repudiation_bound(params, matched_records=13)
+    assert observed + _SIGMAS * standard_error <= per_run
+
+    averaged = averaged_repudiation_bound(
+        params, signer_sees_recipient_bases=False
+    )
+    if key_length >= 115200:
+        # The number this package used to publish as its non-repudiation
+        # guarantee, beaten by nine orders of magnitude by a classical attack.
+        assert averaged < 1e-9
+        assert observed - _SIGMAS * standard_error > 1e6 * averaged
+
+
+def test_averaged_repudiation_bound_refuses_the_adversary_that_breaks_it() -> None:
+    """The averaged number cannot be obtained by accident, only by assertion.
+
+    Two barriers, because the error being prevented is a documentation error
+    that a reviewer would have to notice: the function is named for what it does,
+    and the caller must state the fact about the deployment that makes it true.
+    """
+    with pytest.raises(TypeError):
+        averaged_repudiation_bound(DEFAULT_PARAMS)  # type: ignore[call-arg]
+    with pytest.raises(ValueError, match="no averaged repudiation bound"):
+        averaged_repudiation_bound(
+            DEFAULT_PARAMS, signer_sees_recipient_bases=True
+        )
+    with pytest.raises(TypeError, match="must be a bool"):
+        averaged_repudiation_bound(
+            DEFAULT_PARAMS, signer_sees_recipient_bases="no"  # type: ignore[arg-type]
+        )
+    assert averaged_repudiation_bound(
+        DEFAULT_PARAMS, signer_sees_recipient_bases=False
+    ) < 1e-9
+
+
+def test_repudiation_bound_demands_an_observed_count() -> None:
+    """No default, and the ``None`` that used to mean "average" is a hard error.
+
+    The old signature defaulted to the averaged number. Anything that still calls
+    it that way now fails loudly, and the message names the three honest
+    replacements rather than just the missing argument.
+    """
+    with pytest.raises(TypeError):
+        repudiation_bound(DEFAULT_PARAMS)  # type: ignore[call-arg]
+    with pytest.raises(ValueError, match="averaged_repudiation_bound"):
+        repudiation_bound(DEFAULT_PARAMS, matched_records=None)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="at least 1"):
+        repudiation_bound(DEFAULT_PARAMS, matched_records=0)
+    with pytest.raises(TypeError, match="boolean"):
+        repudiation_bound(DEFAULT_PARAMS, matched_records=True)  # type: ignore[arg-type]
+
+
+def test_the_abort_rule_is_the_only_honest_a_priori_guarantee() -> None:
+    """4b-iii: an unconditional number exists, and it costs an abort rule.
+
+    Refusing to verify on an anomalously small matched set floors ``M``, and the
+    per-run bound at that floor holds for every Alice strategy with no
+    independence assumption at all. The rule is nearly free because the honest
+    matched count is concentrated: ten standard deviations of headroom costs
+    ``5e-24`` and buys ``4e-5`` locally, ``1.3e-9`` pooled -- the latter within a
+    factor of two of the figure that used to be published as unconditional.
+
+    None of this is implemented in ``verify``; the numbers say what such a rule
+    would be worth, which is the honest way to report a fix that has not landed.
+    """
+    local = repudiation_bound_with_abort(
+        DEFAULT_PARAMS, minimum_matched_records=36800
+    )
+    pooled = repudiation_bound_with_abort(
+        DEFAULT_PARAMS, minimum_matched_records=74540
+    )
+    assert local == pytest.approx(
+        math.exp(-36800 * DEFAULT_PARAMS.gap**2 / 8.0)
+    )
+    assert 1e-5 < local < 1e-4
+    assert 1e-9 < pooled < 1e-8
+    assert matched_shortfall_probability(
+        DEFAULT_PARAMS, minimum_matched=36800
+    ) < 1e-20
+    assert matched_shortfall_probability(
+        DEFAULT_PARAMS, minimum_matched=74540, pooled=True
+    ) < 1e-20
+    # More evidence demanded, more guarantee bought, and never above 1.
+    assert repudiation_bound_with_abort(
+        DEFAULT_PARAMS, minimum_matched_records=1
+    ) <= 1.0
+    assert pooled < local
+
+
+def test_a_per_verifier_floor_leaves_a_count_split_route() -> None:
+    """The limitation of 4b-iii, pinned as arithmetic so it cannot be dropped.
+
+    ``repudiation_bound_with_abort`` bounds "Bob accepts and Charlie *rejects*",
+    plus the empty-set corner. A floor applied at Charlie as well adds a third
+    outcome -- a non-empty matched set below his floor, on which he returns no
+    verdict -- and if that is counted as a repudiation success then no exponent
+    covers it, because nothing about a *rate* deviates.
+
+    The attack is exact rather than statistical. A signer who reads both logs
+    pins ``M = 2 m_min`` clean matched records; then Bob accepts exactly when
+    ``m_C <= m_min`` and Charlie is below his floor exactly when
+    ``m_C < m_min``, and ``m_C ~ Bin(2 m_min, 1/2)`` by the exchange coins. So
+    the route succeeds with probability ``(1 - P(m_C = m_min)) / 2``, just under
+    one half, at any floor and any key length.
+
+    The floor used here is the one ``verify.minimum_matched_count`` returns at
+    ``DEFAULT_PARAMS`` as this is written; the test is deliberately self-contained
+    arithmetic, so it keeps its meaning if that constant moves.
+    """
+    floor = 36555
+    log_central = (
+        math.lgamma(2 * floor + 1)
+        - 2 * math.lgamma(floor + 1)
+        - 2 * floor * math.log(2.0)
+    )
+    split_route = 0.5 * (1.0 - math.exp(log_central))
+    assert 0.49 < split_route < 0.5
+
+    covered = repudiation_bound_with_abort(
+        DEFAULT_PARAMS, minimum_matched_records=floor
+    )
+    assert covered < 1e-4
+    # The bound is not a bound on the route it does not cover, by four orders of
+    # magnitude. Nothing here is violated: they are different events.
+    assert split_route > 1e3 * covered
+
+    # Pooling the counts closes it: Charlie below his floor then needs a genuine
+    # deviation of the split, which Hoeffding bounds at the worst-case M.
+    pooled_floor = 75000
+    deviation = pooled_floor / 2 - floor
+    assert math.exp(-2 * deviation**2 / pooled_floor) < 1e-10
+    assert repudiation_bound_with_abort(
+        DEFAULT_PARAMS, minimum_matched_records=pooled_floor
+    ) < 1e-8
+    assert matched_shortfall_probability(
+        DEFAULT_PARAMS, minimum_matched=pooled_floor, pooled=True
+    ) < 1e-12
+
+
+def test_matched_shortfall_probability_is_the_binomial_lower_tail() -> None:
+    """Cross-checked against the pmf it must agree with, and against ``m = 0``."""
+    params = ProtocolParams(key_length=30)
+    pmf = matched_count_distribution(params)
+    for floor in (1, 2, 5, 11):
+        assert matched_shortfall_probability(
+            params, minimum_matched=floor
+        ) == pytest.approx(float(pmf[:floor].sum()))
+    assert matched_shortfall_probability(params, minimum_matched=1) == (
+        pytest.approx(matched_statistics(params).empty_probability)
+    )
+    # Pooled reads Bin(2L, 1/|B|): twice the trials, so a far smaller lower tail.
+    assert matched_shortfall_probability(
+        params, minimum_matched=8, pooled=True
+    ) < matched_shortfall_probability(params, minimum_matched=8)
+    # A threshold no run can reach is certain shortfall.
+    assert matched_shortfall_probability(
+        params, minimum_matched=params.key_length + 1
+    ) == 1.0
+    with pytest.raises(TypeError, match="pooled must be a bool"):
+        matched_shortfall_probability(
+            params, minimum_matched=4, pooled=1  # type: ignore[arg-type]
+        )
 
 
 def test_the_guarantee_is_weaker_than_the_in_model_bound() -> None:
@@ -1120,10 +1446,16 @@ def test_the_guarantee_is_weaker_than_the_in_model_bound() -> None:
     is far larger than the guarantee's ``gap**2 / 8`` per matched record, so the
     guarantee is the bigger probability. Anyone quoting the smaller one is
     quoting a bound on a model, and the two are kept apart by name for exactly
-    that reason.
+    that reason. Compared at the same evidence: 38400 matched positions each,
+    hence 76800 matched records between them.
     """
-    assert symmetric_repudiation_bound(DEFAULT_PARAMS) < repudiation_bound(
-        DEFAULT_PARAMS
+    assert symmetric_repudiation_bound(
+        DEFAULT_PARAMS, matched=38400
+    ) < repudiation_bound(DEFAULT_PARAMS, matched_records=76800)
+    assert symmetric_repudiation_bound(DEFAULT_PARAMS) < (
+        averaged_repudiation_bound(
+            DEFAULT_PARAMS, signer_sees_recipient_bases=False
+        )
     )
     assert symmetric_repudiation_bound(
         DEFAULT_PARAMS, method="kl"
@@ -1131,11 +1463,18 @@ def test_the_guarantee_is_weaker_than_the_in_model_bound() -> None:
 
 
 def test_repudiation_bound_shrinks_with_a_wider_gap() -> None:
-    """A wider ``s_v - s_a`` buys a smaller bound at the same key length."""
+    """A wider ``s_v - s_a`` buys a smaller bound at the same evidence."""
     narrow = ProtocolParams(key_length=600, s_a=0.06, s_v=0.07)
     wide = ProtocolParams(key_length=600, s_a=0.001, s_v=0.08)
     assert wide.gap > narrow.gap
-    assert repudiation_bound(wide) < repudiation_bound(narrow)
+    assert repudiation_bound(wide, matched_records=400) < repudiation_bound(
+        narrow, matched_records=400
+    )
+    assert averaged_repudiation_bound(
+        wide, signer_sees_recipient_bases=False
+    ) < averaged_repudiation_bound(
+        narrow, signer_sees_recipient_bases=False
+    )
     assert symmetric_repudiation_bound(wide) < symmetric_repudiation_bound(
         narrow
     )
@@ -1287,7 +1626,16 @@ def test_robustness_and_security_can_hold_simultaneously() -> None:
     assert forgery_bound(DEFAULT_PARAMS, method="kl") < 1e-100
     # The *binding* forgery case, not just the outside adversary.
     assert recipient_forgery_bound(DEFAULT_PARAMS, method="kl") < 1e-100
-    assert repudiation_bound(DEFAULT_PARAMS) < 1e-9
+    # Repudiation is the one where the headline number carries a hypothesis, so
+    # it is asserted twice: the averaged figure under (IND), and the a-priori
+    # guarantee an abort rule would buy without it. Both are small; only the
+    # second is unconditional, and only the second is unimplemented.
+    assert averaged_repudiation_bound(
+        DEFAULT_PARAMS, signer_sees_recipient_bases=False
+    ) < 1e-9
+    assert repudiation_bound_with_abort(
+        DEFAULT_PARAMS, minimum_matched_records=74540
+    ) < 1e-8
 
 
 # =========================================================================== #
@@ -1404,7 +1752,10 @@ def test_every_function_is_deterministic() -> None:
         matched_count_distribution,
         forgery_probability,
         forgery_bound,
-        repudiation_bound,
+        partial(repudiation_bound, matched_records=10),
+        partial(averaged_repudiation_bound, signer_sees_recipient_bases=False),
+        partial(repudiation_bound_with_abort, minimum_matched_records=10),
+        partial(matched_shortfall_probability, minimum_matched=10),
         honest_abort_probability,
         honest_abort_bound,
         honest_statistics,
@@ -1481,7 +1832,12 @@ def test_probabilities_stay_in_the_unit_interval() -> None:
         recipient_forgery_probability(params),
         recipient_forgery_bound(params),
         repudiation_probability(params, mismatch_probability=0.3),
-        repudiation_bound(params),
+        repudiation_bound(params, matched_records=3),
+        repudiation_bound(params, matched_records=1),
+        averaged_repudiation_bound(params, signer_sees_recipient_bases=False),
+        repudiation_bound_with_abort(params, minimum_matched_records=2),
+        matched_shortfall_probability(params, minimum_matched=2),
+        matched_shortfall_probability(params, minimum_matched=2, pooled=True),
         symmetric_repudiation_bound(params),
         symmetric_repudiation_bound(params, method="kl"),
         honest_abort_probability(params, error_rate=0.05),

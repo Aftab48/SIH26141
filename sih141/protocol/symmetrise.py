@@ -68,11 +68,29 @@ and define, per position, the coin-dependent contribution to
   except on positions where at least one of the two records is matched, of which
   there are at most ``M``. Hoeffding gives ``exp(-M (s_v - s_a)**2 / 8)``.
 
-The bound is conditional on the records, so it holds for **every** Alice
-strategy: there is no adversary model left to be wrong about. Averaging over
-``M ~ Binomial(2L, 1/|B|)`` -- the recipients' basis draws, which Alice also
-does not control -- is exact by the binomial generating function. See
-:func:`sih141.protocol.analysis.repudiation_bound` and ``docs/PHASE2.md``.
+The bound is conditional on the records **and on the declaration**, so it holds
+for every Alice strategy: there is no adversary model left to be wrong about.
+That is :func:`sih141.protocol.analysis.repudiation_bound`, which takes the
+observed ``M = m_B + m_C`` as a mandatory argument, and it is the statement this
+exchange earns.
+
+**The averaged form is a weaker claim and it is easy to quote by mistake.**
+Averaging ``exp(-M gap^2/8)`` over ``M ~ Binomial(2L, 1/|B|)`` is exact by the
+binomial generating function and gives the far more quotable ``6.9e-10`` at
+:data:`~sih141.protocol.params.DEFAULT_PARAMS` -- but ``Binomial(2L, 1/|B|)`` is
+the law of the matched count only while **the declared bases are independent of
+the recipients' logged bases**. Alice does not control the basis draws; she does
+not have to, she only has to *see* them, and
+:class:`~sih141.protocol.session.QDSSession` hands the ``Signer`` seam both raw
+logs. A signer that reads them pins ``M = 13`` at every ``L`` and repudiates with
+probability ``1/2``. So the average is
+:func:`sih141.protocol.analysis.averaged_repudiation_bound`, it carries a
+mandatory ``signer_sees_recipient_bases`` argument to make the hypothesis
+impossible to omit, and it must never be published as unconditional. The
+unconditional figure the shipped code is entitled to is
+:func:`sih141.protocol.verify.enforced_repudiation_bound` (``1.9e-9``), which
+rests on the matched-count floor rather than on independence. See
+:mod:`sih141.protocol.analysis` section 4b and ``docs/PHASE2.md`` section 6b.
 
 What it costs
 -------------

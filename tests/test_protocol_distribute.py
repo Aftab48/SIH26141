@@ -11,6 +11,13 @@ Four things are pinned here, in order of how badly they fail silently.
    rate to ``p / 2``, quantitatively, at three values of ``p``; a maximally mixed
    resource must drive it to chance; and the generator must be advanced by the
    Bell measurement's own variate. A stub cannot pass any of the three.
+   :func:`test_a_werner_resource_pins_the_mismatch_rate_to_half_its_parameter`
+   states that as the standing invariant: it derives ``P(mismatch | matched) =
+   q / 2`` from the Born rule, sweeps five values of ``q``, pools independent
+   runs so the band is narrow, and -- because on an *ideal* resource a real hop
+   and a bypassed one are observationally identical -- asserts at every noisy
+   level that the four-sigma band excludes zero, so the test cannot be satisfied
+   by a record that never went through a teleportation.
 2. **The matched/unmatched split.** The matched fraction is asserted to converge
    to ``1/|B| = 1/3`` with a tolerance *computed* from the binomial standard
    error of the sample, not guessed. Unmatched positions are asserted to be fair
@@ -508,6 +515,165 @@ def test_mismatch_rate_equals_half_the_werner_parameter(werner_p: float) -> None
     assert _mismatch_rate(key, record) == pytest.approx(
         expected, abs=_tolerance(expected, matched)
     )
+
+
+#: Werner parameters swept by
+#: :func:`test_a_werner_resource_pins_the_mismatch_rate_to_half_its_parameter`.
+#: ``0.0`` is the ideal pair, ``0.125`` sits near the protocol's own operating
+#: range (``q / 2 = 0.0625 = DEFAULT_S_V``), and ``1.0`` is the dead link.
+WERNER_LEVELS = (0.0, 0.125, 0.25, 0.5, 1.0)
+
+#: Key length of each pooled run.  About ``WERNER_LENGTH / 3`` of its positions
+#: are matched and so contribute to a rate.
+WERNER_LENGTH = 600
+
+#: Floor on the number of pooled runs, for the levels whose resolution
+#: requirement is met by a single run.
+WERNER_MIN_RUNS = 3
+
+
+def _runs_for_resolution(level: float, matched_per_run: float) -> int:
+    """Pooled runs needed to resolve ``level / 2`` to half its own size.
+
+    The sample size is derived rather than guessed, from the same binomial
+    standard error the assertion's tolerance uses.  Requiring the ``SIGMAS``-wide
+    band to be at most half of the predicted rate ``e = q / 2``,
+
+        SIGMAS * sqrt(e (1 - e) / n)  <=  e / 2,
+
+    gives ``n >= (2 * SIGMAS)**2 * (1 - e) / e``.  That is a stronger demand than
+    mere non-vacuity (``band < e``, i.e. a factor of ``SIGMAS**2``), and it is
+    the reason the small-``q`` levels are pooled over more runs than the large
+    ones instead of every level paying the worst case's price.
+
+    Parameters
+    ----------
+    level : float
+        The Werner parameter ``q``.  ``0.0`` needs no statistics -- a clean pair
+        teleports exactly -- and returns the floor.
+    matched_per_run : float
+        Expected matched positions contributed by one run, ``L / |B|``.
+
+    Returns
+    -------
+    int
+        At least :data:`WERNER_MIN_RUNS`.
+    """
+    if level <= 0.0:
+        return WERNER_MIN_RUNS
+    expected = level / 2.0
+    required = (2.0 * SIGMAS) ** 2 * (1.0 - expected) / expected
+    return max(WERNER_MIN_RUNS, math.ceil(required / matched_per_run))
+
+
+def test_a_werner_resource_pins_the_mismatch_rate_to_half_its_parameter() -> None:
+    """The invariant that forces the teleportation into the data path.
+
+    Derivation, not folklore.  Teleportation is linear in the resource, and
+    every Bell outcome is equiprobable for both components of
+    ``rho(q) = (1 - q)|Phi+><Phi+| + q I/4``, so conditioning on the Bell result
+    does not reweight the mixture.  The ``|Phi+>`` component transmits the
+    payload exactly and the ``I/4`` component leaves the receiver holding
+    ``I/2`` whatever the payload was, so the corrected received state is the
+    depolarising image
+
+        E_q(|psi><psi|) = (1 - q) |psi><psi| + q I/2.
+
+    On a *matched* position the recipient measures the very observable
+    ``|psi>`` is an eigenstate of, so the Born probability of Alice's declared
+    eigenvalue is ``(1 - q) * 1 + q * (1/2) = 1 - q/2`` and
+
+        P(mismatch | matched) = q / 2,
+
+    independently of the basis, the eigenvalue and the position.  This is the
+    same line as :func:`sih141.core.teleport.teleport_channel`'s
+    ``F(q) = 1 - q/2``, arrived at through the Born rule rather than through the
+    fidelity, and it is the *only* observable that separates a real hop from a
+    bypassed one: on an ideal resource (``q = 0``) teleporting Alice's state and
+    simply handing it over are observationally identical, so no clean-channel
+    assertion can ever pin the hop down.  Every claim below is therefore made at
+    ``q > 0``.
+
+    Three properties are asserted per level:
+
+    * the pooled rate sits within a *computed* four-sigma binomial band,
+      ``SIGMAS * sqrt((q/2)(1 - q/2) / m)`` for the observed matched count ``m``,
+      not a guessed constant.  How many runs are pooled to reach that ``m`` is
+      derived from the same standard error by :func:`_runs_for_resolution`, so
+      the small-``q`` levels -- where ``q / 2`` is closest to the zero a
+      bypassed hop would report -- get the extra sampling they need and the
+      large ones do not pay for it;
+    * that band excludes zero, so the assertion cannot be satisfied by an
+      implementation that discards the teleportation result -- the test is
+      checked for non-vacuity in the test itself, at every level;
+    * the matched *index sets* are identical across all levels, because the
+      recipient's basis draw is the first of three variates consumed per
+      position whatever the channel does.  So ``q`` moved the eigenvalues and
+      nothing else, and the pooled rates are comparable level by level.
+    """
+    params = _params(WERNER_LENGTH)
+    matched_per_run = WERNER_LENGTH / len(params.bases)
+    runs_for = {
+        level: _runs_for_resolution(level, matched_per_run)
+        for level in WERNER_LEVELS
+    }
+    keys = tuple(
+        _key(params, message_bit=run % 2, seed=SEED + 700 + run)
+        for run in range(max(runs_for.values()))
+    )
+
+    matched_sets: dict[float, tuple[tuple[int, ...], ...]] = {}
+    for level in WERNER_LEVELS:
+        resource = _werner(level)
+        pooled_matched = 0
+        pooled_mismatches = 0
+        per_run_matched: list[tuple[int, ...]] = []
+        for run, key in enumerate(keys[: runs_for[level]]):
+            record = _distribute(
+                key,
+                params,
+                resource_factory=lambda resource=resource: resource,
+                seed=SEED + _DIST_OFFSET + 700 + run,
+            )
+            matched = _matched_positions(key, record)
+            per_run_matched.append(matched)
+            pooled_matched += len(matched)
+            pooled_mismatches += _disagreements(key, record, matched)
+        matched_sets[level] = tuple(per_run_matched)
+
+        expected = level / 2.0
+        observed = pooled_mismatches / pooled_matched
+        if level == 0.0:
+            # A clean pair is exact, so this one is an equality, not a band.
+            assert observed == 0.0
+            continue
+
+        band = _tolerance(expected, pooled_matched)
+        # Non-vacuity, asserted rather than argued: a run that never teleported
+        # would report 0.0, which must lie outside the band this test accepts.
+        assert expected - band > 0.0, (
+            f"pooled matched sample of {pooled_matched} is too small at q="
+            f"{level}: the {SIGMAS}-sigma band {band} around {expected} still "
+            f"contains 0.0, so the assertion below would pass on a record that "
+            f"never went through a teleportation"
+        )
+        assert observed == pytest.approx(expected, abs=band), (
+            f"q={level}: pooled rate {observed} over {pooled_matched} matched "
+            f"positions is more than {SIGMAS} sigma from the predicted q/2="
+            f"{expected}"
+        )
+
+    # Levels are pooled over different numbers of runs, so compare the runs
+    # they share: run ``r`` uses the same key seed and the same distribution
+    # seed at every level.
+    shared = min(len(sets) for sets in matched_sets.values())
+    reference = matched_sets[WERNER_LEVELS[0]][:shared]
+    for level in WERNER_LEVELS[1:]:
+        assert matched_sets[level][:shared] == reference, (
+            f"q={level} changed which positions are matched; the basis draw "
+            f"must not depend on the resource, or the pooled rates are not "
+            f"comparable across levels"
+        )
 
 
 def test_a_position_dependent_attack_shows_up_in_exactly_those_positions() -> None:

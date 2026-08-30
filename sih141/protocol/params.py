@@ -47,15 +47,29 @@ two preparations will be scored by which verifier, and
 
 .. code-block:: text
 
-    P(repudiation) <= (1 - 1/|B|)**L + E[exp(-M * (s_v - s_a)**2 / 8)]
+    P(repudiation | records, declaration) <= exp(-M * (s_v - s_a)**2 / 8)
 
-where ``M`` is the *total* number of matched records held by the two verifiers
-together. The derivation is in :mod:`sih141.protocol.analysis` section 4 and in
-``docs/PHASE2.md``; the important structural point is that it conditions on the
-records and uses only the recipients' private coins, so it holds for **every**
-Alice strategy rather than for one modelled family. The bound is exponential in
-``M``, and ``M`` grows linearly in :attr:`ProtocolParams.key_length`, so the
-guarantee is bought with key length.
+where ``M = m_B + m_C`` is the *total* number of matched records held by the two
+verifiers together **on the run being reported**. The derivation is in
+:mod:`sih141.protocol.analysis` section 4b-i and in ``docs/PHASE2.md``; the
+structural point is that it conditions on the records *and on the declaration*
+and uses only the recipients' private coins, so it holds for every Alice
+strategy rather than for one modelled family. The bound is exponential in ``M``,
+and ``M`` grows linearly in :attr:`ProtocolParams.key_length`, so the guarantee
+is bought with key length.
+
+**Two things it is not.** It is not a number you can quote before the run: for
+that you need either the ``M``-averaged form
+(:func:`sih141.protocol.analysis.averaged_repudiation_bound`, ``6.9e-10``
+below), which additionally assumes **the declared bases are independent of the
+recipients' logged bases** and is therefore *false* against a signer who reads
+them -- the shipped ``Signer`` seam hands over both raw logs -- or the
+matched-count floor that :func:`sih141.protocol.verify.minimum_matched_count`
+enforces, which reaches a genuinely unconditional ``1.9e-9`` at these defaults
+(:func:`sih141.protocol.verify.enforced_repudiation_bound`).
+And it is not a guarantee against a signer *starving* the evidence: a run whose
+``M`` is small gets a bound near ``1``, correctly, which is why the floor exists.
+``docs/PHASE2.md`` section 6b states both limits in full.
 
 ``s_v < forger_floor`` gives **unforgeability**. ``1/2`` -- the rate an
 adversary with no information about the key produces -- is only the crude
@@ -997,10 +1011,20 @@ Every number is chosen, not inherited:
     ``115200 / 3 = 38400`` matched positions per verifier exactly, so
     ``E[M] = 76800`` matched records across the pair. With
     ``gap = 1/16 - 1/64 = 3/64``, the symmetrisation repudiation bound
-    ``E[exp(-M gap**2 / 8)] = (1 - 1/3 + exp(-gap**2/8)/3)**(2L)`` evaluates to
-    ``exp(-21.09) = 6.9e-10``. Rounded to a multiple of three so the expected
-    matched count is an integer and the tables in the Phase 5 report have no
-    spurious fractions.
+    ``exp(-M gap**2 / 8)`` evaluates to ``exp(-21.09) = 6.9e-10`` *at that
+    expected* ``M``, and its average over ``M ~ Binomial(2L, 1/3)`` --
+    ``(1 - 1/3 + exp(-gap**2/8)/3)**(2L)`` -- to the same ``6.9173e-10``.
+    Rounded to a multiple of three so the expected matched count is an integer
+    and the tables in the Phase 5 report have no spurious fractions.
+
+    **That average is not the key length's security claim**, because it needs
+    the declaration to be independent of the recipients' logged bases and the
+    ``Signer`` seam hands them over. What ``L`` actually buys, unconditionally,
+    is the matched-count floor's ``exp(-2 * 36555 * gap**2 / 8) = 1.9e-9``
+    (:func:`sih141.protocol.verify.enforced_repudiation_bound`) -- the same
+    order, honestly obtained. The forgery bounds below are unaffected: their
+    independence hypothesis is part of their stated adversary model rather than
+    an unstated one.
 
 The key is long because the bound is honest. The earlier ``L = 6912`` was
 computed from ``exp(-m gap**2 / 2)`` with ``gap = 13/96``, an expression that

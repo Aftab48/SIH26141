@@ -56,7 +56,15 @@ pair of raw logs she can send Bob the eigenstate she declares and Charlie its
 orthogonal partner, and repudiate with probability ``1``. After symmetrisation
 she does not know which of her two preparations each verifier will score, and
 the pair becomes exchangeable, which is what every non-repudiation bound in
-:mod:`sih141.protocol.analysis` conditions on. The flag is carried so that
+:mod:`sih141.protocol.analysis` conditions on. What the flag does *not* buy is
+independence between the declaration and the bases logged here: the exchange
+hides its own coins from the signer, not the logs, and
+:class:`~sih141.protocol.session.QDSSession` hands the ``Signer`` seam both raw
+ones. So the per-run bound
+(:func:`sih141.protocol.analysis.repudiation_bound`, at the observed
+``m_B + m_C``) is what a symmetrised pair earns, while the ``M``-averaged
+``6.9e-10`` needs an assumption these records cannot supply -- see
+:mod:`sih141.protocol.analysis` section 4b. The flag is carried so that
 :func:`sih141.protocol.verify.verify_all` can refuse a raw pair instead of
 quietly scoring one, and so that a transcript read back from disk still says
 which protocol produced it.

@@ -401,12 +401,20 @@ def test_default_key_length_delivers_the_documented_repudiation_bound() -> None:
     """The symmetrisation bound is 6.9e-10 at the default and useless at the demo.
 
     Recomputed here from the expression in the params docstring rather than read
-    off ``analysis.repudiation_bound``, so the documented figure and the shipped
-    implementation are two independent statements that have to agree::
+    off ``analysis.averaged_repudiation_bound``, so the documented figure and the
+    shipped implementation are two independent statements that have to agree::
 
         (1 - 1/n)**L + (1 - 1/n + exp(-gap**2 / 8)/n)**(2L)
 
     with ``M ~ Binomial(2L, 1/n)`` the total matched records held by the pair.
+
+    That last line is an assumption, not a fact: ``M`` is binomial only while the
+    declared bases are independent of the recipients' logged bases, which a
+    signer reading both raw logs is not. So ``6.9e-10`` is the *averaged* figure
+    and carries that hypothesis with it -- see ``analysis`` section 4b-ii and
+    ``docs/PHASE2.md`` section 6b. What this test pins is that the key length
+    still delivers the documented number under the documented hypothesis; the
+    per-run guarantee is ``analysis.repudiation_bound`` at the observed count.
     """
 
     def bound(params: ProtocolParams) -> float:

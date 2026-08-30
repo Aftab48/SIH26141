@@ -481,13 +481,22 @@ def test_transcript_distinguishes_never_asked_from_rejected() -> None:
 def test_transcript_summary_names_the_outcome(
     honest_run: SessionTranscript,
 ) -> None:
-    """One line of context, one per verdict, one naming the composite event."""
+    """Context, one line per verdict, the evidence base, then the event.
+
+    The evidence line quotes the *per-run* repudiation bound at the observed
+    ``M = m_B + m_C``. It is there because the number a reader would otherwise
+    reach for -- the ``M``-averaged one -- is only valid while the declaration
+    is independent of the recipients' logged bases, which the ``Signer`` seam
+    does not guarantee. See ``analysis`` section 4b.
+    """
     lines = honest_run.summary().splitlines()
-    assert len(lines) == 4
+    assert len(lines) == 5
     assert "message bit 0" in lines[0]
     assert lines[1].startswith("Bob ACCEPTED")
     assert lines[2].startswith("Charlie ACCEPTED")
-    assert lines[3] == "TRANSFERABLE: Bob accepted and Charlie accepted."
+    assert lines[3].startswith("EVIDENCE: M = m_B + m_C = ")
+    assert "assumes nothing about the signer" in lines[3]
+    assert lines[4] == "TRANSFERABLE: Bob accepted and Charlie accepted."
 
 
 def test_transcript_summary_reports_a_rejection() -> None:

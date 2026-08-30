@@ -18,7 +18,14 @@ from entanglement to a transferred signature and asserts the properties the
   parameter of the entanglement resource, tracking the analytic ``p_e = p/2`` of
   :func:`~sih141.protocol.analysis.depolarising_error_rate`. Phase 4's detector
   is calibrated on that line, so a non-monotone or mis-scaled response here
-  would invalidate it before it is written.
+  would invalidate it before it is written. The same line is pinned
+  quantitatively end to end, at both verifiers and with a band *computed* from
+  the pooled binomial standard error rather than guessed, by
+  :func:`test_a_werner_resource_pins_both_verifiers_rates_to_half_its_parameter`.
+  That test is what keeps the teleportation step inside the data path at all:
+  on a clean pair, teleporting Alice's state and simply handing it to the
+  recipient produce identical records, so only a noisy-resource assertion can
+  distinguish them, and it asserts its own non-vacuity at every noisy level.
 * **The two security properties, as executable statements.** Unforgeability
   against the binding recipient forger, and non-repudiation against the
   asymmetric Alice that motivated the symmetrisation step -- each measured with
@@ -32,6 +39,7 @@ statistics says how many runs it is averaging and why that many.
 from __future__ import annotations
 
 import json
+import math
 
 import numpy as np
 import pytest
@@ -68,6 +76,41 @@ def werner(p: float) -> DensityMatrix:
     """
     phi = np.asarray(as_density(bell_state(BellState.PHI_PLUS)).data, dtype=complex)
     return DensityMatrix((1.0 - p) * phi + p * np.eye(4, dtype=complex) / 4.0)
+
+
+#: Width of every *computed* proportion band in this file, in standard errors.
+#: At four sigmas a correct implementation fails a given assertion with
+#: probability about ``6e-5``, and the seeds are fixed, so the suite is
+#: deterministic.
+SIGMAS = 4.0
+
+
+def tolerance(probability: float, count: int, sigmas: float = SIGMAS) -> float:
+    """Return ``sigmas`` times the binomial standard error of a proportion.
+
+    Parameters
+    ----------
+    probability : float
+        The proportion under the null hypothesis -- here always ``q / 2``.
+    count : int
+        Number of independent Bernoulli trials the observed proportion was
+        pooled from: the total matched-position count, not the number of runs.
+    sigmas : float, optional
+        Width in standard errors, default :data:`SIGMAS`.
+
+    Returns
+    -------
+    float
+        ``sigmas * sqrt(p * (1 - p) / n)``.
+
+    Raises
+    ------
+    AssertionError
+        If ``count`` is not positive; an empty sample has no standard error and
+        a band derived from one would be silently vacuous.
+    """
+    assert count > 0, "cannot form a standard error from an empty sample"
+    return sigmas * math.sqrt(probability * (1.0 - probability) / count)
 
 
 # --------------------------------------------------------------------------- #
@@ -295,6 +338,137 @@ def test_mismatch_rate_rises_monotonically_with_resource_noise() -> None:
 
     assert observed[0] == 0.0  # a clean channel is exact, not merely close
     assert observed[-1] == pytest.approx(0.5, abs=0.05)
+
+
+#: Werner parameters swept end to end by
+#: :func:`test_a_werner_resource_pins_both_verifiers_rates_to_half_its_parameter`.
+#: ``0.125`` puts the rate exactly on Charlie's ``s_v``, which is where the
+#: calibration has to be right for Phase 4 to mean anything.
+E2E_WERNER_LEVELS = (0.0, 0.125, 0.5, 1.0)
+
+#: Key length of each pooled session.  Each session yields one verdict per
+#: verifier, and about ``E2E_WERNER_LENGTH / 3`` of a verdict's positions are
+#: matched and so contribute to a rate.
+E2E_WERNER_LENGTH = 240
+
+#: Floor on the number of pooled sessions per level.
+E2E_WERNER_MIN_RUNS = 3
+
+
+def runs_for_resolution(level: float, matched_per_run: float) -> int:
+    """Sessions needed to resolve ``level / 2`` to half its own size.
+
+    Derived from the same binomial standard error :func:`tolerance` returns
+    rather than picked.  Requiring the ``SIGMAS``-wide band around the predicted
+    rate ``e = q / 2`` to be at most ``e / 2``,
+
+        SIGMAS * sqrt(e (1 - e) / n)  <=  e / 2,
+
+    gives ``n >= (2 * SIGMAS)**2 * (1 - e) / e`` pooled matched positions.  The
+    cost therefore falls where the resolution is hard -- small ``q``, where the
+    predicted rate is nearest the zero a bypassed teleportation would report --
+    instead of every level paying the smallest level's price.
+
+    Parameters
+    ----------
+    level : float
+        The Werner parameter ``q``.  ``0.0`` is exact rather than statistical
+        and returns the floor.
+    matched_per_run : float
+        Expected matched positions one session contributes to one verifier,
+        ``L / |B|``.
+
+    Returns
+    -------
+    int
+        At least :data:`E2E_WERNER_MIN_RUNS`.
+    """
+    if level <= 0.0:
+        return E2E_WERNER_MIN_RUNS
+    expected = level / 2.0
+    required = (2.0 * SIGMAS) ** 2 * (1.0 - expected) / expected
+    return max(E2E_WERNER_MIN_RUNS, math.ceil(required / matched_per_run))
+
+
+def test_a_werner_resource_pins_both_verifiers_rates_to_half_its_parameter() -> None:
+    """``q / 2`` through the whole stack, with the band computed, not guessed.
+
+    The derivation is the same one
+    :func:`tests.test_protocol_distribute.test_a_werner_resource_pins_the_mismatch_rate_to_half_its_parameter`
+    makes at the unit level: teleportation is linear in the resource and every
+    Bell outcome stays equiprobable across both components of
+    ``rho(q) = (1 - q)|Phi+><Phi+| + q I/4``, so the receiver holds
+    ``(1 - q)|psi><psi| + q I/2`` and a matched position reports Alice's
+    declared eigenvalue with Born probability ``1 - q/2``.  Hence
+    ``P(mismatch | matched) = q / 2``.
+
+    Asserting it *here* as well is not duplication.  Between
+    ``distribute_to_recipient`` and a verdict sit the recipients' symmetrisation
+    exchange, the signature, and the matched/unmatched split in
+    :mod:`sih141.protocol.verify`.  The exchange permutes which raw record each
+    verifier ends up holding, and the two links carry the same ``q`` here, so
+    the prediction is unchanged and both verifiers must land on the same line --
+    which is exactly the statement that the exchange redistributes evidence
+    without manufacturing or destroying any.
+
+    The band comes from the *observed* pooled matched count via
+    :func:`tolerance`, and how many sessions are pooled to reach that count is
+    itself derived from the same standard error by
+    :func:`runs_for_resolution`.  The test asserts at every noisy level that the
+    band excludes zero.  That is what makes the assertion bite: on an ideal resource
+    a genuine hop and a bypassed one are observationally identical, so only a
+    noisy resource can hold the teleportation step inside the data path, and
+    only a band narrower than ``q / 2`` can tell the two apart.
+
+    Counts are pooled rather than rates averaged.  ``matched_count`` varies run
+    to run, so a mean of per-run rates is a ratio estimator with a different
+    variance than the binomial band being computed; summing mismatches and
+    matched positions separately is the estimator the band actually describes.
+    """
+    params = ProtocolParams(key_length=E2E_WERNER_LENGTH)
+    matched_per_run = E2E_WERNER_LENGTH / len(params.bases)
+
+    for index, level in enumerate(E2E_WERNER_LEVELS):
+        resource = werner(level)
+        pooled: dict[Party, list[int]] = {
+            Party.BOB: [0, 0],
+            Party.CHARLIE: [0, 0],
+        }
+        for seed in range(runs_for_resolution(level, matched_per_run)):
+            transcript = QDSSession(
+                params,
+                resource_factory=lambda resource=resource: resource,
+                rng=np.random.default_rng(11_000 + 100 * index + seed),
+            ).run(seed % 2)
+            assert transcript.is_complete
+            assert transcript.symmetrised
+            for party in (Party.BOB, Party.CHARLIE):
+                verdict = transcript.verdict_for(party)
+                pooled[party][0] += verdict.mismatches
+                pooled[party][1] += verdict.matched_count
+
+        expected = level / 2.0
+        for party, (mismatches, matched) in pooled.items():
+            observed = mismatches / matched
+            if level == 0.0:
+                # Clean pairs teleport exactly; nothing here is statistical.
+                assert observed == 0.0, f"{party} on a clean channel: {observed}"
+                continue
+            band = tolerance(expected, matched)
+            assert expected - band > 0.0, (
+                f"pooled matched sample of {matched} at {party} is too small "
+                f"for q={level}: the {SIGMAS}-sigma band {band} around "
+                f"{expected} still contains 0.0, so the assertion below would "
+                f"pass on a run whose teleportation result was discarded"
+            )
+            assert observed == pytest.approx(expected, abs=band), (
+                f"q={level} at {party}: pooled rate {observed} over {matched} "
+                f"matched positions is more than {SIGMAS} sigma from the "
+                f"predicted q/2={expected}"
+            )
+            # The analysis module the Phase 4 detector will be calibrated on
+            # must name the same line.
+            assert depolarising_error_rate(level) == pytest.approx(expected)
 
 
 def test_a_noisy_channel_is_rejected_by_both_verifiers_together() -> None:
