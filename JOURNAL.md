@@ -8,7 +8,7 @@
 > on the maintainer's explicit instruction. The permanent record is
 > `docs/METRICS.md` and the `docs/PHASE*.md` notes.
 
-**34 entries** — 14 issue · 10 decision · 6 finding · 3 fix · 1 note
+**40 entries** — 18 issue · 10 decision · 8 finding · 3 fix · 1 note
 
 
 ## Phase 0 — Scaffold
@@ -438,6 +438,135 @@ is 3.7e-04, seven orders of magnitude worse.
 Lesson: a number quoted by one agent and carried into the next agent's brief is not evidence.
 I propagated it without checking. Future briefs should state where a number came from and ask
 the receiving agent to re-derive it rather than trust it.
+
+### `[*]` VERDICT SOUND -- pooled floor verified by exhaustive enumeration
+
+*finding · verify:pooled-floor · 2026-08-30T15:37:50Z*
+
+STATUS: closed (no action needed).
+
+The verifier attacked the implementation five ways and it held.
+
+  - Floors re-derived from scratch, EXACT match at all 11 key lengths tested
+    (120 through 115200). m_min=36555, M_min=74190, 2*m_min=73110,
+    M_min-2*m_min=1080 vs predicted (2-sqrt2)*A = 1081.2.
+  - THE DECISIVE TEST was exhaustive, not sampled: it enumerated the ENTIRE (m_B,m_C)
+    space through the shipped _evidence_refusal at five key lengths, ~1.4M pairs.
+    ZERO asymmetric outcomes. Bob reaching a verdict implies Charlie does, always.
+  - min(m_B+m_C) over all survivors = max(2*m_min, M_min) EXACTLY, so
+    guaranteed_pooled_matched_count is TIGHT, not merely safe.
+  - Positive control: split-coin at 2*m_min gives 80/200 and 83/200 third outcomes
+    with the pooled rule OFF, 0/200 with it ON. The defence was verified by removing
+    it and watching the attack return.
+  - corr(m_B, m_C | records) = -1.000000 exactly, confirming the convolution trap the
+    implementer avoided.
+
+One scoping point the verifier singled out as what actually matters: the binomial law is
+used ONLY for honest completeness. For SOUNDNESS the floor is an enforced check, so
+conditioning on 'no abort' gives M >= M_min with no distributional assumption -- which is
+precisely why a log-reading Alice steering M cannot break it.
+
+### `[!]` MAJOR -- my checkpoint script committed an auditor's mutation to origin
+
+*issue · claude · 2026-08-30T15:37:50Z*
+
+STATUS: closed (corrected and root-caused).
+
+WHAT HAPPENED. tools/checkpoint.py runs the test suite (~5 min) and then `git add -A`.
+The verify agent, doing legitimate mutation testing, installed a fault INSIDE that window.
+The suite had already passed on clean code; the commit captured the mutated code. Classic
+time-of-check/time-of-use race.
+
+IMPACT. Commit da72efe carried `_chernoff_floor(1.0 * checked.expected_matched)` instead
+of `2.0 *` -- the broken pooled floor that collapses M_min to m_min and REOPENS the
+split-coin attack. I pushed it to origin/main. For a period, the public repository
+contained security code that did not work, inside a commit labelled as fixing it.
+
+DETECTION. Not by me -- the verify agent noticed, repaired it with `git commit --amend`
+preserving subject/author/author-date, and reported it as a MAJOR concern. Verified
+byte-identical to its own snapshot before amending.
+
+RESOLUTION. Local HEAD 64185f9 has the correct `2.0 *`; force-pushed with
+--force-with-lease; origin and local now match and line 592 is correct.
+
+ROOT-CAUSE FIX. checkpoint.py now fingerprints (md5) every file git would commit BEFORE
+the suite runs, re-checks after the suite, and re-checks again immediately before staging.
+Any drift aborts the checkpoint with the drifted paths listed. The suite must have
+validated exactly what gets committed.
+
+The verifier's wider warning stands and is worth repeating: an unattended process that
+commits whatever transient state exists will eventually capture a mutation. Automation
+that writes to history must be race-aware, not merely test-aware.
+
+### `[*]` MINOR -- both floors are inert at demo-scale key lengths
+
+*finding · verify:pooled-floor · 2026-08-30T15:37:50Z*
+
+STATUS: OPEN (documentation constraint, not a code defect).
+
+M_min <= 2*m_min for every L <= 139, and the enforced bound stays vacuous well beyond that:
+0.974 at L=360, 0.943 at L=600, still 0.48 at L=4800. Only at DEFAULT_PARAMS (L=115200)
+does it reach 1.41e-09.
+
+Correctly reported by enforced_repudiation_bound (0.994 at DEMO_PARAMS) rather than hidden.
+
+CONSEQUENCE FOR PHASE 6: the dashboard will run at demo-scale L for speed. No demonstration
+run at L <= 1200 may be presented as exhibiting non-repudiation -- it exhibits the MECHANISM,
+not the guarantee. The UI must say so, or a judge will reasonably call it misleading.
+
+### `[!]` MINOR -- verify.py:230 quotes a figure that matches no computation
+
+*issue · verify:pooled-floor · 2026-08-30T15:37:50Z*
+
+STATUS: OPEN. To be fixed in the Phase 2 closing pass.
+
+The line states the residual abort route has '(exact tail 4.8e-05)'. The verifier computes
+3.611e-05 one-sided and 7.223e-05 two-sided; no natural variant -- with or without
+continuity correction, normal approximation, <= vs < -- yields 4.8e-05.
+
+Does not affect the argument: the route is ~1e-4 either way, vastly above the 1.41e-9
+bound, so the joint rule remains necessary. Should read 3.6e-05.
+
+WHY IT SURVIVED, which matters more than the digits: it is prose inside a code block, not
+a doctest. This project runs --doctest-modules, so a number written as an executable
+example is checked on every run; a number written as prose is unverifiable by construction.
+The fix is to convert it into a doctest that computes the tail, so the NEXT wrong number of
+this kind fails the suite instead of waiting for an auditor.
+
+### `[!]` MINOR -- SessionTranscript.repudiated under-reports on pooled-OFF runs
+
+*issue · verify:pooled-floor · 2026-08-30T15:37:50Z*
+
+STATUS: OPEN (accept or fix -- decide at the closing pass).
+
+`.repudiated` returns False for the THIRD OUTCOME (Bob accepts, Charlie reaches no verdict)
+because it requires both parties to hold a VerificationResult. On pooled-ON runs that
+outcome is provably unreachable -- the verifier's exhaustive sweep confirms it -- so the
+property is exactly correct there.
+
+The hazard is Phase 5: a harness aggregating `.repudiated` across no_count_exchange runs
+would score the split-coin attack as ZERO successes despite ~50% third outcomes. The
+transcript does flag such runs loudly, and the seam is opt-in with a deliberately alarming
+name, so this is a documented sharp edge rather than a defect.
+
+ACTION FOR PHASE 5: any aggregator must key on the ABORT CHANNEL, not on `.repudiated`.
+
+### `[!]` Second bug in checkpoint.py: porcelain parsing dropped a leading character
+
+*issue · claude · 2026-08-30T15:37:50Z*
+
+STATUS: closed.
+
+The git() helper strips its combined output, which removes the LEADING SPACE from the
+first line of `git status --porcelain`. A fixed line[3:] slice then dropped the first
+character of that path -- '.gitignore' displayed as 'gitignore'.
+
+Not cosmetic: paths are matched against IGNORABLE to decide whether a change set is
+substantive. Had JOURNAL.md sorted first, it would have parsed as 'OURNAL.md', missed the
+match, and triggered a commit the rule exists to prevent.
+
+Fixed by splitting on the two-character status field (line[:2], line[2:].strip()), which
+is correct whether or not the leading space survived. Verified both cases.
 
 
 ## Phase 3 — Attack suite

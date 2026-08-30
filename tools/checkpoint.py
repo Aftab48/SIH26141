@@ -27,6 +27,7 @@ Detail belongs in JOURNAL.md and docs/PHASE*.md, not in git history.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import subprocess
 import sys
@@ -47,14 +48,58 @@ def git(*args: str, check: bool = False) -> tuple[int, str]:
 
 
 def changed_paths() -> list[tuple[str, str]]:
+    """Parse ``git status --porcelain`` into (status, path) pairs.
+
+    Careful with the offsets. Porcelain emits a two-character status field, so an
+    unstaged modification starts with a LEADING SPACE (" M path"). ``git()`` strips
+    the combined output, which removes that space from the first line only -- so a
+    fixed ``line[3:]`` slice silently drops the first character of one path, turning
+    ``.gitignore`` into ``gitignore``. That is not merely cosmetic: paths are matched
+    against IGNORABLE, so a mangled name defeats the "do not commit for regenerated
+    files alone" rule. Splitting on the status field instead is robust either way.
+    """
     _, out = git("status", "--porcelain")
     entries = []
     for line in out.splitlines():
         if not line.strip():
             continue
-        status, _, path = line[:2], line[2:3], line[3:]
-        entries.append((status.strip(), path.strip().strip('"')))
+        status, path = line[:2], line[2:].strip()
+        entries.append((status.strip(), path.strip('"')))
     return entries
+
+
+def tree_fingerprint() -> dict[str, str]:
+    """Hash every file git would commit.
+
+    Guards a real hazard: agents run concurrently in this repo, and mutation-testing
+    agents deliberately edit source, run the suite, then revert. If one of them mutates
+    a file *between* our test run and our ``git add``, we would commit code the suite
+    never saw. That happened once -- a broken pooled floor (``1.0 *`` instead of
+    ``2.0 *``) reached origin inside an otherwise-green commit. Never again: we
+    fingerprint before testing and re-check immediately before staging.
+    """
+    _, listing = git("ls-files", "-co", "--exclude-standard")
+    prints: dict[str, str] = {}
+    for rel in listing.splitlines():
+        rel = rel.strip().strip('"')
+        if not rel:
+            continue
+        f = ROOT / rel
+        try:
+            prints[rel] = hashlib.md5(f.read_bytes()).hexdigest()
+        except OSError:
+            prints[rel] = "<unreadable>"
+    return prints
+
+
+def describe_drift(before: dict[str, str], after: dict[str, str]) -> list[str]:
+    drift = []
+    for path in sorted(set(before) | set(after)):
+        b, a = before.get(path), after.get(path)
+        if b != a:
+            kind = "added" if b is None else "removed" if a is None else "modified"
+            drift.append(f"{kind}: {path}")
+    return drift
 
 
 def suite_is_green() -> tuple[bool, str]:
@@ -102,8 +147,10 @@ def main() -> int:
     if len(entries) > 25:
         print(f"   ... and {len(entries) - 25} more")
 
+    before = tree_fingerprint()
+
     if not ns.no_tests:
-        print("checkpoint: running the suite before committing ...")
+        print(f"checkpoint: fingerprinted {len(before)} files; running the suite ...")
         green, summary = suite_is_green()
         print(f"checkpoint: {summary}")
         if not green:
@@ -111,10 +158,27 @@ def main() -> int:
             print("            Fix the failures, then re-run this checkpoint.")
             return 1 if ns.strict else 0
 
+        drift = describe_drift(before, tree_fingerprint())
+        if drift:
+            print("checkpoint: TREE CHANGED WHILE THE SUITE WAS RUNNING -- refusing to commit.")
+            print("            A concurrent agent edited files after the tests passed, so the")
+            print("            suite did not validate what would be committed.")
+            for line in drift[:20]:
+                print(f"              {line}")
+            print("            Re-run the checkpoint once no agent is mid-edit.")
+            return 1 if ns.strict else 0
+
     if ns.dry_run:
         print(f"checkpoint: --dry-run, would commit {len(entries)} path(s) "
               f"as {subject!r} and push.")
         return 0
+
+    drift = describe_drift(before, tree_fingerprint())
+    if drift:
+        print("checkpoint: tree changed just before staging -- refusing to commit.")
+        for line in drift[:20]:
+            print(f"              {line}")
+        return 1 if ns.strict else 0
 
     git("add", "-A", check=True)
     rc, _ = git("diff", "--cached", "--quiet")
