@@ -1,0 +1,17 @@
+[project]
+name = "sih141"
+version = "0.1.0"
+description = "Quantum-Inspired Cyber Threat Detection for Digital Signature Security (SIH26141)"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+# `sih141` is on the list so that `--doctest-modules` collects the package's own
+# docstrings. Every numeric claim in a docstring -- forgery probabilities,
+# repudiation bounds, the Hoeffding exponent -- is a doctest, and until this
+# entry existed none of them ran under `python -m pytest`: a mutation that
+# halved `hoeffding_exponent` left the whole suite green while contradicting the
+# function's own printed output. They are the numbers a reader trusts, so they
+# are now tested like everything else.
+testpaths = ["tests", "sih141"]
+addopts = "-q --strict-markers --doctest-modules"
