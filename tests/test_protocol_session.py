@@ -32,12 +32,19 @@ tested here is everything that only exists once the phases are composed:
 Costs and sizes
 ---------------
 A session teleports ``2 message bits * 2 recipients * L`` qubits, so ``L`` is
-kept small here and stated per test. The noisy transferability test uses
-``L = 96`` and a Werner parameter of ``2 * s_a``, which puts the matched-position
-error rate exactly on Bob's threshold: he accepts roughly three runs in four,
-while Charlie -- cut at ``s_v``, more than five times higher -- would need six
-mismatches where one is expected, so the implication under test is a real
-statement about a sample containing both verdicts. Every seed is fixed.
+kept small here and stated per test. The two tests that run a *noisy* channel
+are the exception and use ``L = 600``, because they are the only ones whose
+claim is statistical and they were mis-sized before: at ``L = 96`` a verifier
+holds about ``32`` matched positions, so Bob's budget ``floor(m * s_a)`` is
+**zero** mismatches and Charlie's is one. "``s_a`` is a budget" is not a true
+statement at that size, and "Bob accepting implies Charlie accepting" held with
+probability about ``0.6`` over the twenty runs -- it passed on the seeds that
+were there rather than on the mathematics, and any change to the generator
+stream re-rolled it. At ``L = 600`` the budgets are three and twelve mismatches:
+a Werner parameter of ``2 * s_a`` puts the matched-position error rate exactly on
+Bob's threshold, so he still rejects a third of runs, while Charlie would need
+thirteen mismatches where three are expected and the implication fails with
+probability of order ``1e-5`` per run. Every seed is fixed.
 """
 
 from __future__ import annotations
@@ -70,6 +77,13 @@ from sih141.protocol import (
     ideal_resource,
     no_symmetrisation,
     sign,
+    symmetrise_records,
+)
+from sih141.protocol.session import (
+    _ALICE_STREAM_LABEL,
+    _RECIPIENT_STREAM_LABEL,
+    _STREAM_MATERIAL_BYTES,
+    _derive_stream,
 )
 
 SEED = 20260141
@@ -242,12 +256,23 @@ def test_bob_accepting_implies_charlie_accepting_through_a_noisy_channel() -> No
 
     The Werner parameter is ``2 * s_a``, so the matched-position error rate sits
     exactly on Bob's threshold and he rejects a substantial minority of runs.
-    Charlie's cut is more than five times higher, so he keeps accepting -- which
-    is precisely what ``s_a < s_v`` was chosen to buy. The assertion is the
+    Charlie's cut is four times higher, so he keeps accepting -- which is
+    precisely what ``s_a < s_v`` was chosen to buy. The assertion is the
     implication; the extra check that Bob rejected at least once is what stops
     the test passing vacuously.
+
+    ``L = 600`` and not the ``96`` used elsewhere in this file, because the
+    implication is a statistical claim and ``96`` is too small for it to be
+    true: a verifier holds about ``32`` matched positions there, Bob's budget is
+    ``floor(32 / 64) = 0`` mismatches and Charlie rejects on two, so the two
+    events overlap and "Bob accepted, Charlie did not" arrives on an *honest*
+    signer about once in forty runs -- which made this twenty-run test fail
+    about two times in five, whatever the code did. At ``600`` the budgets are
+    three and twelve mismatches against an expected three, which is the
+    separation ``s_a < s_v`` is supposed to provide. See the module docstring on
+    sizes; the cost is about a second a run.
     """
-    params = _params(96)
+    params = _params(600)
     noise = 2.0 * params.s_a
 
     bob_rejections = 0
@@ -309,38 +334,101 @@ def test_different_seeds_give_different_runs() -> None:
     assert first.signature != second.signature
 
 
-def test_one_generator_is_threaded_through_the_whole_run() -> None:
-    """Key generation, both distributions and both exchanges share one stream.
+def test_the_callers_generator_is_drawn_from_once_and_then_dropped() -> None:
+    """One draw at construction -- the material -- and never again.
 
-    Shadowed draw for draw: two variates per key element for each of the two
-    keys, then, per message bit, three per key position per recipient -- basis
-    choice, Alice's Bell measurement inside ``teleport``, and the recipient's
-    projective measurement -- and finally one ``L``-long array of symmetrisation
-    coins for the pair. If any phase reseeded, if the teleportation were
-    skipped, or if the exchange drew nothing, the bit-generator states would
-    part company.
+    The generator the caller passes in is the one object no seam may ever hold:
+    PCG64's transition is invertible, so a seam given it could rewind past this
+    draw and re-derive both session streams. So the session takes its material,
+    derives Alice's stream and the recipients' from it, and lets the caller's
+    generator go. It is still *advanced* by the draw, which is what keeps two
+    sessions built from one generator two different runs.
+    """
+    params = _params(16)
+    caller = np.random.default_rng(SEED)
+    QDSSession(params, rng=caller).run(0)
+
+    shadow = np.random.default_rng(SEED)
+    shadow.bytes(_STREAM_MATERIAL_BYTES)
+    assert caller.bit_generator.state == shadow.bit_generator.state
+
+    shared = np.random.default_rng(SEED)
+    first = QDSSession(params, rng=shared).run(0)
+    second = QDSSession(params, rng=shared).run(0)
+    assert first != second
+
+
+def test_the_alice_stream_is_threaded_through_alices_phases() -> None:
+    """Key generation and both distributions share one derived stream (D3).
+
+    Shadowed draw for draw from the Alice-side stream: two variates per key
+    element for each of the two keys, then, per message bit, three per key
+    position per recipient -- basis choice, Alice's Bell measurement inside
+    ``teleport``, and the recipient's projective measurement. **And nothing
+    else.** If the symmetrisation coins were still coming out of this stream the
+    shadow would part company with it by exactly two ``L``-long draws, which is
+    the whole finding this test exists for (:ref:`two-streams`).
     """
     params = _params(16)
     length = params.key_length
     alphabet = len(params.bases)
+    captured: list[np.random.Generator] = []
 
-    generator = np.random.default_rng(SEED)
-    QDSSession(params, rng=generator).run(0)
+    def watching(
+        key: PrivateKey, protocol_params: ProtocolParams, **kwargs: Any
+    ) -> Any:
+        captured.append(kwargs["rng"])
+        return distribute_public_key(key, protocol_params, **kwargs)
 
-    shadow = np.random.default_rng(SEED)
+    QDSSession(
+        params, rng=np.random.default_rng(SEED), distributor=watching
+    ).run(0)
+    assert len(captured) == len(MESSAGE_BITS)
+    assert captured[0] is captured[1]  # one stream, not one per bit
+
+    material = np.random.default_rng(SEED).bytes(_STREAM_MATERIAL_BYTES)
+    shadow = _derive_stream(material, _ALICE_STREAM_LABEL)
     for _ in MESSAGE_BITS:  # generate_key_pair: two keys, two draws per element
         for _ in range(length):
             shadow.integers(alphabet)
             shadow.integers(2)
-    for _ in MESSAGE_BITS:  # distribute_public_key then symmetrise, per bit
+    for _ in MESSAGE_BITS:  # distribute_public_key, per bit
         for _ in VERIFIERS:
             for _ in range(length):
                 shadow.integers(alphabet)  # the recipient's basis choice
                 shadow.random()  # Alice's Bell measurement, inside teleport()
                 shadow.random()  # the recipient's projective measurement
-        shadow.integers(0, 2, size=length)  # the recipients' exchange coins
 
-    assert generator.bit_generator.state == shadow.bit_generator.state
+    assert captured[0].bit_generator.state == shadow.bit_generator.state
+
+
+def test_the_recipient_stream_supplies_exactly_the_symmetrisation_coins() -> None:
+    """Phase A' draws from the recipients' own stream, and draws only coins.
+
+    One ``L``-long array per message bit, out of a generator derived under a
+    different label from the same material. Two independent sessions of the
+    protocol's randomness, from one seed, is what makes the fix free: the run
+    stays reproducible and the coins stay unreachable.
+    """
+    params = _params(16)
+    captured: list[np.random.Generator] = []
+
+    def watching(records: Any, *, rng: Any = None) -> Any:
+        captured.append(rng)
+        return symmetrise_records(records, rng=rng)
+
+    QDSSession(
+        params, rng=np.random.default_rng(SEED), symmetriser=watching
+    ).run(0)
+    assert len(captured) == len(MESSAGE_BITS)
+    assert captured[0] is captured[1]
+
+    material = np.random.default_rng(SEED).bytes(_STREAM_MATERIAL_BYTES)
+    shadow = _derive_stream(material, _RECIPIENT_STREAM_LABEL)
+    for _ in MESSAGE_BITS:
+        shadow.integers(0, 2, size=params.key_length)
+
+    assert captured[0].bit_generator.state == shadow.bit_generator.state
 
 
 def test_an_unseeded_session_still_runs() -> None:
@@ -646,12 +734,25 @@ def test_a_broken_channel_is_rejected_by_both_verifiers() -> None:
 
 
 def test_a_mild_channel_still_verifies() -> None:
-    """Below Bob's noise budget an honest run survives; ``s_a`` is a budget."""
-    params = _params(96)
-    transcript = _session(
-        params, seed=SEED + 11, resource_factory=lambda: _werner(params.s_a)
-    ).run(0)
-    assert transcript.transferable
+    """Below Bob's noise budget an honest run survives; ``s_a`` is a budget.
+
+    A budget is only a budget where it buys more than nothing: at ``L = 96``
+    Bob's is ``floor(32 / 64) = 0`` mismatches, so *any* error rejects and the
+    property under test does not exist at that size. At ``L = 600`` he can
+    absorb three, and a Werner parameter of ``s_a / 4`` -- a matched-position
+    error rate a quarter of the budget -- puts the expected count under one. The
+    three seeds are checked rather than one because the claim is statistical:
+    each run survives with probability about ``1 - 1e-3``.
+    """
+    params = _params(600)
+    for offset in range(11, 14):
+        transcript = _session(
+            params,
+            seed=SEED + offset,
+            resource_factory=lambda: _werner(params.s_a / 4.0),
+        ).run(0)
+        assert transcript.transferable, transcript.summary()
+        assert transcript.bob.rate <= params.s_a
 
 
 def test_the_channel_seam_does_not_disturb_the_chosen_bases() -> None:
@@ -1325,3 +1426,383 @@ def test_transcript_refuses_a_verdict_carrying_the_other_party_s_threshold() -> 
     blob["results"][0]["key_length"] = honest.params.key_length + 3
     with pytest.raises(ValueError, match="reports key_length"):
         SessionTranscript.from_json(json.dumps(blob))
+
+
+# ==========================================================================
+# The two streams: an Alice-side seam must not be able to read the coins
+# ==========================================================================
+#
+# The symmetrisation coins are the only randomness the non-repudiation bound
+# uses, and the bound assumes they are private to Bob and Charlie. The session
+# used to hand the ``distributor`` seam the very generator it then drew them
+# from, so a distributor that cloned ``rng.bit_generator.state`` held every coin
+# before they were tossed, and a signer sharing the clone declared, per
+# position, the eigenvalue the coin was about to hand Bob. At DEFAULT_PARAMS
+# that was a recorded repudiation, 5 runs out of 5, with m_B = m_C = 37095 and
+# M = 74190 -- every floor met -- on a transcript printing
+# P(repudiation | this run) <= 1.414e-09.
+#
+# Nothing there was wrong with the mathematics; it was the harness handing an
+# Alice-side seam an object it should never have seen, and every attack number
+# this repository publishes comes out of this harness. The tests below pin the
+# boundary rather than the convention: each one fails against the pre-fix
+# session and passes against this one.
+
+
+def _aimed_records(
+    params: ProtocolParams, message_bit: int, positions: int
+) -> dict[Party, RecipientRecord]:
+    """Return a raw pair aimed at ``positions`` and distinct at every index.
+
+    Over the first ``positions`` indices both recipients log the first basis
+    with opposite eigenvalues, so a declaration in that basis is matched by both
+    of them and the coin decides which eigenvalue each ends up holding. Over the
+    rest they log two *different* other bases, so those positions are matched by
+    neither and the matched count is exactly ``positions`` at each verifier. No
+    two entries at the same index are ever equal, which is what makes the coin
+    that moved them recoverable afterwards with no coincidences to resolve.
+    """
+    names = [basis.value for basis in params.bases]
+    tail = params.key_length - positions
+    return {
+        Party.BOB: RecipientRecord.from_measurements(
+            "Bob",
+            message_bit,
+            [names[0]] * positions + [names[1]] * tail,
+            [1] * params.key_length,
+        ),
+        Party.CHARLIE: RecipientRecord.from_measurements(
+            "Charlie",
+            message_bit,
+            [names[0]] * positions + [names[2]] * tail,
+            [-1] * positions + [1] * tail,
+        ),
+    }
+
+
+def _coins_applied(
+    raw: dict[Party, RecipientRecord], exchanged: dict[Party, RecipientRecord]
+) -> np.ndarray:
+    """Recover the coins Phase A' actually tossed, from before and after.
+
+    A position was swapped exactly when the entry Bob ends up holding is the one
+    Charlie logged, which is unambiguous for a pair built by
+    :func:`_aimed_records`.
+    """
+    return np.array(
+        [
+            exchanged[Party.BOB].entries[index]
+            == raw[Party.CHARLIE].entries[index]
+            for index in range(len(raw[Party.BOB]))
+        ],
+        dtype=bool,
+    )
+
+
+class _CoinReadingAlice:
+    """The attack: a ``distributor``/``signer`` pair that tries to read the coins.
+
+    The distributor clones the state of the generator it is handed and draws
+    ``L`` coins from the clone exactly as
+    :func:`~sih141.protocol.symmetrise.symmetrise_records` would; the signer
+    declares, at every aimed position, the eigenvalue those coins say Bob is
+    about to hold, and the honest eigenvalue everywhere else. Against a session
+    that draws the coins from the generator it hands this seam, that is a
+    repudiation with every floor met -- which is why ``predicted`` is kept where
+    a test can compare it against the truth, and overwrite it with the truth.
+    """
+
+    def __init__(self, positions: int) -> None:
+        self.positions = positions
+        self.predicted: dict[int, np.ndarray] = {}
+        self.raw: dict[int, dict[Party, RecipientRecord]] = {}
+        self.handed: list[np.random.Generator] = []
+        self.states: dict[int, dict[str, Any]] = {}
+
+    def distributor(
+        self,
+        key: PrivateKey,
+        params: ProtocolParams,
+        *,
+        parties: Any = VERIFIERS,
+        resource_factory: Any = None,
+        rng: np.random.Generator | None = None,
+    ) -> dict[Party, RecipientRecord]:
+        """Return aimed logs, having first stolen the generator's state."""
+        del parties, resource_factory
+        assert rng is not None
+        clone = np.random.Generator(type(rng.bit_generator)())
+        clone.bit_generator.state = rng.bit_generator.state
+        bit = key.message_bit
+        self.handed.append(rng)
+        self.states[bit] = dict(rng.bit_generator.state)
+        self.predicted[bit] = clone.integers(
+            0, 2, size=params.key_length
+        ).astype(bool)
+        self.raw[bit] = _aimed_records(params, bit, self.positions)
+        return self.raw[bit]
+
+    def signer(
+        self,
+        message_bit: int,
+        keys: tuple[PrivateKey, PrivateKey],
+        params: ProtocolParams,
+        *,
+        records: Any,
+    ) -> Signature:
+        """Declare the eigenvalue the stolen coins say Bob will hold."""
+        del keys, records
+        names = [basis.value for basis in params.bases]
+        coins = self.predicted[message_bit]
+        elements = tuple(
+            KeyElement(names[0], -1 if coins[index] else 1)
+            if index < self.positions
+            else KeyElement(names[0], 1)
+            for index in range(params.key_length)
+        )
+        return sign(message_bit, PrivateKey(message_bit, elements), params)
+
+
+def test_a_distributor_that_snapshots_the_generator_cannot_predict_the_coins() -> None:
+    """The regression test for the leak. Fails against the pre-fix session.
+
+    The distributor is handed a generator because it stands where the channel
+    is. It clones the state of that generator, draws ``L`` coins from the clone
+    the way Phase A' does, and the test compares them against the coins Phase A'
+    really tossed -- recovered from the records themselves, before and after.
+    Pre-fix they agreed at every one of the ``L`` positions, because they *were*
+    the same draw from the same object. They must now agree only where two
+    independent fair coins happen to.
+    """
+    params = _params(96)
+    alice = _CoinReadingAlice(positions=48)
+    records = QDSSession(
+        params, rng=np.random.default_rng(SEED), distributor=alice.distributor
+    ).distribute()
+
+    for bit in MESSAGE_BITS:
+        actual = _coins_applied(alice.raw[bit], records[bit])
+        predicted = alice.predicted[bit]
+        assert len(predicted) == params.key_length
+        assert not np.array_equal(predicted, actual)
+        agreement = float(np.mean(predicted == actual))
+        assert 0.25 < agreement < 0.75, agreement
+
+
+def test_a_coin_reading_alice_cannot_repudiate() -> None:
+    """The consequence, end to end: no floor and no verdict pair is disturbed.
+
+    The attack clears every matched-count floor by construction -- ``m_B = m_C =
+    positions``, and the pooled total twice that -- so nothing but the privacy
+    of the coins stands between it and a repudiation. Pre-fix it repudiated on
+    every seed; it must now fail the way a guess does, at Bob, whose rate lands
+    near ``1/2`` instead of at ``0``.
+    """
+    params = _params(120)
+    positions = 40
+
+    for offset in range(4):
+        alice = _CoinReadingAlice(positions=positions)
+        transcript = QDSSession(
+            params,
+            rng=np.random.default_rng(SEED + offset),
+            distributor=alice.distributor,
+            signer=alice.signer,
+        ).run(0)
+
+        assert transcript.pooled is not None
+        assert transcript.pooled.meets_every_floor  # no floor is doing the work
+        assert transcript.bob is not None and transcript.charlie is not None
+        assert transcript.bob.matched_count == positions
+        assert transcript.charlie.matched_count == positions
+        assert not transcript.repudiated
+        assert not transcript.bob.accepted
+        assert transcript.bob.rate > params.s_a
+
+
+def test_the_same_attack_repudiates_when_it_is_handed_the_real_coins() -> None:
+    """The control: the attack is sound, and only the coins were missing.
+
+    The identical declaration, built from the coins the session actually tossed
+    -- which this test reconstructs from the records, and which no seam can
+    obtain -- repudiates outright: Bob accepts at rate ``0``, Charlie rejects at
+    rate ``1``, every floor met. That is what makes the test above a statement
+    about the leak rather than about a badly aimed attack.
+    """
+    params = _params(120)
+    positions = 40
+    alice = _CoinReadingAlice(positions=positions)
+    session = QDSSession(
+        params,
+        rng=np.random.default_rng(SEED),
+        distributor=alice.distributor,
+        signer=alice.signer,
+    )
+    records = session.distribute()
+    for bit in MESSAGE_BITS:
+        alice.predicted[bit] = _coins_applied(alice.raw[bit], records[bit])
+
+    session.sign(0)
+    session.exchange_counts()
+    session.verify(Party.BOB)
+    session.transfer()
+    transcript = session.transcript()
+
+    assert transcript.pooled is not None and transcript.pooled.meets_every_floor
+    assert transcript.bob is not None and transcript.charlie is not None
+    assert transcript.repudiated
+    assert transcript.bob.rate == 0.0
+    assert transcript.charlie.rate == 1.0
+
+
+def test_a_distributor_that_rebuilds_the_seed_sequence_cannot_predict_the_coins() -> None:
+    """Why the split is a digest and not a spawn.
+
+    ``numpy``'s spawning leaves the parent's entropy in every child's
+    ``seed_seq`` in clear, so a seam handed a spawned child could rebuild the
+    sequence and spawn the sibling it was not given -- the same leak with one
+    more step in it. The stream a seam is handed here is seeded with a SHA-256
+    digest of the material instead, so the sequence it can read is a preimage
+    problem away from anything the recipients hold.
+    """
+    params = _params(64)
+    alice = _CoinReadingAlice(positions=32)
+    records = QDSSession(
+        params, rng=np.random.default_rng(SEED), distributor=alice.distributor
+    ).distribute()
+    actual = _coins_applied(alice.raw[0], records[0])
+
+    sequence = alice.handed[0].bit_generator.seed_seq
+    rebuilt = np.random.SeedSequence(
+        entropy=sequence.entropy, spawn_key=sequence.spawn_key
+    )
+    candidates = [np.random.default_rng(rebuilt)]
+    candidates += [np.random.default_rng(child) for child in rebuilt.spawn(4)]
+    candidates += [
+        _derive_stream(
+            np.random.default_rng(rebuilt).bytes(_STREAM_MATERIAL_BYTES),
+            _RECIPIENT_STREAM_LABEL,
+        )
+    ]
+    for candidate in candidates:
+        guess = candidate.integers(0, 2, size=params.key_length).astype(bool)
+        assert not np.array_equal(guess, actual)
+
+
+def test_a_distributor_that_rewinds_the_generator_cannot_predict_the_coins() -> None:
+    """Why the caller's own generator is dropped rather than shared.
+
+    PCG64's transition is invertible -- ``advance(-n)`` walks a stream backwards
+    exactly -- so a seam handed the caller's generator could rewind the four
+    words the session's material was drawn from and derive both streams for
+    itself. It is handed a *derived* stream instead, whose earlier states are
+    its own: neither reading coins off a rewound state nor re-deriving a
+    recipient stream from one predicts anything.
+    """
+    params = _params(48)
+    alice = _CoinReadingAlice(positions=24)
+    records = QDSSession(
+        params, rng=np.random.default_rng(SEED), distributor=alice.distributor
+    ).distribute()
+    actual = _coins_applied(alice.raw[0], records[0])
+    entry = alice.states[0]
+
+    def _rewound(depth: int) -> np.random.Generator:
+        """Return the handed stream, wound back ``depth`` raw words."""
+        clone = np.random.Generator(type(alice.handed[0].bit_generator)())
+        clone.bit_generator.state = entry
+        clone.bit_generator.advance(-depth)
+        return clone
+
+    for depth in range(0, 264, 4):
+        direct = _rewound(depth).integers(0, 2, size=params.key_length)
+        assert not np.array_equal(direct.astype(bool), actual)
+        derived = _derive_stream(
+            _rewound(depth).bytes(_STREAM_MATERIAL_BYTES),
+            _RECIPIENT_STREAM_LABEL,
+        )
+        guess = derived.integers(0, 2, size=params.key_length).astype(bool)
+        assert not np.array_equal(guess, actual)
+
+
+def test_the_seams_and_the_coins_hold_different_generators() -> None:
+    """Identity, not merely different numbers.
+
+    The object the ``distributor`` is handed is not the object the
+    ``symmetriser`` is handed, and the two are seeded from different digests of
+    one material -- so neither seam's ``bit_generator.state`` nor its
+    ``seed_seq`` is a fact about the other's stream.
+    """
+    params = _params(16)
+    to_alice: list[np.random.Generator] = []
+    to_recipients: list[np.random.Generator] = []
+
+    def watching_distributor(
+        key: PrivateKey, protocol_params: ProtocolParams, **kwargs: Any
+    ) -> Any:
+        to_alice.append(kwargs["rng"])
+        return distribute_public_key(key, protocol_params, **kwargs)
+
+    def watching_symmetriser(records: Any, *, rng: Any = None) -> Any:
+        to_recipients.append(rng)
+        return symmetrise_records(records, rng=rng)
+
+    QDSSession(
+        params,
+        rng=np.random.default_rng(SEED),
+        distributor=watching_distributor,
+        symmetriser=watching_symmetriser,
+    ).run(0)
+
+    alice_stream, recipient_stream = to_alice[0], to_recipients[0]
+    assert alice_stream is not recipient_stream
+    assert (
+        alice_stream.bit_generator.state
+        != recipient_stream.bit_generator.state
+    )
+    assert (
+        alice_stream.bit_generator.seed_seq.entropy
+        != recipient_stream.bit_generator.seed_seq.entropy
+    )
+
+
+def test_no_public_accessor_hands_out_a_generator() -> None:
+    """The recipients' stream is not on the session's public surface.
+
+    A guard against the leak coming back through the front door: an accessor
+    that returned the session's randomness would put the coins one attribute
+    lookup away from anything holding the session.
+    """
+    session = _session(_params(16))
+    session.distribute()
+
+    exposed = []
+    for name in dir(session):
+        if name.startswith("_"):
+            continue
+        try:
+            value = getattr(session, name)
+        except ValueError:
+            continue  # an accessor whose phase has not run; not a generator
+        if isinstance(value, np.random.Generator):
+            exposed.append(name)
+    assert not exposed, f"generators reachable from the session: {exposed}"
+
+
+def test_the_stream_derivation_is_pinned() -> None:
+    """The two labels and the digest are part of every seeded run's identity.
+
+    Changing a label, the hash or the material width re-seeds both streams and
+    silently changes every seeded transcript in the project. That is allowed --
+    but not by accident, and not without this line moving with it.
+    """
+    assert _STREAM_MATERIAL_BYTES == 32
+    material = bytes(range(_STREAM_MATERIAL_BYTES))
+    alice = _derive_stream(material, _ALICE_STREAM_LABEL)
+    recipients = _derive_stream(material, _RECIPIENT_STREAM_LABEL)
+    assert alice.bit_generator.seed_seq.entropy == int(
+        "1abc2ba0a8ae1f5bbaab036e3c601bba32a405664632a8dc758f2c5070c9d666", 16
+    )
+    assert recipients.bit_generator.seed_seq.entropy == int(
+        "9591cb2e13d60046355cb65eb48a5c2e9628c3e4e9db4697da8591d805b88f3c", 16
+    )

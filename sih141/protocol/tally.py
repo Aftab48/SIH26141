@@ -34,22 +34,34 @@ own, creates a route it does not close:
 That happens with probability ``(1 - P[m_B = m_min]) / 2``, which tends to
 ``1/2``: no rate deviates anywhere, so no exponent bounds it, and no key length
 helps because ``m_min`` grows with ``L`` and the attack's target grows with it.
-Measured through the shipped seams before this module existed: ``78/200`` at
-``L = 360`` and ``85/200`` at ``L = 600``.
+Closed form ``0.432`` at ``L = 360`` and ``0.466`` at ``L = 600``; measured
+``78/200`` and ``85/200`` before this module existed -- see
+:ref:`split-coin-provenance` in :mod:`sih141.protocol.verify`.
 
 Both verifiers checking ``M`` closes it, and ``M`` is not local to either. So
 they exchange it. This module is that exchange.
 
 What crosses the wire
 ---------------------
-A :class:`MatchedCountMessage`: the sender's party, the message bit, ``|M_R|``
-and the key length. **A count, never a log.** That distinction is the reason
+A :class:`MatchedCountMessage`: the sender's party, the message bit, ``|M_R|``,
+the key length, and a fingerprint of the declaration the count was computed
+against. **A count, never a log.** That distinction is the reason
 this is modelled as a message rather than as two functions sharing a Python
 object: a recipient who could see *which* positions the other matched would hold
 evidence the threat model does not give him -- half of it is exactly what
 symmetrisation hid -- and a forging recipient's advantage is positional. A
 single integer, arriving after the declaration is already fixed, tells him
 nothing he can aim.
+
+The fingerprint is not an exception to that. It names the *declaration*, which
+both recipients already hold -- it is the thing they were asked to score -- and
+says nothing about either log. What it buys is that the two counts can be shown
+to be about the same declaration before they are added: ``m_B + m_C`` is
+conserved across one fixed pair of records against one fixed declaration and is
+not a quantity of anything across two, so a pooled floor applied to counts from
+two declarations is applied to a number no run produced. See
+:ref:`sih141.protocol.verify's <one-declaration>` section on counting against one
+declaration for the route that reaches it and what is refused.
 
 Nothing about this message is secret. It is sent over the same private,
 authenticated recipient-to-recipient channel the symmetrisation coins use, so
@@ -170,7 +182,9 @@ from sih141.protocol.params import (
 from sih141.protocol.records import RecipientRecord
 from sih141.protocol.signature import Signature
 from sih141.protocol.verify import (
+    _BoundMatchedCount,
     _as_count,
+    _declaration_digest,
     matched_positions,
     minimum_matched_count,
     minimum_pooled_matched_count,
@@ -212,15 +226,25 @@ class MatchedCountMessage:
     key_length : int
         ``L``, so a receiver can tell at once that the two messages describe the
         same run.
+    declaration_digest : str or None, optional
+        :func:`~sih141.protocol.verify._declaration_digest` of the declaration
+        the count was computed against -- *which* declaration, where
+        ``message_bit`` and ``key_length`` say only which run. Two counts
+        against two declarations are not a pooled count
+        (:ref:`one-declaration`), and this is the field that makes that
+        checkable rather than assumed. ``None`` on a message whose sender did
+        not record it, which is the honest reading of a message from before the
+        field existed: nothing can be proved about its provenance and nothing is.
 
     Raises
     ------
     TypeError
-        If a count is not an integer.
+        If a count is not an integer, or ``declaration_digest`` is neither a
+        string nor ``None``.
     ValueError
         If ``party`` is Alice or names no party, if ``message_bit`` is not
-        ``0``/``1``, if ``key_length < 1``, or if ``matched_count`` exceeds
-        ``key_length``.
+        ``0``/``1``, if ``key_length < 1``, if ``matched_count`` exceeds
+        ``key_length``, or if ``declaration_digest`` is an empty string.
 
     See Also
     --------
@@ -239,6 +263,7 @@ class MatchedCountMessage:
     message_bit: int
     matched_count: int
     key_length: int
+    declaration_digest: str | None = None
 
     def __post_init__(self) -> None:
         """Coerce the fields and refuse a message no recipient could have sent."""
@@ -271,6 +296,11 @@ class MatchedCountMessage:
                 f"key_length ({self.key_length}); the matched set is a subset "
                 f"of the key positions."
             )
+        object.__setattr__(
+            self,
+            "declaration_digest",
+            _as_declaration_digest(self.declaration_digest),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serialisable view of the message.
@@ -278,20 +308,24 @@ class MatchedCountMessage:
         Returns
         -------
         dict
-            One key per field.
+            One key per field. ``declaration_digest`` is a hex string or
+            ``None``; it names a declaration and carries nothing about any
+            position, which is what keeps the message a scalar one.
 
         Examples
         --------
         >>> import json
         >>> from sih141.protocol.tally import MatchedCountMessage
         >>> json.loads(json.dumps(MatchedCountMessage("Bob", 1, 3, 9).to_dict()))
-        {'party': 'Bob', 'message_bit': 1, 'matched_count': 3, 'key_length': 9}
+        {'party': 'Bob', 'message_bit': 1, 'matched_count': 3, 'key_length': 9, \
+'declaration_digest': None}
         """
         return {
             "party": self.party,
             "message_bit": self.message_bit,
             "matched_count": self.matched_count,
             "key_length": self.key_length,
+            "declaration_digest": self.declaration_digest,
         }
 
     @classmethod
@@ -301,7 +335,10 @@ class MatchedCountMessage:
         Parameters
         ----------
         data : mapping
-            Must contain every key :meth:`to_dict` emits.
+            Must contain every key :meth:`to_dict` emits, except
+            ``"declaration_digest"``, which defaults to ``None`` so that a
+            message recorded before the binding existed still restores -- as
+            what it is, a count whose declaration was not recorded.
 
         Returns
         -------
@@ -310,7 +347,7 @@ class MatchedCountMessage:
         Raises
         ------
         KeyError
-            If a field is missing.
+            If a required field is missing.
         ValueError
             If the restored fields are not self-consistent.
         """
@@ -319,6 +356,7 @@ class MatchedCountMessage:
             message_bit=data["message_bit"],
             matched_count=data["matched_count"],
             key_length=data["key_length"],
+            declaration_digest=data.get("declaration_digest"),
         )
 
 
@@ -350,15 +388,24 @@ class PooledMatchedCounts:
         ``L``.
     message_bit : int
         The bit being signed.
+    declaration_digest : str or None, optional
+        The declaration both counts were computed against, as both messages
+        reported it (:attr:`MatchedCountMessage.declaration_digest`). Carried
+        forward because the check it feeds happens later, at the verifier:
+        :func:`sih141.protocol.verify.verify` refuses a count that names a
+        declaration other than the one it is scoring (:ref:`one-declaration`).
+        ``None`` when the messages did not say.
 
     Raises
     ------
     TypeError
-        If a count is not an integer.
+        If a count is not an integer, or ``declaration_digest`` is neither a
+        string nor ``None``.
     ValueError
         If ``message_bit`` is not ``0``/``1``, if ``key_length < 1``, if a floor
-        is below ``1``, if either count exceeds ``key_length``, or if
-        ``minimum_pooled`` exceeds ``2 * key_length``.
+        is below ``1``, if either count exceeds ``key_length``, if
+        ``minimum_pooled`` exceeds ``2 * key_length``, or if
+        ``declaration_digest`` is an empty string.
 
     See Also
     --------
@@ -384,6 +431,7 @@ class PooledMatchedCounts:
     minimum_pooled: int
     key_length: int
     message_bit: int
+    declaration_digest: str | None = None
 
     def __post_init__(self) -> None:
         """Coerce the fields and check the two messages describe one run."""
@@ -420,6 +468,11 @@ class PooledMatchedCounts:
                 f"2 * key_length ({2 * self.key_length}); the pooled count is "
                 f"over both verifiers' matched sets, so 2 L is its ceiling."
             )
+        object.__setattr__(
+            self,
+            "declaration_digest",
+            _as_declaration_digest(self.declaration_digest),
+        )
 
     # -- derived views ------------------------------------------------------ #
 
@@ -501,6 +554,11 @@ class PooledMatchedCounts:
         Returns
         -------
         int
+            The counterpart's count, carrying :attr:`declaration_digest` with
+            it so that the verifier receiving it can check the number is about
+            the declaration he is scoring. It is an ordinary integer in every
+            other respect -- it compares, adds and serialises as the count it
+            is -- so a caller that only wants the number can ignore all of this.
 
         Raises
         ------
@@ -509,11 +567,16 @@ class PooledMatchedCounts:
         TypeError
             If ``party`` is neither a :class:`~sih141.protocol.params.Party` nor
             a string.
+
+        See Also
+        --------
+        sih141.protocol.verify.verify : Where the binding is checked.
         """
         resolved = _as_verifier(party)
-        return (
+        count = (
             self.charlie_count if resolved is Party.BOB else self.bob_count
         )
+        return _BoundMatchedCount(count, self.declaration_digest)
 
     def summary(self) -> str:
         """Return a one-line human-readable account of the exchange.
@@ -580,6 +643,7 @@ m_min = 67, M_min = 212). Every floor met.'
             "minimum_pooled": self.minimum_pooled,
             "key_length": self.key_length,
             "message_bit": self.message_bit,
+            "declaration_digest": self.declaration_digest,
         }
 
     @classmethod
@@ -589,7 +653,11 @@ m_min = 67, M_min = 212). Every floor met.'
         Parameters
         ----------
         data : mapping
-            Must contain every key :meth:`to_dict` emits.
+            Must contain every key :meth:`to_dict` emits, except
+            ``"declaration_digest"``, which defaults to ``None`` so that an
+            exchange recorded before the binding existed still restores. Such a
+            record names no declaration, and a verifier reading it applies the
+            pooled floor without the check :ref:`one-declaration` describes.
 
         Returns
         -------
@@ -598,7 +666,7 @@ m_min = 67, M_min = 212). Every floor met.'
         Raises
         ------
         KeyError
-            If a field is missing.
+            If a required field is missing.
         ValueError
             If the restored fields are not self-consistent.
         """
@@ -609,6 +677,7 @@ m_min = 67, M_min = 212). Every floor met.'
             minimum_pooled=data["minimum_pooled"],
             key_length=data["key_length"],
             message_bit=data["message_bit"],
+            declaration_digest=data.get("declaration_digest"),
         )
 
 
@@ -651,7 +720,11 @@ def matched_count_message(
         The declaration he was asked to score. Both recipients must count
         against the **same** declaration: ``m_B + m_C = M`` and ``e_B + e_C = E``
         are conserved across one fixed pair of records and one fixed
-        declaration, and the pooled floor means nothing without that.
+        declaration, and the pooled floor means nothing without that. The
+        message says which declaration it counted
+        (:attr:`MatchedCountMessage.declaration_digest`) so that the
+        requirement is checked downstream rather than assumed; see
+        :ref:`one-declaration`.
     record : RecipientRecord
         His own post-symmetrisation log. Read, never modified.
     params : ProtocolParams
@@ -690,9 +763,14 @@ def matched_count_message(
     >>> params = ProtocolParams(key_length=2)
     >>> key = PrivateKey(0, (KeyElement("X", 1), KeyElement("Z", -1)))
     >>> record = RecipientRecord.from_measurements("Bob", 0, ["X", "Y"], [1, 1])
-    >>> matched_count_message(sign(0, key, params), record, params)
-    MatchedCountMessage(party=<Party.BOB: 'Bob'>, message_bit=0, \
-matched_count=1, key_length=2)
+    >>> message = matched_count_message(sign(0, key, params), record, params)
+    >>> message.party.value, message.matched_count, message.key_length
+    ('Bob', 1, 2)
+    >>> other = RecipientRecord.from_measurements("Charlie", 0, ["X", "Z"], [1, -1])
+    >>> message.declaration_digest == matched_count_message(
+    ...     sign(0, key, params), other, params
+    ... ).declaration_digest
+    True
     """
     if not isinstance(params, ProtocolParams):
         raise TypeError(
@@ -715,6 +793,7 @@ matched_count=1, key_length=2)
         message_bit=record.message_bit,
         matched_count=len(matched_positions(signature, record)),
         key_length=params.key_length,
+        declaration_digest=_declaration_digest(signature),
     )
 
 
@@ -745,8 +824,9 @@ def _checked_messages(
         mapping, or a value is not a :class:`MatchedCountMessage`.
     ValueError
         If either verifier is missing, if a message is filed under the wrong
-        party, if there are extra entries, or if the two messages disagree about
-        the run's message bit or key length -- or disagree with ``params``.
+        party, if there are extra entries, if the two messages disagree about
+        the run's message bit or key length -- or disagree with ``params`` --
+        or if they name two different declarations.
     """
     if not isinstance(params, ProtocolParams):
         raise TypeError(
@@ -811,6 +891,22 @@ def _checked_messages(
                 f"length, so a mismatch means the message and the rule come "
                 f"from different runs."
             )
+    # Same run is not the same declaration: the bit and the length agree across
+    # every declaration for one distribution, and it is the declaration that
+    # decides which positions are matched at all.
+    if (
+        bob.declaration_digest is not None
+        and charlie.declaration_digest is not None
+        and bob.declaration_digest != charlie.declaration_digest
+    ):
+        raise ValueError(
+            f"the two messages counted different declarations: Bob's names "
+            f"{bob.declaration_digest} and Charlie's {charlie.declaration_digest}. "
+            f"m_B + m_C is conserved across one fixed pair of records against "
+            f"one fixed declaration and means nothing across two, so these two "
+            f"counts cannot be pooled -- their sum is no run's M. See "
+            f"sih141.protocol.verify on counting against one declaration."
+        )
     return bob, charlie
 
 
@@ -848,8 +944,9 @@ def exchange_matched_counts(
     TypeError
         If ``params`` or ``messages`` is of the wrong type.
     ValueError
-        If a verifier is missing, a message is filed under the wrong party, or
-        the two messages do not describe one run under ``params``.
+        If a verifier is missing, a message is filed under the wrong party, the
+        two messages do not describe one run under ``params``, or they counted
+        two different declarations (:ref:`one-declaration`).
 
     See Also
     --------
@@ -886,6 +983,11 @@ def exchange_matched_counts(
         minimum_pooled=minimum_pooled_matched_count(params),
         key_length=params.key_length,
         message_bit=bob.message_bit,
+        # Checked equal above wherever both messages name one, so either stands
+        # for the pair; None only when neither recorded it.
+        declaration_digest=(
+            bob.declaration_digest or charlie.declaration_digest
+        ),
     )
 
 
@@ -945,6 +1047,49 @@ def no_count_exchange(
     """
     _checked_messages(messages, params)
     return None
+
+
+def _as_declaration_digest(digest: Any) -> str | None:
+    """Validate the declaration a count says it was computed against.
+
+    Parameters
+    ----------
+    digest : str or None
+        The fingerprint, or ``None`` for a count whose declaration was not
+        recorded.
+
+    Returns
+    -------
+    str or None
+        ``digest`` unchanged.
+
+    Raises
+    ------
+    TypeError
+        If ``digest`` is neither a string nor ``None``.
+    ValueError
+        If ``digest`` is the empty string. ``None`` already means "not
+        recorded", and it is read as "no claim to check"; an empty string would
+        be a second spelling of the same thing that instead compares *unequal*
+        to every real digest, turning a message that recorded nothing into one
+        that claims a declaration nothing hashes to.
+    """
+    if digest is None:
+        return None
+    if not isinstance(digest, str):
+        raise TypeError(
+            f"declaration_digest must be a string or None, got "
+            f"{type(digest).__name__}; it is the fingerprint of the "
+            f"declaration the count was computed against."
+        )
+    if not digest:
+        raise ValueError(
+            "declaration_digest must be a non-empty string or None. None is "
+            "how a count says its declaration was not recorded; an empty "
+            "string would be a second way of saying it that no comparison "
+            "could read."
+        )
+    return digest
 
 
 def _as_verifier(party: Party | str) -> Party:

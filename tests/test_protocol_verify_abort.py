@@ -1,7 +1,7 @@
 """The matched-count abort rule, and the no-verdict outcome it produces.
 
 Companion to ``tests/test_protocol_verify.py``, kept separate because it pins a
-*new* protocol control rather than the counting rule those tests cover. Three
+*new* protocol control rather than the counting rule those tests cover. Six
 things are asserted here and nowhere else:
 
 1. A declaration that starves the matched set can no longer crash a run.
@@ -18,12 +18,24 @@ things are asserted here and nowhere else:
    a different type, a different transcript field, a different summary line, and
    a JSON round trip that keeps them apart.
 4. The **pooled** floors, as ``verify`` applies them one verifier at a time.
-   Two of the four abort reasons are statements about the pair rather than about
-   this verifier's own log, and the difference is what closes the split-coin
-   route: a verifier who cleared his own floor still refuses when the pair's
-   total is short, and refuses again when the *other* verifier is starved. The
-   pooled floor's own derivation lives in ``tests/test_protocol_tally.py``,
-   beside the message that makes it checkable.
+   Three of the five abort reasons are statements about the pair rather than
+   about this verifier's own log, and the difference is what closes the
+   split-coin route: a verifier who cleared his own floor still refuses when the
+   pair's total is short, and refuses again when the *other* verifier is
+   starved. The pooled floor's own derivation lives in
+   ``tests/test_protocol_tally.py``, beside the message that makes it checkable.
+5. The **wire** between the exchange and the verdicts, in ``verify_all``: each
+   verifier is handed the *other* one's count. Every pooled case above uses
+   ``m_B == m_C``, where handing a verifier his own count and handing him his
+   counterpart's are the same thing, so the mapping itself needs a case where
+   the two counts differ and straddle the pooled decision. Without one, an
+   inverted mapping turns the pooled floor into "twice my own count" and hands
+   back the asymmetric outcome Phase C' exists to remove, with the whole suite
+   still green.
+6. That a pooled floor is applied to **one declaration's** counts or to none.
+   The counts are bound to the declaration they were computed against, and a
+   run whose forwarding hop altered the declaration after the exchange is
+   refused rather than evaluated on a mixed total.
 
 The security point of (2) is easy to miss and is pinned by
 ``test_a_starved_matched_set_that_would_have_been_accepted_now_aborts``: a
@@ -37,6 +49,7 @@ from __future__ import annotations
 
 import json
 import math
+from typing import Any
 
 import numpy as np
 import pytest
@@ -51,6 +64,11 @@ from sih141.protocol.params import (
 from sih141.protocol.records import RecipientRecord
 from sih141.protocol.session import QDSSession, SessionTranscript
 from sih141.protocol.signature import Signature, sign
+from sih141.protocol.tally import (
+    PooledMatchedCounts,
+    exchange_matched_counts,
+    matched_count_message,
+)
 from sih141.protocol.verify import (
     HONEST_ABORT_BUDGET,
     AbortReason,
@@ -725,6 +743,40 @@ def test_a_pooled_total_below_its_floor_reaches_no_verdict() -> None:
     assert "cleared his own floor" in message
 
 
+def test_a_pooled_total_exactly_on_its_floor_is_scored() -> None:
+    """The pooled rule is ``abort iff M < M_min``, so ``M == M_min`` is scored.
+
+    The boundary the floor's derivation fixes: ``M_min = ceil((1 - d) mu_M)``
+    and the honest-abort budget bounds ``P[M < M_min]``, so a pair holding
+    exactly ``M_min`` records between them is inside the budget and reaches a
+    verdict. One record less does not. Both sides are asserted because every
+    other pooled case in this file sits far from the boundary, where a
+    comparison shifted by one is invisible.
+    """
+    params = ProtocolParams(key_length=600)
+    key = generate_private_key(params, 0, rng=np.random.default_rng(SEED + 32))
+    signature = sign(0, key, params)
+    pooled_floor = minimum_pooled_matched_count(params)
+    half = pooled_floor - pooled_floor // 2
+    record = _record_matching_exactly(key, params, matched=half)
+    assert half >= minimum_matched_count(params)
+    assert half + pooled_floor // 2 == pooled_floor
+
+    on_the_floor = verify(
+        signature, record, params, counterpart_matched=pooled_floor // 2
+    )
+    assert on_the_floor.accepted
+    assert on_the_floor.matched_count == half
+
+    with pytest.raises(MatchedSetTooSmall) as excinfo:
+        verify(
+            signature, record, params, counterpart_matched=pooled_floor // 2 - 1
+        )
+    assert excinfo.value.abort.reason is AbortReason.POOLED_BELOW_FLOOR
+    assert excinfo.value.abort.pooled_count == pooled_floor - 1
+    assert excinfo.value.abort.shortfall == 1
+
+
 def test_a_starved_counterpart_takes_this_verifier_down_with_him() -> None:
     """The joint consequence, which is what makes the guarantee exhaustive.
 
@@ -925,3 +977,558 @@ def test_verify_all_pools_the_two_counts_by_default() -> None:
     assert all(result.accepted for result in results.values())
     with pytest.raises(TypeError, match="exchange_counts must be a bool"):
         verify_all(signature, records, params, exchange_counts=1)
+
+
+# ==========================================================================
+# 6. The wire between the exchange and the verdicts
+# ==========================================================================
+
+
+def _lopsided_pair(
+    key: PrivateKey,
+    params: ProtocolParams,
+    *,
+    bob_matched: int,
+    charlie_matched: int,
+) -> dict[Party, RecipientRecord]:
+    """Build a symmetrised pair of logs with two *different* matched counts.
+
+    ``m_B != m_C`` is what makes the pair a probe of the wiring rather than of
+    the arithmetic: with equal counts every mapping from a verifier to "the
+    other one's count" agrees with every other, so a swapped or inverted wire is
+    invisible.
+
+    Parameters
+    ----------
+    key : PrivateKey
+        The declared key both logs are built against.
+    params : ProtocolParams
+        Supplies the alphabet used to pick a deliberately different basis.
+    bob_matched, charlie_matched : int
+        How many positions each verifier matches. Every matched position agrees
+        with the declaration, so both rates are ``0.0`` and nothing but the
+        counts can decide either outcome.
+
+    Returns
+    -------
+    dict of Party to RecipientRecord
+        Flagged symmetrised, so :func:`verify_all` scores them.
+    """
+    counts = {Party.BOB: bob_matched, Party.CHARLIE: charlie_matched}
+    return {
+        party: RecipientRecord(
+            party=party,
+            message_bit=key.message_bit,
+            entries=_record_matching_exactly(
+                key, params, matched=counts[party], party=party
+            ).entries,
+            symmetrised=True,
+        )
+        for party in (Party.BOB, Party.CHARLIE)
+    }
+
+
+def _refusal_scoring_first(
+    signature: Signature,
+    records: dict[Party, RecipientRecord],
+    params: ProtocolParams,
+    first: Party,
+) -> VerificationAbort:
+    """Return the refusal :func:`verify_all` raises when ``first`` is scored first.
+
+    :func:`verify_all` reaches both verdicts or none, so it surfaces only the
+    refusal of the verifier it happens to score first -- and it scores them in
+    the mapping's own order. Calling it once per order is therefore how a test
+    sees *both* verifiers' outcomes through the public function: a verifier who
+    was handed a verdict rather than a refusal shows up here as the wrong
+    party's abort coming back.
+
+    Parameters
+    ----------
+    signature : Signature
+        The declaration.
+    records : dict of Party to RecipientRecord
+        Both logs.
+    params : ProtocolParams
+        The parameter set.
+    first : Party
+        The verifier to place first in the mapping.
+
+    Returns
+    -------
+    VerificationAbort
+        The refusal carried by the raised :exc:`MatchedSetTooSmall`.
+    """
+    second = Party.CHARLIE if first is Party.BOB else Party.BOB
+    ordered = {first: records[first], second: records[second]}
+    with pytest.raises(MatchedSetTooSmall) as excinfo:
+        verify_all(signature, ordered, params)
+    return excinfo.value.abort
+
+
+def test_verify_all_hands_each_verifier_the_other_ones_count() -> None:
+    """The wire Phase C' exists to get right, pinned on an asymmetric pair.
+
+    ``verify_all`` runs the exchange and then hands each verifier a number. If
+    that mapping were inverted -- each verifier handed *his own* count back --
+    the pooled floor would silently become "twice my own count", which is a
+    different rule. Nothing else distinguishes the two: every other case that
+    reaches a pooled floor *through this function* uses ``m_B == m_C``, and
+    there the two mappings return the same number.
+
+    So the counts are made unequal and placed either side of the pooled
+    decision. ``m_B = 300`` and ``m_C = 212`` at ``L = 1200`` clear the
+    per-verifier floor of ``212`` while ``M = 512`` falls short of the pooled
+    floor of ``534``; but ``2 m_B = 600`` clears it. Under the inverted mapping
+    Bob is therefore handed a verdict -- accepted, at rate ``0.0`` -- while
+    Charlie refuses, which is exactly the asymmetric outcome Phase C' removes
+    from the outcome space. Both verifiers must refuse, and both refusals must
+    quote the same ``M``, because the pooled total is a property of the run
+    rather than of whoever is reading it.
+    """
+    params = ProtocolParams(key_length=1200)
+    key = generate_private_key(params, 0, rng=np.random.default_rng(SEED + 26))
+    signature = sign(0, key, params)
+    floor = minimum_matched_count(params)
+    pooled_floor = minimum_pooled_matched_count(params)
+    bob_matched, charlie_matched = 300, 212
+    assert (floor, pooled_floor) == (212, 534)
+    # The straddle: both verifiers clear their own floor, the pair does not
+    # clear the pooled one, and doubling Bob's count would.
+    assert bob_matched > charlie_matched >= floor
+    assert bob_matched + charlie_matched < pooled_floor
+    assert 2 * bob_matched >= pooled_floor > 2 * charlie_matched
+
+    records = _lopsided_pair(
+        key, params, bob_matched=bob_matched, charlie_matched=charlie_matched
+    )
+    refusals = {
+        party: _refusal_scoring_first(signature, records, params, party)
+        for party in (Party.BOB, Party.CHARLIE)
+    }
+
+    for party, refusal in refusals.items():
+        assert refusal.party is party, (
+            f"verify_all reached a verdict for {party.value} on a run whose "
+            f"pooled count is below the floor, so he was scored against a "
+            f"count that is not his counterpart's"
+        )
+        assert refusal.reason is AbortReason.POOLED_BELOW_FLOOR
+        assert refusal.pooled_count == bob_matched + charlie_matched
+        assert refusal.minimum_pooled == pooled_floor
+    # Each verifier scored his own log and was told the other one's count.
+    assert refusals[Party.BOB].matched_count == bob_matched
+    assert refusals[Party.BOB].counterpart_matched == charlie_matched
+    assert refusals[Party.CHARLIE].matched_count == charlie_matched
+    assert refusals[Party.CHARLIE].counterpart_matched == bob_matched
+
+
+def test_verify_all_carries_the_joint_consequence_to_the_ample_verifier() -> None:
+    """A starved counterpart takes the other down through ``verify_all`` too.
+
+    The same wire, seen through the check that needs it most. Bob's own log is
+    ample and the pair's total is far above the pooled floor; Charlie is one
+    record short of his own. The joint consequence says Bob refuses anyway --
+    but only if he is handed *Charlie's* count. Handed his own he would clear
+    every floor and accept, which is the asymmetric outcome again, reached this
+    time through the very check that exists to forbid it.
+    """
+    params = ProtocolParams(key_length=1200)
+    key = generate_private_key(params, 0, rng=np.random.default_rng(SEED + 27))
+    signature = sign(0, key, params)
+    floor = minimum_matched_count(params)
+    pooled_floor = minimum_pooled_matched_count(params)
+    records = _lopsided_pair(
+        key, params, bob_matched=pooled_floor, charlie_matched=floor - 1
+    )
+    assert pooled_floor + floor - 1 >= pooled_floor
+
+    bob_refusal = _refusal_scoring_first(signature, records, params, Party.BOB)
+    assert bob_refusal.party is Party.BOB, (
+        "Bob reached a verdict while Charlie was below his own floor; the "
+        "joint consequence is what removes that outcome"
+    )
+    assert bob_refusal.reason is AbortReason.COUNTERPART_BELOW_FLOOR
+    assert bob_refusal.matched_count == pooled_floor
+    assert bob_refusal.counterpart_matched == floor - 1
+
+    charlie_refusal = _refusal_scoring_first(
+        signature, records, params, Party.CHARLIE
+    )
+    assert charlie_refusal.party is Party.CHARLIE
+    assert charlie_refusal.reason is AbortReason.BELOW_FLOOR
+    assert charlie_refusal.matched_count == floor - 1
+    assert charlie_refusal.counterpart_matched == pooled_floor
+
+
+# ==========================================================================
+# 7. One declaration, or no pooled floor at all
+# ==========================================================================
+
+
+def _pooled_over(
+    signature: Signature,
+    records: dict[Party, RecipientRecord],
+    params: ProtocolParams,
+) -> PooledMatchedCounts:
+    """Run Phase C' over one declaration and return what both recipients hold.
+
+    Parameters
+    ----------
+    signature : Signature
+        The declaration both counts are computed against.
+    records : dict of Party to RecipientRecord
+        Both logs.
+    params : ProtocolParams
+        The parameter set.
+
+    Returns
+    -------
+    PooledMatchedCounts
+        The exchange, carrying the declaration its counts named.
+    """
+    return exchange_matched_counts(
+        {
+            party: matched_count_message(signature, record, params)
+            for party, record in records.items()
+        },
+        params,
+    )
+
+
+def _rotated(declaration: Signature, params: ProtocolParams) -> Signature:
+    """Return the declaration with every basis moved on one step in ``params``.
+
+    A different declaration of the same shape: same message bit, same length,
+    same eigenvalues, and a matched set that shares no position with the
+    original's. Everything :func:`exchange_matched_counts` compares still
+    agrees, which is what makes it the case a check on the bit and the length
+    cannot see.
+
+    Parameters
+    ----------
+    declaration : Signature
+        The declaration to alter. Frozen, and not modified.
+    params : ProtocolParams
+        Supplies the basis alphabet the rotation runs over.
+
+    Returns
+    -------
+    Signature
+        The rotated declaration.
+    """
+    order = list(params.bases)
+    return Signature(
+        declaration.message_bit,
+        PrivateKey(
+            declaration.message_bit,
+            tuple(
+                KeyElement(
+                    order[(order.index(element.basis) + 1) % len(order)],
+                    element.eigenvalue,
+                )
+                for element in declaration.declared_key.elements
+            ),
+        ),
+    )
+
+
+def test_a_count_against_another_declaration_is_refused_not_pooled() -> None:
+    """The pooled floor is applied to one declaration's counts or to none.
+
+    ``m_B + m_C`` is conserved across one fixed pair of records against one
+    fixed declaration; across two it is a sum of matches to two different basis
+    strings and a quantity of nothing. So a verifier handed a count that names
+    another declaration refuses, and refuses *before* the pooled floor is
+    evaluated -- the alternative is to report the outcome of a check on a number
+    no run produced, which is a fabrication whichever way it comes out.
+
+    Note what the refusal is not: it is not "too little evidence". Both counts
+    here are ample and their sum clears the pooled floor twice over. It is the
+    provenance that fails, which is why the reason is its own member and why its
+    shortfall is ``0``.
+    """
+    params = ProtocolParams(key_length=1200)
+    key = generate_private_key(params, 0, rng=np.random.default_rng(SEED + 28))
+    declaration = sign(0, key, params)
+    other = _rotated(declaration, params)
+    records = _lopsided_pair(key, params, bob_matched=800, charlie_matched=700)
+
+    elsewhere = _pooled_over(other, records, params)
+    handed = elsewhere.counterpart_of(Party.BOB)
+    # The number itself is unremarkable: ample on its own and ample pooled.
+    assert handed >= minimum_matched_count(params)
+    assert 800 + handed >= minimum_pooled_matched_count(params)
+
+    with pytest.raises(MatchedSetTooSmall) as excinfo:
+        verify(declaration, records[Party.BOB], params, counterpart_matched=handed)
+
+    abort = excinfo.value.abort
+    assert abort.reason is AbortReason.COUNTS_FROM_TWO_DECLARATIONS
+    assert abort.party is Party.BOB
+    assert abort.matched_count == 800
+    assert abort.counterpart_matched == handed
+    assert abort.minimum_pooled == minimum_pooled_matched_count(params)
+    # The pair's numbers are recorded, because seeing the total that was *not*
+    # enforced is the point; but no floor was missed, so no distance from one is
+    # quoted.
+    assert abort.pooled_count == 800 + handed
+    assert abort.shortfall == 0
+    assert abort.is_pooled
+    message = str(excinfo.value)
+    assert "different declaration" in message
+    assert "is no run's M" in message
+    assert "not a signature failure" in message
+
+    # The same two records, counted against the declaration actually being
+    # scored: pooled and scored as usual. Nothing but the binding differs.
+    here = _pooled_over(declaration, records, params)
+    assert verify(
+        declaration,
+        records[Party.BOB],
+        params,
+        counterpart_matched=here.counterpart_of(Party.BOB),
+    ).accepted
+
+
+def test_a_count_of_unrecorded_provenance_is_taken_at_its_word() -> None:
+    """A plain integer still means what it always meant.
+
+    The binding is checked, never demanded: a caller holding one record and a
+    number from elsewhere -- every call site that predates the field, and the
+    transcripts recorded by them -- passes an :class:`int` and gets the pooled
+    rule exactly as before. A count that names no declaration can disagree with
+    nothing, and inventing a disagreement would turn a stored run into an abort
+    it never had.
+    """
+    params = ProtocolParams(key_length=1200)
+    key = generate_private_key(params, 0, rng=np.random.default_rng(SEED + 29))
+    declaration = sign(0, key, params)
+    records = _lopsided_pair(key, params, bob_matched=800, charlie_matched=700)
+    unbound = _pooled_over(_rotated(declaration, params), records, params)
+    stripped = PooledMatchedCounts.from_dict(
+        {
+            key_: value
+            for key_, value in unbound.to_dict().items()
+            if key_ != "declaration_digest"
+        }
+    )
+
+    assert stripped.declaration_digest is None
+    assert verify(
+        declaration,
+        records[Party.BOB],
+        params,
+        counterpart_matched=stripped.counterpart_of(Party.BOB),
+    ).accepted
+    assert verify(
+        declaration, records[Party.BOB], params, counterpart_matched=700
+    ).accepted
+
+
+def test_a_mixed_declaration_refusal_round_trips_and_reads_as_no_verdict() -> None:
+    """It is an outcome, so it has to survive the wire and read like one."""
+    abort = VerificationAbort(
+        Party.CHARLIE,
+        AbortReason.COUNTS_FROM_TWO_DECLARATIONS,
+        404,
+        212,
+        400.0,
+        1200,
+        0,
+        counterpart_matched=370,
+        minimum_pooled=534,
+    )
+    restored = VerificationAbort.from_dict(
+        json.loads(json.dumps(abort.to_dict()))
+    )
+    assert restored == abort
+    assert restored.summary() == abort.summary()
+    assert "counts-from-two-declarations" in restored.summary()
+    assert "Not a rejection" in restored.summary()
+    assert restored.accepted_is_undefined
+    assert not isinstance(restored, VerificationResult)
+
+    # The label still cannot contradict the numbers it is recorded with: this
+    # reason says the pair's counts are incomparable, not that this verifier
+    # was starved, so it stays unavailable to a verifier below his own floor and
+    # to one who never heard from his counterpart.
+    with pytest.raises(ValueError, match="already below his floor"):
+        VerificationAbort(
+            Party.CHARLIE,
+            AbortReason.COUNTS_FROM_TWO_DECLARATIONS,
+            10,
+            212,
+            400.0,
+            1200,
+            0,
+            counterpart_matched=370,
+            minimum_pooled=534,
+        )
+    with pytest.raises(ValueError, match="statement about the two"):
+        VerificationAbort(
+            Party.CHARLIE,
+            AbortReason.COUNTS_FROM_TWO_DECLARATIONS,
+            404,
+            212,
+            400.0,
+            1200,
+            0,
+        )
+
+
+def test_a_hop_that_alters_the_declaration_stops_the_pooled_floor_passing() -> None:
+    """The hole this closes, mounted through the shipped session seams.
+
+    Phase C' is upstream of Phase C, so both counts are computed against the
+    declaration Alice sent Bob -- the one Bob forwards in order to *ask* for a
+    count. The forwarding hop is Bob's, and a Bob who then delivers a different
+    declaration leaves Charlie scoring one declaration while the count he was
+    handed is about another. The floor was enforced on that mixed total.
+
+    The forwarder here uses nothing but Bob's own log, which the real Bob holds:
+    it declares, at every position, a basis Bob did not log. So the declaration
+    Charlie scores has ``m_B = 0`` -- there is no evidence base under it at all
+    -- while the count Charlie is handed is Bob's ample count against the
+    declaration Bob was given. Their sum clears the pooled floor; the evidence
+    behind the declaration Charlie actually scored does not come close. That is
+    the failure mode: not a floor set too low, but a floor applied to a number
+    belonging to no run.
+
+    Charlie must therefore reach no verdict, and the reason must say which
+    problem it was, so that a Phase 4 reader investigates the hop rather than
+    the verifiers.
+    """
+    params = ProtocolParams(key_length=1200)
+    session_holder: list[QDSSession] = []
+
+    def bob_log_avoiding(signature: Signature, protocol_params: Any) -> Signature:
+        """Forward a declaration matching nothing in Bob's own log.
+
+        Parameters
+        ----------
+        signature : Signature
+            What Alice sent Bob.
+        protocol_params : ProtocolParams
+            Supplies the basis alphabet.
+
+        Returns
+        -------
+        Signature
+            The declaration Charlie is given.
+        """
+        bob = session_holder[0].records[signature.message_bit][Party.BOB]
+        return Signature(
+            signature.message_bit,
+            PrivateKey(
+                signature.message_bit,
+                tuple(
+                    KeyElement(
+                        next(
+                            candidate
+                            for candidate in protocol_params.bases
+                            if candidate != logged
+                        ),
+                        element.eigenvalue,
+                    )
+                    for logged, element in zip(
+                        bob.bases, signature.declared_key.elements
+                    )
+                ),
+            ),
+        )
+
+    session = QDSSession(
+        params,
+        rng=np.random.default_rng(SEED + 30),
+        forwarder=bob_log_avoiding,
+    )
+    # The seam is called during transfer(), by which time the session exists;
+    # the holder is only how the closure reaches it.
+    session_holder.append(session)
+    transcript = session.run(0)
+
+    assert transcript.forwarding_altered_signature
+    delivered = transcript.signature_for(Party.CHARLIE)
+    assert delivered != transcript.signature
+
+    # What the pooled floor was asked about, and what it was really about.
+    pooled = transcript.pooled
+    assert pooled is not None and pooled.meets_every_floor
+    charlie_record = transcript.records_for(0)[Party.CHARLIE]
+    bob_record = transcript.records_for(0)[Party.BOB]
+    scored = len(matched_positions(delivered, charlie_record))
+    honest_counterpart = len(matched_positions(delivered, bob_record))
+    assert honest_counterpart == 0
+    assert scored >= minimum_matched_count(params)
+    # The mixed total clears the floor; the real evidence base under the
+    # declaration Charlie scored is nowhere near it.
+    assert scored + pooled.bob_count >= minimum_pooled_matched_count(params)
+    assert scored + honest_counterpart < minimum_pooled_matched_count(params)
+
+    # So the run is refused rather than scored on the mixed total.
+    assert Party.CHARLIE in transcript.aborts_by_party
+    refusal = transcript.aborts_by_party[Party.CHARLIE]
+    assert refusal.reason is AbortReason.COUNTS_FROM_TWO_DECLARATIONS
+    assert refusal.matched_count == scored
+    assert refusal.counterpart_matched == pooled.bob_count
+    assert transcript.charlie is None
+    assert not transcript.transferable
+    assert not transcript.repudiated
+    assert transcript.aborted
+    # Bob is untouched: the counts he pooled were both against the declaration
+    # he scored, so his check was coherent and his verdict stands.
+    assert transcript.bob is not None and transcript.bob.accepted
+    assert SessionTranscript.from_json(transcript.to_json()) == transcript
+
+
+def test_an_unaltered_hop_is_scored_exactly_as_before() -> None:
+    """The check is invisible on every run the forwarding hop leaves alone.
+
+    Both arms matter: the object-identical hop the session takes by default, and
+    a hop that rebuilds an equal declaration rather than passing the same object
+    on. The binding is over the declaration's content, so the second is
+    indistinguishable from the first -- a rebuilt declaration is the same
+    declaration, and refusing it would make an honest deployment's serialisation
+    choices part of the protocol.
+    """
+    params = ProtocolParams(key_length=600)
+
+    def rebuilding(signature: Signature, protocol_params: Any) -> Signature:
+        """Forward an equal declaration built from scratch.
+
+        Parameters
+        ----------
+        signature : Signature
+            What Alice sent Bob.
+        protocol_params : ProtocolParams
+            Unused; the hop alters nothing.
+
+        Returns
+        -------
+        Signature
+            A new object equal to ``signature``.
+        """
+        del protocol_params
+        return Signature(
+            signature.message_bit,
+            PrivateKey(
+                signature.message_bit,
+                tuple(
+                    KeyElement(element.basis, element.eigenvalue)
+                    for element in signature.declared_key.elements
+                ),
+            ),
+        )
+
+    plain = QDSSession(params, rng=np.random.default_rng(SEED + 31)).run(0)
+    rebuilt = QDSSession(
+        params, rng=np.random.default_rng(SEED + 31), forwarder=rebuilding
+    ).run(0)
+
+    for transcript in (plain, rebuilt):
+        assert not transcript.aborted
+        assert transcript.is_complete
+        assert transcript.transferable
+    assert not rebuilt.forwarding_altered_signature
+    assert plain == rebuilt

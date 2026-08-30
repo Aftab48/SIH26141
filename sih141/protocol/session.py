@@ -103,6 +103,13 @@ comparable rather than two different programs.
     right message bit, right length) before the session will use it, so a
     mis-wired attack fails loudly instead of quietly producing a clean run.
 
+    It is the one *Alice-side* seam handed a generator, because it stands where
+    the quantum channel is and a channel is random. What it gets is the
+    **Alice-side** stream and not the session's only one: the symmetrisation
+    coins come from a second stream this seam is never shown, and cannot
+    predict from the one it is shown. See :ref:`two-streams`, which is a
+    threat-model boundary rather than a detail of plumbing.
+
 ``signer`` -- Phase B, i.e. who is holding the pen
     Callable matching :class:`Signer`, defaulting to :func:`honest_signer`. It
     receives the message bit, the key pair, the parameters, **and the
@@ -193,11 +200,96 @@ comparable rather than two different programs.
     where before Charlie's verdict was silently attributed to Bob's declaration
     and a Phase 4 statistic would have read an attacked run as a clean one.
 
+.. _two-streams:
+
+Two streams: Alice's generator and the recipients'
+--------------------------------------------------
+A seam is isolated only as far as the objects it is handed, and one object this
+file used to hand out was the session's single generator. ``distributor`` is
+given an ``rng`` -- it stands where the quantum channel is, and a channel is
+random -- and Phase A' then drew its ``L`` symmetrisation coins from that same
+generator object, two lines later. A distributor that cloned
+``rng.bit_generator.state`` on entry therefore held every coin before the
+recipients tossed them, and a ``signer`` sharing that clone with it could
+declare, position by position, the eigenvalue the coin was about to hand Bob.
+Measured through otherwise unmodified code at
+:data:`~sih141.protocol.params.DEFAULT_PARAMS`: Bob's mismatch rate ``0.00000``
+and Charlie's ``1.00000``, with ``m_B = m_C = 37095`` and ``M = 74190`` clearing
+both floors, five runs out of five -- a recorded repudiation on a run whose
+transcript printed ``P(repudiation | this run) <= 1.414e-09``.
+
+Nothing there is a defect in the bound. The Hoeffding argument assumes the coins
+are private, and a real Alice has no way to read a coin two other people toss on
+their own authenticated channel, so the mathematics stands exactly as written.
+The defect is in the *harness*: it let an Alice-side seam read them. Every
+attack number this repository publishes comes out of this harness, so those
+numbers were right only by the convention that the attack implementations
+happened not to peek -- and nothing enforced the convention.
+
+The constructor therefore splits the generator it resolves into two, and a seam
+is handed at most one of them:
+
+``self._alice_rng``
+    Key generation and the ``distributor`` seam: everything Alice does, and
+    everything an adversary standing in her place may see.
+``self._recipient_rng``
+    The symmetrisation coins, and any recipient-side randomness added later. It
+    is built in the constructor, passed only to the ``symmetriser`` seam -- the
+    recipients' own step -- and reachable from no accessor, no record and no
+    transcript.
+
+Both come from the caller's generator: 32 bytes of material are drawn from it
+once, at construction, and each stream is seeded with a SHA-256 digest of that
+material under its own label (:func:`_derive_stream`). The split holds in the
+direction that matters. Rewinding the Alice-side generator -- PCG64's transition
+is invertible, so ``advance(-n)`` is available to an adversary -- reaches only
+earlier states of *that* stream, and its ``bit_generator.seed_seq.entropy`` is
+the digest rather than the material, so neither the state nor the seed sequence
+of the stream a seam holds says anything about the stream it does not. The
+caller's own generator is used for that one draw and then dropped, so no seam
+ever holds it either. Determinism is untouched: one seed gives one material,
+hence the same two streams and the same transcript byte for byte
+(``tests/test_protocol_session.py`` pins both halves of that).
+
+One consequence is a small gain rather than a cost. With the coins out of
+Alice's stream, a run made with
+:func:`~sih141.protocol.symmetrise.no_symmetrisation` and one made with the
+honest exchange now draw the *identical* Alice stream, so the two arms of that
+Phase 3 comparison differ in one callable and in nothing else -- which is what
+:mod:`sih141.protocol.symmetrise` already claimed for them, and what the coin
+draw sitting in the shared stream used to spoil for the second message bit.
+
+The rest of the seams, audited for the same class of leak and left as they are:
+
+* ``signer`` gets no generator, and is called after Phase A' has drawn its
+  coins. It is handed the recipients' **raw** logs, which is the deliberate
+  over-provision documented at :ref:`two-log-signer`, but the post-exchange
+  records and the coins that produced them are never offered.
+* ``forwarder`` and ``count_exchange`` get no generator and no records; two
+  declarations and two integers pass through them.
+* ``resource_factory`` gets a :class:`~sih141.protocol.distribute.ResourceContext`
+  -- party, message bit, position -- and no generator, so a channel-only
+  adversary cannot reach the coins even indirectly. A factory that wants
+  randomness closes over its own generator, which is the documented way.
+* ``symmetriser`` *is* handed ``self._recipient_rng``, which is correct: it
+  replaces the recipients' step and the coins are theirs. It is the one seam
+  from which the coins are readable, and reading your own coins is not an
+  attack; a Phase 3 run that replaces it is running the recipients dishonestly,
+  which is what :func:`~sih141.protocol.symmetrise.no_symmetrisation` already
+  makes visible in the transcript.
+
+What none of this defends against is an attack handed the seed by the harness
+that built it: a Phase 3 experiment that closes over the same
+``default_rng(seed)`` it passes to the session can predict every stream in it.
+No boundary inside this file can stop that, which is precisely why a Phase 3
+attack should take its own generator rather than reach for the session's.
+
 Everything downstream of the seams is fixed: the matched/unmatched split, the
 three matched-count floors, the two thresholds and the accept rule are computed
 by :func:`~sih141.protocol.verify.verify` from the record, the declaration, the
 counterpart's reported count and the parameter set alone, so no adversary can
-reach them. Phases A' and C' are likewise not Alice-side seams; see above.
+reach them. Phases A' and C' are likewise not Alice-side seams, and Phase A' now
+draws its coins from a generator no Alice-side seam is given; see above.
 
 A verifier whose evidence falls below one of those floors reaches **no verdict** --
 neither an acceptance nor a rejection. :meth:`QDSSession.run` records it and
@@ -236,10 +328,15 @@ Single use (replay)
     each other. Build a new session per run.
 Determinism (D3)
     One keyword-only ``rng``, resolved once in the constructor through
-    :func:`sih141.core.rng.resolve_rng` and threaded through key generation and
-    both distributions in that order. The same seed therefore reproduces the
-    entire transcript, byte for byte through :meth:`SessionTranscript.to_json`,
-    and ``tests/test_protocol_session.py`` pins that.
+    :func:`sih141.core.rng.resolve_rng`. It is drawn from exactly once, for the
+    32 bytes of material the two session streams are derived from
+    (:ref:`two-streams`); the Alice-side stream is then threaded through key
+    generation and both distributions in that order, and the recipient-side
+    stream through both symmetrisations. Deriving rather than sharing is a
+    threat-model requirement, not a stylistic one, and it costs nothing here:
+    the same seed still reproduces the entire transcript, byte for byte through
+    :meth:`SessionTranscript.to_json`, and ``tests/test_protocol_session.py``
+    pins that.
 Canonical state type (D1), qubit ordering (D2)
     Inherited from :mod:`sih141.protocol.distribute`; nothing here touches a
     state.
@@ -269,6 +366,7 @@ True
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -328,6 +426,98 @@ which bit she will sign (see the module docstring).
 
 
 # --------------------------------------------------------------------------- #
+# The two session streams (see :ref:`two-streams`)
+# --------------------------------------------------------------------------- #
+
+
+_STREAM_MATERIAL_BYTES: Final[int] = 32
+"""Bytes drawn from the caller's generator to derive the session's two streams.
+
+One draw, in the constructor, and the caller's generator is then dropped. Thirty
+two bytes because that is the width of the digest each stream is seeded with;
+fewer would be the real seed length whatever the digest claimed.
+"""
+
+_ALICE_STREAM_LABEL: Final[bytes] = b"sih141.protocol.session/alice"
+"""Domain separator for the stream Alice and her seams draw from."""
+
+_RECIPIENT_STREAM_LABEL: Final[bytes] = b"sih141.protocol.session/recipients"
+"""Domain separator for the stream Bob and Charlie's coins come from.
+
+Distinct from :data:`_ALICE_STREAM_LABEL` and hashed with the same material, so
+the two streams are independent for anyone who cannot invert SHA-256. Changing
+either label changes every seeded transcript in the project, which is why they
+are named constants rather than literals at the call site.
+"""
+
+
+def _derive_stream(material: bytes, label: bytes) -> np.random.Generator:
+    """Derive one labelled generator from the session's seed material.
+
+    The mechanism behind :ref:`two-streams`. The generator is seeded with
+    ``SHA-256(label + b":" + material)``, so that the two streams a session runs
+    are reproducible from one seed and yet unpredictable from each other: what a
+    seam holding one of them can read -- its ``bit_generator.state``, which
+    rewinds only within its own stream, and its
+    ``bit_generator.seed_seq.entropy``, which is the digest -- is a preimage
+    problem away from the material, and therefore from the other stream.
+
+    Parameters
+    ----------
+    material : bytes
+        The session's seed material, drawn once from the caller's generator.
+    label : bytes
+        The stream's domain separator, :data:`_ALICE_STREAM_LABEL` or
+        :data:`_RECIPIENT_STREAM_LABEL`.
+
+    Returns
+    -------
+    numpy.random.Generator
+        A fresh PCG64 generator, deterministic in ``(material, label)`` and
+        independent of every other label's.
+
+    Notes
+    -----
+    Deliberately *not* :meth:`numpy.random.Generator.spawn` or a
+    :class:`numpy.random.SeedSequence` child. Both leave the parent's entropy
+    sitting in the child's ``seed_seq.entropy`` in clear, so a seam holding one
+    child could rebuild the seed sequence and spawn its sibling -- which is the
+    very leak this split exists to close. A digest is one-way; a spawn key is
+    not.
+
+    D3 forbids reaching for :func:`numpy.random.default_rng` at a call site
+    because that *restarts* a stream where one should have been threaded. This
+    call is the opposite: it happens once, in the constructor, from the
+    generator :func:`~sih141.core.rng.resolve_rng` has already resolved, and
+    each generator it returns is then threaded through the whole run. If a
+    second module ever needs a private sub-stream, this function belongs beside
+    :func:`~sih141.core.rng.resolve_rng` in :mod:`sih141.core.rng`; it lives
+    here while it has one caller.
+
+    Examples
+    --------
+    >>> import hashlib
+    >>> from sih141.protocol.session import _derive_stream
+    >>> material = bytes(32)
+    >>> _derive_stream(material, b"one").bytes(4) == _derive_stream(
+    ...     material, b"one"
+    ... ).bytes(4)
+    True
+    >>> _derive_stream(material, b"one").bytes(4) == _derive_stream(
+    ...     material, b"two"
+    ... ).bytes(4)
+    False
+    >>> seeded = _derive_stream(material, b"one")
+    >>> seeded.bit_generator.seed_seq.entropy == int.from_bytes(
+    ...     hashlib.sha256(b"one:" + material).digest(), "big"
+    ... )
+    True
+    """
+    digest = hashlib.sha256(label + b":" + material).digest()
+    return np.random.default_rng(int.from_bytes(digest, "big"))
+
+
+# --------------------------------------------------------------------------- #
 # The two callable seams (see :ref:`phase3-seams`)
 # --------------------------------------------------------------------------- #
 
@@ -341,6 +531,13 @@ class Distributor(Protocol):
     the shape of the result (see :meth:`QDSSession.distribute`) but not its
     contents, because "the contents are wrong" is exactly what verification is
     for.
+
+    The ``rng`` it is passed is the session's **Alice-side** stream. Cloning its
+    state, rewinding it or rebuilding its seed sequence says nothing about the
+    symmetrisation coins, which are drawn from a stream derived under a
+    different label and never shown to this seam (:ref:`two-streams`). An
+    implementation that wants randomness of its own should still close over its
+    own generator, so that what it draws does not move Alice's stream.
     """
 
     def __call__(
@@ -1091,11 +1288,17 @@ class SessionTranscript:
                 f"nothing about the signer."
             )
         if self.aborted:
-            refused = ", ".join(abort.party.value for abort in self.aborts)
+            # Name the reason each verifier actually gave. A hardcoded cause here
+            # was wrong for three of the five AbortReason members, and on an
+            # altered-forwarding run it read "the matched set was below the floor"
+            # two lines under "Every floor met." -- the reason must come from the
+            # abort, never from an assumption about which one fired.
+            refused = ", ".join(
+                f"{abort.party.value} ({abort.reason.value})" for abort in self.aborts
+            )
             lines.append(
-                f"NO VERDICT: {refused} could not score this declaration -- the "
-                f"matched set was below the floor. This is not a rejection and "
-                f"must not be counted as one."
+                f"NO VERDICT: {refused} could not score this declaration. "
+                f"This is not a rejection and must not be counted as one."
             )
         elif not self.is_complete:
             lines.append("INCOMPLETE: not every verifier reached a verdict.")
@@ -1306,9 +1509,15 @@ class QDSSession:
         to key on; used by nothing here. See the module docstring on why it is
         not generated.
     rng : numpy.random.Generator or None, optional
-        Keyword-only (D3). Resolved once, in this constructor, and threaded
-        through key generation, both distributions and both symmetrisations in
-        that order, so one seed reproduces the whole run.
+        Keyword-only (D3). Resolved once, in this constructor, and drawn from
+        once: :data:`_STREAM_MATERIAL_BYTES` bytes of material, from which two
+        independent streams are derived (:ref:`two-streams`). Alice's is
+        threaded through key generation and both distributions and is what the
+        ``distributor`` seam receives; the recipients' supplies both
+        symmetrisations and is shown to no Alice-side seam. One seed still
+        reproduces the whole run. The generator passed in is not retained, so
+        constructing two sessions from one generator gives two different runs,
+        as before.
 
     Raises
     ------
@@ -1417,7 +1626,14 @@ class QDSSession:
             honest_forwarder if forwarder is None else forwarder
         )
         self._run_id = run_id
-        self._rng = resolve_rng(rng)
+        # One draw from the caller's generator, then two independent streams
+        # derived from it -- Alice's, which the seams may see, and the
+        # recipients', which they may not. See :ref:`two-streams`. The caller's
+        # generator is not retained: a seam that was handed it could rewind it
+        # to whatever the other stream was derived from.
+        material = resolve_rng(rng).bytes(_STREAM_MATERIAL_BYTES)
+        self._alice_rng = _derive_stream(material, _ALICE_STREAM_LABEL)
+        self._recipient_rng = _derive_stream(material, _RECIPIENT_STREAM_LABEL)
 
         self._keys: tuple[PrivateKey, PrivateKey] | None = None
         self._raw_records: dict[int, dict[Party, RecipientRecord]] = {}
@@ -1620,10 +1836,13 @@ class QDSSession:
 
         Notes
         -----
-        Consumes ``4 * L`` variates for the key pair, ``3 * L`` per recipient
-        per bit for the teleportation and measurement, and one ``L``-long array
-        of symmetrisation coins per bit, all from the session's single generator
-        (D3).
+        Consumes, from the **Alice-side** stream, ``4 * L`` variates for the key
+        pair and ``3 * L`` per recipient per bit for the teleportation and
+        measurement; and from the **recipient-side** stream, one ``L``-long
+        array of symmetrisation coins per bit. Two streams, not one, and the
+        seams are handed only the first (D3, :ref:`two-streams`): the coins are
+        the only randomness the non-repudiation bound uses, and a generator an
+        Alice-side seam can read is a generator that has no coins in it.
 
         Examples
         --------
@@ -1646,7 +1865,7 @@ class QDSSession:
                 "QDSSession for the next message."
             )
 
-        keys = generate_key_pair(self._params, rng=self._rng)
+        keys = generate_key_pair(self._params, rng=self._alice_rng)
         raw_records: dict[int, dict[Party, RecipientRecord]] = {}
         records: dict[int, dict[Party, RecipientRecord]] = {}
         for bit in MESSAGE_BITS:
@@ -1655,13 +1874,17 @@ class QDSSession:
                 self._params,
                 parties=VERIFIERS,
                 resource_factory=self._resource_factory,
-                rng=self._rng,
+                # Alice's stream, and only ever Alice's: a distributor that
+                # clones this generator's state learns nothing about the coins
+                # tossed on the next line. See :ref:`two-streams`.
+                rng=self._alice_rng,
             )
             raw = self._check_distribution(returned, bit)
             # Phase A': the recipients' own step, applied to whatever the
             # distributor produced -- an adversary standing in Alice's place
-            # cannot skip it, because he does not run it.
-            exchanged = self._symmetriser(raw, rng=self._rng)
+            # cannot skip it, because he does not run it, and cannot read its
+            # coins, because they are drawn from a generator he is never given.
+            exchanged = self._symmetriser(raw, rng=self._recipient_rng)
             raw_records[bit] = raw
             records[bit] = self._check_distribution(exchanged, bit)
 
@@ -1782,9 +2005,10 @@ class QDSSession:
         Notes
         -----
         Consumes no randomness (D3): an adversarial signer that wants some draws
-        its own generator over, which keeps the session's stream -- and
-        therefore the distribution -- identical between a clean run and an
-        attacked one.
+        its own generator over, which keeps the session's two streams -- and
+        therefore the distribution and the coins -- identical between a clean
+        run and an attacked one. It is offered no generator to draw from in any
+        case; see :ref:`two-streams`.
 
         Examples
         --------

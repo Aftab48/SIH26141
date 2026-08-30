@@ -56,7 +56,7 @@ per-verifier floor could refuse nothing.
 | `symmetrise.py` | Phase A′: the recipients' private exchange | `Symmetriser`, `symmetrise_records`, `no_symmetrisation` |
 | `signature.py` | Phase B: the declaration | `Signature`, `sign` |
 | `tally.py` | Phase C′: the recipients' matched-count exchange, and the pooled floor it makes checkable | `CountExchange`, `MatchedCountMessage`, `PooledMatchedCounts`, `matched_count_message`, `exchange_matched_counts`, `no_count_exchange` |
-| `verify.py` | Phase C: the matched/unmatched split, the accept rule, and the three matched-count floors | `VerificationResult`, `matched_positions`, `mismatch_positions`, `verify`, `verify_all`, `verify_or_abort`, `HONEST_ABORT_BUDGET`, `AbortReason`, `VerificationAbort`, `MatchedSetTooSmall`, `minimum_matched_count`, `minimum_pooled_matched_count`, `guaranteed_pooled_matched_count`, `enforced_repudiation_bound` |
+| `verify.py` | Phase C: the matched/unmatched split, the accept rule, the three matched-count floors and the declaration-provenance check | `VerificationResult`, `matched_positions`, `mismatch_positions`, `verify`, `verify_all`, `verify_or_abort`, `HONEST_ABORT_BUDGET`, `AbortReason`, `VerificationAbort`, `MatchedSetTooSmall`, `minimum_matched_count`, `minimum_pooled_matched_count`, `guaranteed_pooled_matched_count`, `enforced_repudiation_bound` |
 | `session.py` | Orchestration and the attack seams | `MESSAGE_BITS`, `Distributor`, `Symmetriser`, `Signer`, `Forwarder`, `honest_signer`, `honest_forwarder`, `SessionTranscript`, `QDSSession` |
 | `analysis.py` | Closed forms only; no simulation | `matched_statistics`, `honest_statistics`, `forgery_probability`/`_bound`, `recipient_forgery_probability`/`_bound`, `repudiation_probability`, `repudiation_bound`, `averaged_repudiation_bound`, `repudiation_bound_with_abort`, `symmetric_repudiation_bound`, `honest_abort_probability`/`_bound`, `binary_kl_divergence`, `hoeffding_exponent`, `max_accepted_mismatches`, `depolarising_error_rate`, `matched_count_distribution`, `matched_shortfall_probability`, `FORGER_MATCHED_MISMATCH_PROBABILITY`, `BoundMethod` |
 
@@ -192,6 +192,7 @@ M_R = { i : c_i = d_i }
 e_R = |{ i ∈ M_R : o_i ≠ w_i }|
 r_R = e_R / |M_R|
 abort   if   |M_R| < m_min                     no verdict, not a rejection
+abort   if   the two counts describe different declarations   provenance, not a count
 abort   if   |M_R| + m_{R̄} < M_min             the pooled floor
 abort   if   m_{R̄} < m_min                     his counterpart cannot score either
 accept  iff  r_R ≤ threshold(R),   threshold(Bob) = s_a,  threshold(Charlie) = s_v
@@ -199,11 +200,15 @@ accept  iff  r_R ≤ threshold(R),   threshold(Bob) = s_a,  threshold(Charlie) =
 
 `m_min` is the per-verifier floor (`verify.minimum_matched_count`), `1` for short keys and
 `36555` at `DEFAULT_PARAMS`; `M_min` is the pooled floor
-(`verify.minimum_pooled_matched_count`), `74190` there. The three checks are tested in that
+(`verify.minimum_pooled_matched_count`), `74190` there. The four checks are tested in that
 order so that a failure is attributed to the smallest thing that explains it, and each
-carries its own `AbortReason`. The third is the joint consequence, and it is what makes
-"Bob accepted" imply "Charlie reached a verdict": Section 6b-iv shows that without it no
-choice of floors closes the split-coin route.
+carries its own `AbortReason`. Three of them are counting floors; the second is a
+*provenance* check, and it exists because `m_{R̄}` is only meaningful when it was counted
+against the same declaration this verifier is scoring — otherwise the pooled sum is a
+mixture of two runs and the floor is enforced on a quantity that is no run's pooled count.
+The last is the joint consequence, and it is what makes "Bob accepted" imply "Charlie
+reached a verdict": Section 6b-iv shows that without it no choice of floors closes the
+split-coin route.
 
 Bob verifies, then forwards the declaration — never his evidence — to Charlie, who scores
 his own log at the looser cut.
@@ -950,9 +955,21 @@ one-qubit density matrix. The resource may be given in either representation.
 index is always 0 and no multi-qubit bitstring label is formed anywhere. Record and key
 indices are *positions in the key*, `0..L−1`, never register positions.
 
-**D3 — one injected generator.** `QDSSession` resolves a single `rng` in its constructor and
-threads it through key generation, both distributions and both exchanges, in that order, so
-one seed reproduces the entire transcript byte for byte through `to_json`. Per message bit
+**D3 — one injected generator, two derived streams.** `QDSSession` resolves the caller's
+`rng` exactly once in its constructor, draws 32 bytes of material from it, and derives **two**
+generators from that material by labelled SHA-256: an *Alice stream* feeding key generation
+and both distributions, and a *recipient stream* feeding the symmetrisation coins and nothing
+else. The caller's generator is then dropped, so no seam ever holds it. One seed still
+reproduces the entire transcript byte for byte through `to_json`.
+
+The split is a security boundary, not a tidiness measure. Previously one generator fed both
+the adversary-controlled distribution seam and the coins, so a distributor could clone
+`bit_generator.state` and precompute every coin — measured at 5/5 repudiations at
+`DEFAULT_PARAMS` with every floor met. `SeedSequence.spawn` would not have fixed it: numpy
+leaves the parent's entropy in each child in clear, so a seam holding one child could rebuild
+the sibling. See `:ref:`two-streams`` in `sih141.protocol.session`.
+
+Per message bit
 and per recipient, distribution consumes exactly three variates per key position — basis
 choice, Alice's Bell measurement, the recipient's projective measurement — and the exchange
 consumes exactly one array draw per bit. The count does not depend on the resource, so for a

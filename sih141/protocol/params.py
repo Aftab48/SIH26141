@@ -64,12 +64,43 @@ that you need either the ``M``-averaged form
 below), which additionally assumes **the declared bases are independent of the
 recipients' logged bases** and is therefore *false* against a signer who reads
 them -- the shipped ``Signer`` seam hands over both raw logs -- or the
-matched-count floor that :func:`sih141.protocol.verify.minimum_matched_count`
-enforces, which reaches a genuinely unconditional ``1.9e-9`` at these defaults
-(:func:`sih141.protocol.verify.enforced_repudiation_bound`).
+unconditional figure :func:`sih141.protocol.verify.enforced_repudiation_bound`
+returns, ``1.4139e-09`` at these defaults.
 And it is not a guarantee against a signer *starving* the evidence: a run whose
-``M`` is small gets a bound near ``1``, correctly, which is why the floor exists.
+``M`` is small gets a bound near ``1``, correctly, which is why the floors exist.
 ``docs/PHASE2.md`` section 6b states both limits in full.
+
+**What the unconditional figure rests on: three rules, jointly.** This paragraph
+used to credit the per-verifier matched-count floor
+(:func:`sih141.protocol.verify.minimum_matched_count`, ``m_min = 36555``) with
+an unconditional ``1.9e-9`` on its own. That is precisely the claim
+:mod:`sih141.protocol.analysis` section 4b-iii disproves, and it is repeated
+here so a reader who met it in an older copy can recognise it. A per-verifier
+floor bounds one branch -- Bob accepts and Charlie reaches a verdict of
+*reject* -- and leaves open a third outcome it creates itself: Charlie holding a
+matched set that is non-empty but **below his own floor**, on which he returns no
+verdict. A signer who reads the recipients' logged bases aims ``M`` at
+``2 m_min`` and wins that outcome on a single fair coin, with probability
+tending to ``1/2``; closed form ``0.432`` at ``L = 360`` and ``0.466``
+at ``L = 600``; measured ``78/200``, ``85/200`` and ``87/200`` across runs -- see
+:ref:`split-coin-provenance` before quoting a count. No key length touches it, because nothing about the *rate* is being
+deviated -- only the count. The guarantee needs all three of
+
+* the **per-verifier floor**, ``m_B >= m_min`` and ``m_C >= m_min``;
+* the **pooled floor**, ``m_B + m_C >= M_min = 74190``, carried by one integer
+  each way over the recipients' own channel (:mod:`sih141.protocol.tally`) and
+  worth having because ``M_min - 2 m_min = 1080 > 0``, so the total the attack
+  aims at is refused outright rather than priced; and
+* the **joint consequence**, that a verifier below his own floor takes the other
+  down with him
+  (:attr:`sih141.protocol.verify.AbortReason.COUNTERPART_BELOW_FLOOR`), which
+  removes the third outcome from the outcome space instead of bounding it.
+
+Together they force ``M >= max(2 m_min, M_min) = 74190`` on every run that
+reaches a verdict, hence ``exp(-74190 * gap**2 / 8) = 1.4139e-09``. Remove any
+one of the three and the number is not weakened by a factor; the guarantee is
+gone. Sections 4b-iii and 4b-iv of :mod:`sih141.protocol.analysis` derive both
+halves.
 
 ``s_v < forger_floor`` gives **unforgeability**. ``1/2`` -- the rate an
 adversary with no information about the key produces -- is only the crude
@@ -132,6 +163,105 @@ claim was false and the margin is now justified by the forgery *probability*
 instead: what fixes ``s_v`` is that ``D(s_v || forger_floor)`` has to be large
 enough that ``exp(-Theta(L))`` is a number worth quoting, not a fear of an
 unquantified attack.
+
+Authentication is a precondition, not a result
+---------------------------------------------
+Every threshold here is a statement about a *named* signer, and nothing in this
+package names one. The classical and quantum channels from Alice to each
+recipient are **assumed authenticated**; an adversary who controls both the
+distribution seam and the signing seam -- distributing her own key states and
+then signing her own key -- is accepted by both verifiers with probability
+``1``, at ``QBER = 0``, transferably, at every parameter set on this page. That
+is inherent to measurement-based QDS rather than a defect of these numbers, and
+it is stated as assumption **(AUTH)** in :mod:`sih141.protocol.analysis` section
+0b, beside (IND). *Partial* impersonation -- one seam, not both -- is caught
+cold by ``s_a`` and ``s_v`` doing exactly what they are sized to do.
+
+The numbers above, as executable claims
+---------------------------------------
+This project runs ``pytest --doctest-modules`` over ``sih141``, so a figure
+written as a doctest is re-derived on every run while the same figure written as
+prose is unverifiable by construction. The load-bearing numbers of this module
+are therefore restated here as tests -- including those documented on
+:data:`DEFAULT_PARAMS` and :data:`DEMO_PARAMS`, whose attribute docstrings
+:mod:`doctest` cannot reach.
+
+>>> import math
+>>> from sih141.protocol.analysis import (
+...     averaged_repudiation_bound,
+...     binary_kl_divergence,
+...     depolarising_error_rate,
+...     matched_statistics,
+...     recipient_forgery_bound,
+...     repudiation_bound,
+... )
+>>> from sih141.protocol.params import DEFAULT_PARAMS, DEMO_PARAMS
+>>> from sih141.protocol.verify import (
+...     enforced_repudiation_bound,
+...     minimum_matched_count,
+...     minimum_pooled_matched_count,
+... )
+
+The parameter set itself, and the gap the two cuts leave:
+
+>>> DEFAULT_PARAMS.key_length, DEFAULT_PARAMS.s_a, DEFAULT_PARAMS.s_v
+(115200, 0.015625, 0.0625)
+>>> DEFAULT_PARAMS.gap == 1 / 16 - 1 / 64 == 3 / 64
+True
+>>> DEFAULT_PARAMS.forger_floor == 1 / 12
+True
+>>> DEFAULT_PARAMS.s_v == 0.75 * DEFAULT_PARAMS.forger_floor
+True
+
+What the ``s_v`` margin buys, and what ``s_a`` is a budget for:
+
+>>> f"{binary_kl_divergence(DEFAULT_PARAMS.s_v, DEFAULT_PARAMS.forger_floor):.6f}"
+'0.003088'
+>>> f"{recipient_forgery_bound(DEFAULT_PARAMS, method='kl'):.1e}"
+'1.1e-103'
+>>> depolarising_error_rate(0.03125) == DEFAULT_PARAMS.s_a
+True
+
+The matched counts ``L`` was rounded to keep integral -- ``L/3`` per verifier
+and twice that pooled:
+
+>>> statistics = matched_statistics(DEFAULT_PARAMS)
+>>> statistics.expected, 2 * statistics.expected
+(38400.0, 76800.0)
+
+The two conditional repudiation figures. Both need (IND), which the shipped
+``Signer`` seam gives away, so neither may be published alone:
+
+>>> f"{repudiation_bound(DEFAULT_PARAMS, matched_records=76800):.4e}"
+'6.9040e-10'
+>>> averaged = averaged_repudiation_bound(
+...     DEFAULT_PARAMS, signer_sees_recipient_bases=False)
+>>> f"{averaged:.4e}"
+'6.9173e-10'
+
+The unconditional figure, and the fact that it is *not* the per-verifier
+floor's. ``max(2 * m_min, M_min)`` is ``M_min``, so the pooled floor is the
+binding one; the last line is the number this docstring used to attribute to the
+per-verifier floor alone, kept executable so it cannot be mistaken for the
+shipped bound again:
+
+>>> m_min = minimum_matched_count(DEFAULT_PARAMS)
+>>> M_min = minimum_pooled_matched_count(DEFAULT_PARAMS)
+>>> m_min, M_min, M_min - 2 * m_min
+(36555, 74190, 1080)
+>>> max(2 * m_min, M_min) == M_min
+True
+>>> f"{enforced_repudiation_bound(DEFAULT_PARAMS):.4e}"
+'1.4139e-09'
+>>> f"{math.exp(-M_min * DEFAULT_PARAMS.gap ** 2 / 8):.4e}"
+'1.4139e-09'
+>>> f"{math.exp(-2 * m_min * DEFAULT_PARAMS.gap ** 2 / 8):.4e}"
+'1.9022e-09'
+
+:data:`DEMO_PARAMS` carries no security claim, and that is a number too:
+
+>>> f"{repudiation_bound(DEMO_PARAMS, matched_records=128):.2f}"
+'0.97'
 
 Notes
 -----
@@ -1020,11 +1150,28 @@ Every number is chosen, not inherited:
     **That average is not the key length's security claim**, because it needs
     the declaration to be independent of the recipients' logged bases and the
     ``Signer`` seam hands them over. What ``L`` actually buys, unconditionally,
-    is the matched-count floor's ``exp(-2 * 36555 * gap**2 / 8) = 1.9e-9``
-    (:func:`sih141.protocol.verify.enforced_repudiation_bound`) -- the same
-    order, honestly obtained. The forgery bounds below are unaffected: their
-    independence hypothesis is part of their stated adversary model rather than
-    an unstated one.
+    is ``exp(-max(2 m_min, M_min) * gap**2 / 8) = exp(-74190 * gap**2 / 8) =
+    1.4139e-09`` (:func:`sih141.protocol.verify.enforced_repudiation_bound`) --
+    the same order, honestly obtained.
+
+    **That figure belongs to three rules jointly**, not to the per-verifier
+    floor: ``m_B, m_C >= 36555``, *and* the pooled ``m_B + m_C >= 74190``, *and*
+    the joint consequence that a verifier below his own floor takes the other
+    down with him. An earlier version of this docstring attributed
+    ``exp(-2 * 36555 * gap**2 / 8) = 1.9022e-09`` to the per-verifier floor
+    alone; that bounds only the branch in which Charlie rejects, and leaves the
+    third outcome -- Charlie non-empty but under his own floor, no verdict --
+    open at about ``1/2`` at every ``L``. See the module docstring above and
+    :mod:`sih141.protocol.analysis` sections 4b-iii and 4b-iv.
+
+    The forgery bounds below are unaffected: their independence hypothesis is
+    part of their stated adversary model rather than an unstated one.
+
+    Every number in this docstring is checked as a doctest in the *module*
+    docstring, under "The numbers above, as executable claims" -- :mod:`doctest`
+    does not collect attribute docstrings, so a figure written only here is
+    prose, and prose is what let the ``1.9e-9`` attribution above survive
+    until an audit went looking for it.
 
 The key is long because the bound is honest. The earlier ``L = 6912`` was
 computed from ``exp(-m gap**2 / 2)`` with ``gap = 13/96``, an expression that

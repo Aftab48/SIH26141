@@ -62,6 +62,48 @@ What survives without (IND) is every bound *conditioned on the observed matched
 count*. Those use only the recipients' private coins, or the Born rule, and never
 the law of ``m``. They are what a run should quote.
 
+0b. Assumption (AUTH), which is load-bearing and is checked nowhere
+-------------------------------------------------------------------
+**(AUTH) -- the classical and quantum channels from Alice to each recipient are
+authenticated: a recipient knows that the states he measured and the declaration
+he scores both came from Alice.**
+
+Every bound in this module is a statement about a *named* signer. None of them
+is a statement that the signer was Alice, and nothing in the shipped data
+carries one: :class:`~sih141.protocol.signature.Signature`,
+:class:`~sih141.protocol.records.RecipientRecord`,
+:class:`~sih141.protocol.verify.VerificationResult` and
+:class:`~sih141.protocol.session.SessionTranscript` hold no signer identity and
+no binding to one. An adversary who controls **both** seams -- distributing her
+own key states in Phase A *and* signing her own key in Phase B -- is therefore
+not forging in the sense sections 3 and 3b bound. She is running the protocol as
+the signer, correctly, and every number in this file is on her side: measured
+through the shipped seams, ``60/60`` accepted by Bob and ``60/60`` by Charlie,
+``QBER = 0.0000`` exactly, ``transferable=True``. No counting rule over the
+recipients' own logs can do anything about that, because there is nothing in
+those logs to disagree with.
+
+This is inherent to measurement-based QDS rather than a defect of this
+implementation: Dunjko-Wallden-Andersson [2]_ and Amiri et al. [3]_ both assume
+authenticated channels from the signer and derive what remains. It is written
+down here because it is a *precondition of the demonstration* in exactly the way
+(IND) is, and Phase 3 and Phase 5 will be asked about it.
+
+**Partial impersonation is a different matter and is caught cold.** An adversary
+who seizes only the signing seam -- Alice distributed, Mallory declares -- is
+the external forger of section 3, and an adversary who seizes only the
+distribution seam is caught by the same arithmetic. Measured: ``0/60`` accepted,
+at ``QBER = 0.4987`` (Bob) and ``0.4806`` (Charlie), against the ``1/2`` a
+declaration uncorrelated with the recipients' states produces. Note what did
+*not* move in those runs: **the matched counts are unchanged**, because the
+matched set depends only on the declared bases and the recipients' own uniform
+draws (section 1) and no adversary in the channel touches either. The mismatch
+rate is the only signal there is. That is also why the floors of sections 4b-iii
+and 4b-iv are an evidence-liveness control rather than an impersonation
+detector, and why an end-to-end adversary -- who produces ``r_R = 0`` by
+construction, like any honest signer -- is invisible to every rate computed
+here. (AUTH) is what excludes her, and only (AUTH).
+
 1. The matched set
 ------------------
 Recipient ``R`` measures position ``i`` in a basis ``c_i`` drawn uniformly from
@@ -118,10 +160,22 @@ A verifier may set the bar higher than ``m >= 1``
     convention, which lands as follows. Forgery and recipient-forgery numbers
     are then *over*-estimates, since the forger must clear bars this module does
     not model: still bounds, merely looser.
-    :func:`honest_abort_probability` is an *under*-estimate by the floors' own
-    budget, which is ``8e-31`` for the three of them together at the shipped
-    parameters against an abort probability of order ``1e-9``: negligible, but
-    real, and additive. :func:`repudiation_bound` is unaffected, because it
+    :func:`honest_abort_probability` and :func:`honest_abort_bound` cover only
+    the rate rule "``r_R > s`` or the matched set is empty" and omit the three
+    floors entirely, so neither describes the shipped protocol's honest failure
+    probability. The omission is not negligible: at ``p_e = 0`` **the omitted
+    term is the larger one** -- the exact rate probability is ``4.429e-106``
+    against ``1.740e-34`` from the floors at ``L = 600``, and ``0.0`` against
+    ``9.972e-32`` at ``L = 4800``. The floors' own budget is
+    ``2.5e-31 + 2.5e-31 + 2.9e-31 = 8.0e-31`` at the shipped parameters, where
+    the rate term underflows to ``0`` outright. Compose the two --
+    :func:`honest_abort_probability` plus :func:`matched_shortfall_probability`
+    at each floor -- whenever the number is meant to describe the protocol
+    :mod:`sih141.protocol.verify` actually runs;
+    section 5 gives the composition and both functions repeat it. An
+    under-estimate of a failure probability flatters the scheme, which is the one
+    direction a published number must never err in silently.
+    :func:`repudiation_bound` is unaffected, because it
     conditions on the observed counts and its Bob-accepts branch only shrinks.
     The floors' *use* as a security control is sections 4b-iii and 4b-iv, which
     also state the repudiation route a per-verifier floor alone opens rather
@@ -520,7 +574,12 @@ which is :func:`repudiation_bound_with_abort`. It is a *local* rule -- Bob knows
 standard deviations below ``E[m_B] = 38400``) costs an honest run ``2.5e-31`` in
 extra abort probability (:func:`matched_shortfall_probability`) and buys a
 genuine unconditional ``4.4e-5``. Requiring *both* verifiers to have cleared it
-puts ``M >= 2 m_min`` and buys ``1.9e-9``.
+puts ``M >= 2 m_min`` and buys ``1.9e-9`` -- **on the reject branch only**. Do
+not lift that pair of numbers out of this paragraph: the very next one shows
+what a per-verifier floor alone leaves open, and neither figure is the shipped
+guarantee. That is ``1.4139e-09``
+(:func:`~sih141.protocol.verify.enforced_repudiation_bound`) and it needs all
+three of the rules in 4b-iv.
 
 **A local floor alone does not finish the job, and here is the hole it leaves.**
 What ``exp(-2 m_min gap^2/8)`` bounds is: Bob accepts, and Charlie *reaches a
@@ -540,9 +599,10 @@ total whose mean is ``M/2 = m_min``. She wins with probability
 
 -- ``0.43`` at ``L = 360``, ``0.47`` at ``L = 600``, ``0.4985`` at
 :data:`~sih141.protocol.params.DEFAULT_PARAMS`. The exponent is irrelevant
-because nothing about the *rate* is being deviated; only the count is. Measured
-through the shipped seams with the per-verifier floor alone: ``78/200`` at
-``L = 360`` and ``85/200`` at ``L = 600``.
+because nothing about the *rate* is being deviated; only the count is. Closed form ``(1 - C(2m,m) 2^-2m)/2``: ``0.432`` at ``L = 360``, ``0.466`` at
+``L = 600``. Measured through the shipped seams with the per-verifier floor
+alone: ``78/200`` and ``85/200`` -- see :ref:`split-coin-provenance` in
+:mod:`sih141.protocol.verify` before quoting the counts.
 
 .. _pooled-floor-analysis:
 
@@ -589,17 +649,28 @@ of ``M_min/2 - m_min = (1 - sqrt2/2) A`` out of ``M_min ~ 2 mu`` fair coins, so
 
 .. code-block:: text
 
-    P <= exp(-2 (M_min/2 - m_min)^2 / M_min)  ->  eps ** (3 - 2 sqrt 2)
-                                              =  4.9e-4       (exact tail 4.8e-5)
+    P <= exp(-2 (M_min/2 - m_min)^2 / M_min)         =  3.8553e-04   [Chernoff]
+                       ->  eps ** (3 - 2 sqrt 2)     =  4.9487e-04   [asymptote]
+    P  =  P[Bin(74190, 1/2) < 36555]                 =  3.6116e-05   [exact]
 
-**independent of ``L``**: the deviation grows like ``sqrt(L)`` and so does the
-noise. No key length closes it, and no choice of the two floors inside the
-``eps`` budget closes it either, because the margin ``M_min/2 - m_min`` is
-capped by that same budget. What closes it is making the *consequence* of the
-per-verifier floor joint: a verifier below his own floor takes the other down
-with him (:attr:`~sih141.protocol.verify.AbortReason.COUNTERPART_BELOW_FLOOR`).
-Then "Bob accepts" implies "Charlie reached a verdict", the third outcome is not
-in the outcome space at all, and the failure space is exhausted by the two
+An earlier copy of this table quoted ``4.8e-05`` for the exact tail. No variant
+of the calculation yields it -- the one-sided exact tail is ``3.6116e-05``, its
+two-sided partner ``7.2233e-05``, the Chernoff form ``3.8553e-04`` and the
+asymptote ``4.9487e-04``. The same stale figure is carried in
+:mod:`sih141.protocol.verify` as this is written and is flagged for that
+module's owner. All four values here are doctests below rather than prose, so
+the next stale one fails the suite instead of surviving to an auditor.
+
+The three prices are all of the same order and none of them is small enough to
+live with, which is the point: the bound is **independent of ``L``**, because
+the deviation grows like ``sqrt(L)`` and so does the noise. No key length
+closes it, and no choice of the two floors inside the ``eps`` budget closes it
+either, because the margin ``M_min/2 - m_min`` is capped by that same budget.
+What closes it is making the *consequence* of the per-verifier floor joint: a
+verifier below his own floor takes the other down with him
+(:attr:`~sih141.protocol.verify.AbortReason.COUNTERPART_BELOW_FLOOR`). Then
+"Bob accepts" implies "Charlie reached a verdict", the third outcome is not in
+the outcome space at all, and the failure space is exhausted by the two
 branches 4b-i already bounds.
 
 **What is implemented, and what it is worth.**
@@ -617,10 +688,75 @@ That is :func:`~sih141.protocol.verify.enforced_repudiation_bound`. The honest
 cost is three exact binomial lower tails, ``2.5e-31 + 2.5e-31 + 2.9e-31 =
 8.0e-31`` at those parameters, against a per-check budget of ``5.4e-20``.
 
-This module cannot check any of it -- ``analysis`` depends only on ``params`` and
-never imports ``verify`` -- so :func:`repudiation_bound_with_abort` takes the
-floor as an argument, and the caller is responsible for passing one the
+This module cannot check any of it at import time -- ``analysis`` depends only on
+``params`` and never imports ``verify`` -- so :func:`repudiation_bound_with_abort`
+takes the floor as an argument, and the caller is responsible for passing one the
 deployment actually enforces.
+
+**Sections 4b-iii and 4b-iv as executable claims.** The numbers above are
+doctests, not prose, because this project runs ``pytest --doctest-modules`` over
+``sih141`` and a prose number is unverifiable by construction -- which is how the
+``4.8e-05`` above and the ``1.9e-9`` attribution both survived. The block below
+imports :mod:`sih141.protocol.verify`; that is a test-time cross-check against
+the floors the shipped verifier really applies, not a module dependency.
+
+>>> import math
+>>> from sih141.protocol.analysis import (
+...     _log_binomial_pmf_table,
+...     _log_factorial_table,
+...     _logsumexp,
+...     matched_shortfall_probability,
+... )
+>>> from sih141.protocol.params import DEFAULT_PARAMS
+>>> from sih141.protocol.verify import (
+...     enforced_repudiation_bound,
+...     minimum_matched_count,
+...     minimum_pooled_matched_count,
+... )
+>>> m_min = minimum_matched_count(DEFAULT_PARAMS)
+>>> M_min = minimum_pooled_matched_count(DEFAULT_PARAMS)
+>>> m_min, M_min, M_min - 2 * m_min
+(36555, 74190, 1080)
+
+The four ways of pricing the coin split a pooled floor alone would leave open --
+Chernoff, asymptote, exact one-sided, exact two-sided. ``4.8e-05`` is none of
+them:
+
+>>> f"{math.exp(-2 * (M_min / 2 - m_min) ** 2 / M_min):.4e}"
+'3.8553e-04'
+>>> epsilon = 2.0 ** -64
+>>> f"{epsilon ** (3 - 2 * math.sqrt(2)):.4e}"
+'4.9487e-04'
+>>> log_factorial = _log_factorial_table(M_min)
+>>> table = _log_binomial_pmf_table(M_min, 0.5, log_factorial)
+>>> exact = math.exp(_logsumexp(table[:m_min]))
+>>> f"{exact:.4e}", f"{2 * exact:.4e}"
+('3.6116e-05', '7.2233e-05')
+
+What the three floors and the joint consequence are worth together, and -- kept
+executable so the two are never confused again -- the strictly weaker pair of
+numbers the per-verifier floor supports on its own, which 4b-iii refutes as an
+unconditional guarantee:
+
+>>> f"{enforced_repudiation_bound(DEFAULT_PARAMS):.4e}"
+'1.4139e-09'
+>>> f"{math.exp(-max(2 * m_min, M_min) * DEFAULT_PARAMS.gap ** 2 / 8):.4e}"
+'1.4139e-09'
+>>> f"{math.exp(-2 * m_min * DEFAULT_PARAMS.gap ** 2 / 8):.4e}"
+'1.9022e-09'
+>>> f"{math.exp(-m_min * DEFAULT_PARAMS.gap ** 2 / 8):.4e}"
+'4.3614e-05'
+
+The honest cost of the three floors, against the ``eps = 2 ** -64`` budget each
+was derived from:
+
+>>> own = matched_shortfall_probability(DEFAULT_PARAMS, minimum_matched=m_min)
+>>> pooled = matched_shortfall_probability(
+...     DEFAULT_PARAMS, minimum_matched=M_min, pooled=True)
+>>> f"{own:.1e}", f"{pooled:.1e}", f"{2 * own + pooled:.1e}"
+('2.5e-31', '2.9e-31', '8.0e-31')
+>>> f"{epsilon:.1e}"
+'5.4e-20'
 
 **What remains outside the number, named rather than left implicit.** Three
 things, none of them a repudiation:
@@ -662,7 +798,58 @@ p_e)``,
     P_abort(R) = (1-1/n)^L + sum_{m>=1} P(m) * P(Bin(m, p_e) > t(m))
 
 (:func:`honest_abort_probability`). Bob's threshold is the tighter one, so Bob
-dominates. For ``p_e < s`` the conditional tail obeys
+dominates.
+
+**That is the rate rule, and it is no longer the whole abort rule.**
+:mod:`sih141.protocol.verify` also aborts on ``m_B < m_min``, on ``m_C < m_min``
+and on ``m_B + m_C < M_min`` (sections 4b-iii and 4b-iv), and none of those three
+conditions is modelled above or in :func:`honest_abort_bound`. At ``p_e = 0``
+what is modelled is ``(1 - 1/n)^L`` alone, and the omitted term is the larger one
+at every ``L``:
+
+.. code-block:: text
+
+    L       modelled (rate rule)     omitted (three floors)
+    600     4.429e-106               1.740e-34
+    1200    9.807e-212               3.691e-33
+    4800    0.0      (underflow)     9.972e-32
+
+so the published figure errs in the **flattering** direction -- the same class of
+error as section 4b-ii, applied to robustness instead of repudiation. The honest
+failure probability of the shipped protocol is the composition
+
+.. code-block:: text
+
+    P_fail = P_abort(rate rule)
+           + 2 * P[m_R < m_min]        (matched_shortfall_probability)
+           +     P[M   < M_min]        (matched_shortfall_probability, pooled)
+
+which is what ``README`` and the Phase 5 tables report. The two terms are kept
+in separate functions on purpose: they answer different questions -- how noisy a
+channel the thresholds tolerate, and how small a matched set the floors tolerate
+-- and a single fused number would hide which of the two moved. Both functions
+name the omission in their own docstrings.
+
+>>> from sih141.protocol.analysis import (
+...     honest_abort_probability, matched_shortfall_probability)
+>>> from sih141.protocol.params import ProtocolParams
+>>> from sih141.protocol.verify import (
+...     minimum_matched_count, minimum_pooled_matched_count)
+>>> for length in (600, 1200, 4800):
+...     small = ProtocolParams(key_length=length)
+...     own = matched_shortfall_probability(
+...         small, minimum_matched=minimum_matched_count(small))
+...     pooled = matched_shortfall_probability(
+...         small, minimum_matched=minimum_pooled_matched_count(small),
+...         pooled=True)
+...     print(length,
+...           f"{honest_abort_probability(small):.3e}",
+...           f"{2 * own + pooled:.3e}")
+600 4.429e-106 1.740e-34
+1200 9.807e-212 3.691e-33
+4800 0.000e+00 9.972e-32
+
+For ``p_e < s`` the conditional tail obeys
 
 .. code-block:: text
 
@@ -2801,6 +2988,11 @@ def matched_shortfall_probability(
     --------
     repudiation_bound_with_abort : What the rule buys.
     matched_statistics : Mean, variance and the ``m = 0`` corner.
+    honest_abort_probability : The *other* half of the shipped protocol's honest
+        failure probability -- the rate rule, which omits these floors and is
+        the smaller term at low noise.
+    honest_abort_bound : The bounded form of that other half, with the same
+        omission.
 
     Examples
     --------
@@ -2818,6 +3010,22 @@ def matched_shortfall_probability(
     ... )
     >>> f"{cost:.1e}"
     '1.4e-60'
+
+    The three shipped floors and what they cost an honest run -- the figures
+    this docstring quotes, as tests rather than as prose:
+
+    >>> from sih141.protocol.verify import (
+    ...     minimum_matched_count, minimum_pooled_matched_count)
+    >>> m_min = minimum_matched_count(DEFAULT_PARAMS)
+    >>> M_min = minimum_pooled_matched_count(DEFAULT_PARAMS)
+    >>> m_min, M_min, M_min - 2 * m_min
+    (36555, 74190, 1080)
+    >>> own = matched_shortfall_probability(
+    ...     DEFAULT_PARAMS, minimum_matched=m_min)
+    >>> pooled = matched_shortfall_probability(
+    ...     DEFAULT_PARAMS, minimum_matched=M_min, pooled=True)
+    >>> f"{own:.1e}", f"{pooled:.1e}", f"{2 * own + pooled:.1e}"
+    ('2.5e-31', '2.9e-31', '8.0e-31')
     """
     checked = _as_params(params)
     threshold = _as_matched(minimum_matched, name="minimum_matched")
@@ -2947,8 +3155,44 @@ def honest_abort_probability(
         P_abort(R) = P(m = 0) + sum_{m>=1} P(m) P(Bin(m, p_e) > t(m))
 
     With ``p_e = 0`` this is exactly ``P(m = 0) = (1 - 1/|B|)^L`` -- the honest
-    noiseless run never produces a single mismatch, so the only way to fail is to
-    have no evidence at all.
+    noiseless run never produces a single mismatch, so the only way to fail *by
+    this rule* is to have no evidence at all.
+
+    **What this function does not include.** The rule above is the rate rule,
+    and it is not the whole abort rule the shipped verifier applies.
+    :mod:`sih141.protocol.verify` also aborts when ``m_B < m_min``, when
+    ``m_C < m_min`` or when ``m_B + m_C < M_min`` (the
+    matched-count floors of :mod:`sih141.protocol.analysis` sections 4b-iii and
+    4b-iv), and **none of those three conditions is modelled here**. The number
+    returned is therefore a *lower* bound on the honest failure probability of
+    the shipped protocol, and at low noise it is lower by enormous factors,
+    because the omitted term is the larger one:
+
+    .. code-block:: text
+
+        p_e = 0     this function            the three floors
+        L = 600     4.429e-106               1.740e-34
+        L = 1200    9.807e-212               3.691e-33
+        L = 4800    0.0      (underflow)     9.972e-32
+
+    That is an error in the *flattering* direction, so it is named rather than
+    left to be discovered. Quote the composition, never this term alone:
+
+    .. code-block:: text
+
+        P_fail = honest_abort_probability(params)
+               + 2 * matched_shortfall_probability(
+                         params, minimum_matched=m_min)
+               +     matched_shortfall_probability(
+                         params, minimum_matched=M_min, pooled=True)
+
+    with ``m_min`` from :func:`~sih141.protocol.verify.minimum_matched_count` and
+    ``M_min`` from :func:`~sih141.protocol.verify.minimum_pooled_matched_count`.
+    ``README`` composes it that way. The split is deliberate -- the rate term
+    says what noise the thresholds tolerate and the count term says what matched
+    set the floors tolerate, and one fused number would hide which of the two
+    moved -- but it means the raw return value of this function is not the
+    protocol's robustness figure.
 
     Parameters
     ----------
@@ -2979,7 +3223,14 @@ def honest_abort_probability(
     See Also
     --------
     honest_abort_bound : The exponential bound, for which ``method="kl"`` matters
-        a great deal at small ``p_e``.
+        a great deal at small ``p_e``. It omits the same three floors.
+    matched_shortfall_probability : The matched-count floors' contribution, which
+        this function excludes and which dominates it at low noise. Add it to
+        get the shipped protocol's honest failure probability.
+    sih141.protocol.verify.minimum_matched_count : The per-verifier floor
+        ``m_min`` the composition needs.
+    sih141.protocol.verify.minimum_pooled_matched_count : The pooled floor
+        ``M_min`` the composition needs.
 
     Notes
     -----
@@ -3000,6 +3251,23 @@ def honest_abort_probability(
     >>> params = ProtocolParams(key_length=30)
     >>> honest_abort_probability(params, party="Bob") < 1e-4
     True
+
+    The floors this function excludes dominate it at ``p_e = 0``, so the two
+    have to be composed:
+
+    >>> from sih141.protocol.analysis import matched_shortfall_probability
+    >>> from sih141.protocol.verify import (
+    ...     minimum_matched_count, minimum_pooled_matched_count)
+    >>> small = ProtocolParams(key_length=600)
+    >>> f"{honest_abort_probability(small):.3e}"
+    '4.429e-106'
+    >>> own = matched_shortfall_probability(
+    ...     small, minimum_matched=minimum_matched_count(small))
+    >>> pooled = matched_shortfall_probability(
+    ...     small, minimum_matched=minimum_pooled_matched_count(small),
+    ...     pooled=True)
+    >>> f"{2 * own + pooled:.3e}"
+    '1.740e-34'
     """
     checked = _as_params(params)
     rate = _as_probability(error_rate, "error_rate")
@@ -3053,6 +3321,22 @@ def honest_abort_bound(
     Prefer ``method="kl"`` for any low-noise channel, and
     :func:`honest_abort_probability` when the exact number is wanted.
 
+    **What this bound does not include.** Exactly what
+    :func:`honest_abort_probability` omits, and for the same reason: this
+    bounds the *rate* rule ``r_R > s`` (with the empty matched set valued at
+    ``1`` by the binomial average) and models none of the three
+    matched-count floors the shipped verifier applies -- ``m_B >= m_min``,
+    ``m_C >= m_min``, ``m_B + m_C >= M_min``. It is consequently **not** an upper
+    bound on the honest failure probability of the shipped protocol; it is an
+    upper bound on one of that probability's two terms. Add
+    :func:`matched_shortfall_probability` at each floor, as
+    :func:`honest_abort_probability` spells out, before publishing a robustness
+    figure. At ``p_e = 0`` the floors' term is the larger of the two at every
+    ``L`` once the rate term is evaluated honestly -- exactly, or with
+    ``method="kl"``. The Hoeffding form is loose enough at small ``L`` to sit
+    above the total by accident, which is slack rather than coverage and is not
+    something to publish.
+
     Parameters
     ----------
     params : ProtocolParams
@@ -3084,6 +3368,16 @@ def honest_abort_bound(
         If ``error_rate`` is outside ``[0, 1]``, ``party`` is Alice, ``matched``
         is not positive, or ``method`` names neither inequality.
 
+    See Also
+    --------
+    honest_abort_probability : The exact rate-rule probability, and the
+        composition that turns either of these into the shipped protocol's
+        honest failure probability.
+    matched_shortfall_probability : The matched-count floors' contribution, which
+        this bound excludes.
+    sih141.protocol.verify.minimum_matched_count : The per-verifier floor.
+    sih141.protocol.verify.minimum_pooled_matched_count : The pooled floor.
+
     Examples
     --------
     >>> from sih141.protocol.analysis import (
@@ -3094,6 +3388,33 @@ def honest_abort_bound(
     >>> exact <= honest_abort_bound(params, error_rate=0.01, party="Bob",
     ...                             method="kl")
     True
+
+    It bounds the rate term only, and that is not a technicality. With
+    ``method="kl"`` at ``L = 600`` and ``p_e = 0`` the returned value sits over
+    seventy orders of magnitude *below* the shipped protocol's honest failure
+    probability, because the floors it does not model contribute ``1.740e-34``
+    that it never sees:
+
+    >>> from sih141.protocol.analysis import matched_shortfall_probability
+    >>> from sih141.protocol.verify import (
+    ...     minimum_matched_count, minimum_pooled_matched_count)
+    >>> small = ProtocolParams(key_length=600)
+    >>> f"{honest_abort_bound(small, method='kl'):.3e}"
+    '4.429e-106'
+    >>> own = matched_shortfall_probability(
+    ...     small, minimum_matched=minimum_matched_count(small))
+    >>> pooled = matched_shortfall_probability(
+    ...     small, minimum_matched=minimum_pooled_matched_count(small),
+    ...     pooled=True)
+    >>> f"{2 * own + pooled:.3e}"
+    '1.740e-34'
+
+    The Hoeffding form is loose enough at that ``L`` to exceed the total by
+    accident -- ``1.0`` against ``1.740e-34`` -- but that is slack, not
+    coverage, and it disappears as ``L`` grows.
+
+    >>> honest_abort_bound(small)
+    1.0
     """
     checked = _as_params(params)
     selected = _as_method(method)

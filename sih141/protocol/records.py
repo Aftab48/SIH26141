@@ -64,13 +64,103 @@ ones. So the per-run bound
 (:func:`sih141.protocol.analysis.repudiation_bound`, at the observed
 ``m_B + m_C``) is what a symmetrised pair earns, while the ``M``-averaged
 ``6.9e-10`` needs an assumption these records cannot supply -- see
-:mod:`sih141.protocol.analysis` section 4b. The flag is carried so that
+:mod:`sih141.protocol.analysis` section 4b. Nor does the flag say anything about
+*who* prepared the states: that is assumption (AUTH), the next section. The
+flag is carried so that
 :func:`sih141.protocol.verify.verify_all` can refuse a raw pair instead of
 quietly scoring one, and so that a transcript read back from disk still says
 which protocol produced it.
 
+What a record does not say: who signed
+-------------------------------------
+An entry says which basis was chosen and what came out. It does **not** say who
+prepared the state that produced it, and no field on :class:`RecordEntry`,
+:class:`RecipientRecord`, :class:`~sih141.protocol.signature.Signature`,
+:class:`~sih141.protocol.verify.VerificationResult` or
+:class:`~sih141.protocol.session.SessionTranscript` names or binds a signer.
+This is worth stating as a *precondition* rather than leaving implicit, in
+exactly the way assumption (IND) is stated, because the demo will be asked about
+it:
+
+**(AUTH) -- the classical and quantum channels from Alice to each recipient are
+assumed authenticated.** Verification here is a counting rule over the two
+columns above, and a counting rule can only ask whether the declaration agrees
+with what was measured. It cannot ask whose states were measured. An adversary
+who controls **both** seams -- distributing her own key states and then signing
+her own key -- produces records that are honest records of *her* protocol run,
+so both verifiers accept: ``60/60`` at Bob and ``60/60`` at Charlie, ``QBER``
+exactly ``0.0000``, ``transferable=True``, measured through the shipped seams.
+That is not a defect of this module, of the thresholds or of the floors; it is
+the standing assumption of measurement-based QDS (Dunjko-Wallden-Andersson 2014;
+Amiri et al. 2016), which derives everything else *given* authenticated channels
+from the signer.
+
+**Partial impersonation is caught cold, and by the mismatch rate alone.** An
+adversary who seizes only one of the two seams is the forger the thresholds are
+sized against: ``0/60`` accepted, at ``QBER = 0.4987`` (Bob) and ``0.4806``
+(Charlie), against the ``1/2`` a declaration uncorrelated with these records
+produces. Note what is *unchanged* in those runs -- the matched counts. The
+matched set is ``{i : record_basis_i == declared_basis_i}`` and both columns are
+drawn uniformly and independently of the adversary, so no impersonator moves it.
+The mismatch rate is the only signal a record carries, which is why (AUTH) has
+to be assumed rather than checked, and why the matched-count floors in
+:mod:`sih141.protocol.verify` are an evidence-liveness control and not an
+impersonation detector. See :mod:`sih141.protocol.analysis` section 0b.
+
+The numbers above, as executable claims
+---------------------------------------
+``pytest --doctest-modules`` runs over ``sih141``, so the figures this docstring
+leans on are tests: a prose number is unverifiable by construction and is how
+stale figures survive to a judge.
+
+>>> from sih141.protocol.analysis import (
+...     averaged_repudiation_bound, repudiation_bound)
+>>> from sih141.protocol.params import (
+...     DEFAULT_PARAMS, UNSYMMETRISED_FORGER_RATE_THREE_BASIS)
+>>> from sih141.protocol.records import RecipientRecord
+
+The rate an unmatched-position bug drives every verifier towards --
+``(1 - 1/|B|) / 2 = 1/3``, the whole point of storing the chosen basis -- sits
+above both thresholds, which is why the bug looks like noise:
+
+>>> UNSYMMETRISED_FORGER_RATE_THREE_BASIS == 1 / 3
+True
+>>> UNSYMMETRISED_FORGER_RATE_THREE_BASIS > DEFAULT_PARAMS.s_v
+True
+>>> DEFAULT_PARAMS.s_a, DEFAULT_PARAMS.s_v
+(0.015625, 0.0625)
+
+A partial impersonator is a different number and a larger one: his declaration
+is uncorrelated with these records, so on a *matched* position the two agree by
+a fair coin and the measured ``QBER`` sits at ``1/2``, far above ``s_v``.
+
+>>> 0.5 > DEFAULT_PARAMS.s_v > DEFAULT_PARAMS.s_a > 0
+True
+
+The ``M``-averaged figure this docstring says these records cannot earn, beside
+the per-run figure a symmetrised pair does earn at the expected ``M``:
+
+>>> averaged = averaged_repudiation_bound(
+...     DEFAULT_PARAMS, signer_sees_recipient_bases=False)
+>>> f"{averaged:.1e}"
+'6.9e-10'
+>>> f"{repudiation_bound(DEFAULT_PARAMS, matched_records=76800):.1e}"
+'6.9e-10'
+
+And the provenance bit itself, which is the one thing a record says about the
+protocol that produced it -- and says nothing about who signed:
+
+>>> record = RecipientRecord.from_measurements("Bob", 0, ["X", "Z"], [1, -1])
+>>> record.symmetrised
+False
+>>> sorted(record.to_dict())
+['entries', 'message_bit', 'party', 'symmetrised']
+
 Notes
 -----
+Authentication (AUTH)
+    Assumed, never checked; see "What a record does not say: who signed" above
+    and :mod:`sih141.protocol.analysis` section 0b.
 Determinism (D3)
     Nothing here consumes randomness; the basis choice and the outcome are both
     made in :mod:`sih141.protocol.distribute`, which threads the injected
@@ -264,6 +354,13 @@ class RecipientRecord:
 
     Notes
     -----
+    A record names its *holder* and never its signer. There is no field here
+    binding these entries to Alice, and none is checkable from the two columns:
+    the channels from the signer are assumed authenticated (assumption (AUTH),
+    module docstring and :mod:`sih141.protocol.analysis` section 0b). A verifier
+    that needs signer authenticity must obtain it from the channel, not from
+    this type.
+
     The index sequence is checked rather than assumed because the verifier reads
     the record positionally against the key. A dropped, duplicated or reordered
     entry would silently shift every subsequent comparison by one and turn an

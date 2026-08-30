@@ -12,8 +12,11 @@ of ``(index, chosen_basis, outcome_eigenvalue)`` made at distribution time, and 
     accept  iff  r_R <= threshold(R)
 
 with ``threshold(Bob) = s_a`` and ``threshold(Charlie) = s_v``. Before any of
-that, three counting checks decide whether there is a verdict to reach at all;
-they are the subject of :ref:`matched-count-floor` and :ref:`pooled-floor`.
+that, **four** checks decide whether there is a verdict to reach at all: three
+counting floors -- his own, the pair's pooled total, and his counterpart's -- and
+one provenance check that both counts were taken against the *same* declaration.
+They are the subject of :ref:`matched-count-floor`, :ref:`pooled-floor` and
+:ref:`one-declaration`.
 
 Only matched positions may be scored
 ------------------------------------
@@ -177,10 +180,21 @@ which, and every record is correct, so **no rate deviates anywhere**:
                      Charlie is below his and returns no verdict.
 
 That is Bob holding a signature Charlie cannot score, with probability
-``(1 - P[m_B = m_min]) / 2``, which tends to ``1/2`` as ``m_min`` grows. Measured
-through the shipped seams with the per-verifier floor alone: ``78/200`` at
-``L = 360``, ``85/200`` at ``L = 600``, against a published ``4.4e-05``. Key
+``(1 - P[m_B = m_min]) / 2``, which tends to ``1/2`` as ``m_min`` grows -- ``0.432``
+at ``L = 360`` and ``0.466`` at ``L = 600``, against a published ``4.4e-05``. Key
 length does not help, because ``m_min`` grows with ``L`` and so does the target.
+
+.. _split-coin-provenance:
+
+*Provenance of the measured counts.* Runs through the shipped seams gave
+``78/200`` and ``87/200`` at ``L = 360`` and ``85/200`` at ``L = 600``. Those runs
+predate the two-stream change (see ``:ref:`two-streams``` in
+:mod:`sih141.protocol.session`), which moved every seeded transcript, so the
+individual counts are **not reproducible from this tree** -- independent
+re-measurement on the canonical seed set gives ``86/200``. All of them agree with
+the closed form to within sampling error, and the closed form is the number to
+quote. The counts are kept because a measured attack is worth more than a formula
+alone, and dropped provenance is how a figure becomes folklore.
 
 *The pooled law, which is the one step that is not a copy.* Fix the two raw
 records and the declaration. The symmetrisation coins re-assign a **fixed
@@ -227,7 +241,23 @@ needs only the coins to leave Charlie under his own floor -- a deviation of
 .. code-block:: text
 
     P <= exp(-2 (M_min/2 - m_min)^2 / M_min)  ->  eps ** (3 - 2 sqrt 2)
-                                              =  4.9e-04   (exact tail 4.8e-05)
+
+Both figures are computed rather than quoted, so neither can drift:
+
+>>> from math import exp, sqrt
+>>> from sih141.protocol.params import DEFAULT_PARAMS
+>>> m_min = minimum_matched_count(DEFAULT_PARAMS)
+>>> M_min = minimum_pooled_matched_count(DEFAULT_PARAMS)
+>>> f"{exp(-2 * (M_min / 2 - m_min) ** 2 / M_min):.2e}"   # the Chernoff form
+'3.86e-04'
+>>> f"{HONEST_ABORT_BUDGET ** (3 - 2 * sqrt(2)):.2e}"     # its L-independent limit
+'4.95e-04'
+
+The *exact* one-sided tail ``P[Bin(M_min, 1/2) < m_min]`` is ``3.61e-05`` (two-sided
+``7.22e-05``); the Chernoff form above bounds it about eleven-fold loosely. An earlier
+revision of this docstring quoted ``4.8e-05`` here, which matches none of the four
+candidates -- it survived because it was prose, and prose is the one thing
+``--doctest-modules`` cannot check. Hence the doctests above.
 
 **independent of ``L``**, because the deviation and the noise both grow like
 ``sqrt(L)``. No key length reduces it, and no choice of the two floors inside the
@@ -241,9 +271,12 @@ the number, so it costs nothing further. Then "Bob accepts" implies "Charlie
 reached a verdict", the asymmetric outcome is not in the outcome space at all,
 and the failure space is exhausted by the two branches
 :func:`~sih141.protocol.analysis.repudiation_bound` already covers. The three
-checks together give ``M >= max(2 m_min, M_min)`` on any run that reaches a
+*floors* together give ``M >= max(2 m_min, M_min)`` on any run that reaches a
 verdict, which is :func:`enforced_repudiation_bound`: ``1.41e-09`` at the shipped
-defaults, unconditional, with nothing left to quote beside it.
+defaults, unconditional, with nothing left to quote beside it. (The fourth check,
+:ref:`one-declaration`, contributes no term to that inequality -- it guarantees the
+two counts in it describe the same declaration, without which the sum is a mixture
+of two runs and the inequality is about nothing.)
 
 *What it costs.* One classical message each way between the recipients
 (:mod:`sih141.protocol.tally`), on the channel they already share for the coins;
@@ -252,6 +285,67 @@ three exact honest-abort tails summing to ``8.0e-31`` instead of one at
 must forward the declaration and hear Charlie's count before he can accept.
 :mod:`sih141.protocol.tally` states all three, and the availability consequence
 (either recipient can now force an abort) with them.
+
+.. _one-declaration:
+
+Both counts, or neither: the pooled rule needs one declaration
+--------------------------------------------------------------
+``m_B + m_C`` is a quantity of *one* experiment: one pair of records, one
+declaration. Conservation under the symmetrisation coins -- the step the pooled
+law of :ref:`pooled-floor` rests on -- is the statement that the coins re-assign
+a fixed multiset of ``2L`` entries **scored against a fixed declaration**. Change
+the declaration between the two counts and nothing survives: the two numbers
+count matches to two different basis strings, their sum is not ``M`` for either
+of them, and no floor derived from a law about ``M`` says anything about it.
+
+*How the counts can come apart.* The recipients compare counts before either of
+them scores -- Phase C' is upstream of Phase C -- so the declaration they count
+against is the one Alice sent Bob and Bob forwarded in order to *ask* for a
+count. If the hop from Bob to Charlie then delivers a **different** declaration,
+Charlie scores that one while the count he was handed is Bob's against the
+original. The pooled floor would then be enforced on
+
+.. code-block:: text
+
+    m_C(forwarded) + m_B(original)
+
+which is no run's pooled count. It is not a weakened check but a check on a
+number nobody produced: it can pass where the real total would fail and fail
+where the real total would pass, and either outcome is a fabrication.
+:class:`~sih141.protocol.session.QDSSession` already *reported* the incoherence
+-- :attr:`~sih141.protocol.session.SessionTranscript.forwarding_altered_signature`
+is set and
+:attr:`~sih141.protocol.session.SessionTranscript.pooled_matched_count` returns
+``None``, because such a run is two experiments rather than one -- and it now
+refuses to *enforce* on it as well, which is the same statement made where it
+has consequences.
+
+*The rule.* A count crosses the wire together with a fingerprint of the
+declaration it was computed against
+(:attr:`~sih141.protocol.tally.MatchedCountMessage.declaration_digest`,
+:func:`_declaration_digest`).
+:func:`~sih141.protocol.tally.exchange_matched_counts` refuses two messages that
+name different declarations, and :func:`verify` refuses a counterpart count that
+names a declaration other than the one it is scoring
+(:attr:`AbortReason.COUNTS_FROM_TWO_DECLARATIONS`). The refusal is a no-verdict
+like every other entry in :class:`AbortReason`: it is not evidence of forgery,
+and the verifier holding it has learned nothing about the signature.
+
+*What this is and is not.* The adversary here is **Bob** -- or whoever holds the
+Bob-to-Charlie hop -- and not Alice; every non-repudiation claim is a claim
+about a signer, so no bound in :mod:`sih141.protocol.analysis` moves. Nor was the
+outcome often wrong. At the shipped defaults the per-verifier floor does almost
+all of the work: once both counts clear ``m_min = 36555`` the pooled check can
+only fire inside the ``M_min - 2 m_min = 1080`` records between ``73110`` and
+``74190``, a band ``1.4%`` of ``mu_M = 76800`` wide, so a total that is off by
+some amount usually lands on the same side of it. That is a statement about
+:data:`~sih141.protocol.params.DEFAULT_PARAMS` and about today's outcome space
+rather than about the rule. The band is *relatively* wider the shorter the key
+-- the gap grows like ``sqrt(L)`` while the mean grows like ``L``, so at
+``L = 1200`` a verifier on his floor of ``212`` refuses any counterpart below
+``322``, a window ``27%`` of the mean ``400`` wide -- and Phase 3 builds attacks
+on the forwarding hop, where "which declaration was that count about?" stops
+being a rhetorical question.
 
 How small a matched set is reachable, and by whom
 -------------------------------------------------
@@ -322,6 +416,7 @@ enforced_repudiation_bound : The unconditional repudiation number those floors
 from __future__ import annotations
 
 import enum
+import hashlib
 import math
 import numbers
 from collections.abc import Mapping
@@ -378,9 +473,10 @@ class AbortReason(enum.StrEnum):
     A :class:`enum.StrEnum` like :class:`~sih141.protocol.params.Party`, so it
     passes through :func:`json.dumps` and into a Phase 5 table unchanged.
 
-    The four members are ordered by which check fires first in :func:`verify`:
-    a verifier looks at his own count, then at the pooled total, then at his
-    counterpart's count. The last two exist only on a run where the recipients
+    The five members are ordered by which check fires first in :func:`verify`:
+    a verifier looks at his own count, then at whether the counterpart's count
+    is even about the same declaration, then at the pooled total, then at his
+    counterpart's count. The last three exist only on a run where the recipients
     ran the count exchange of :mod:`sih141.protocol.tally`.
 
     Attributes
@@ -393,6 +489,12 @@ class AbortReason(enum.StrEnum):
         ``0 < |M_R| < m_min``: a rate could be computed, but on so little
         evidence that no bound in the scheme applies to it. See
         :func:`minimum_matched_count`.
+    COUNTS_FROM_TWO_DECLARATIONS
+        The counterpart's count was computed against a *different* declaration
+        from the one this verifier is scoring, so ``m_B + m_C`` is not a pooled
+        count and the pooled floor has nothing to be applied to. The refusal is
+        about the numbers' provenance rather than their size, and it is the one
+        reason that names no floor: see :ref:`one-declaration`.
     POOLED_BELOW_FLOOR
         ``m_B + m_C < M_min``: this verifier cleared his own floor, but the two
         of them together hold less evidence than the *pooled* floor demands. See
@@ -411,16 +513,198 @@ class AbortReason(enum.StrEnum):
 
     EMPTY_MATCHED_SET = "empty-matched-set"
     BELOW_FLOOR = "matched-count-below-floor"
+    COUNTS_FROM_TWO_DECLARATIONS = "counts-from-two-declarations"
     POOLED_BELOW_FLOOR = "pooled-matched-count-below-floor"
     COUNTERPART_BELOW_FLOOR = "counterpart-matched-count-below-floor"
 
 
 #: Reasons that describe *this* verifier's own matched set, as opposed to the
-#: two that describe the pair. Used to keep the label and the numbers a single
+#: three that describe the pair. Used to keep the label and the numbers a single
 #: observation; see :class:`VerificationAbort`.
 _OWN_COUNT_REASONS: Final[frozenset[AbortReason]] = frozenset(
     {AbortReason.EMPTY_MATCHED_SET, AbortReason.BELOW_FLOOR}
 )
+
+#: Bytes of :func:`hashlib.blake2b` output kept in a declaration digest. Sixteen
+#: is far more than a collision-resistance requirement here: the digest guards
+#: against a *wiring* mistake -- two counts pooled across two declarations --
+#: rather than against a search, and the declarations being told apart are both
+#: fixed before the check runs.
+_DECLARATION_DIGEST_BYTES: Final[int] = 16
+
+
+def _declaration_digest(signature: Signature) -> str:
+    """Return a stable fingerprint of one declaration.
+
+    The binding a matched count travels with, so that two counts can be shown
+    to be about the same declaration before they are added together
+    (:ref:`one-declaration`). It is a fingerprint rather than the declaration
+    itself because the count exchange puts integers on the wire, not keys: a
+    32-character string keeps a
+    :class:`~sih141.protocol.tally.MatchedCountMessage` a scalar message and a
+    :class:`~sih141.protocol.session.SessionTranscript` from carrying a second
+    copy of every key it already holds.
+
+    :func:`hashlib.blake2b` rather than the builtin :func:`hash`, which is salted
+    per process: this value is compared across a message that was serialised and
+    restored, so it has to be the same number in two runs of the interpreter.
+
+    Parameters
+    ----------
+    signature : Signature
+        The declaration being counted or scored against.
+
+    Returns
+    -------
+    str
+        A 32-character lowercase hex digest, determined by the message bit and
+        the declared ``(basis, eigenvalue)`` sequence and by nothing else. Two
+        equal :class:`~sih141.protocol.signature.Signature` objects therefore
+        digest alike, which is what makes an honest forwarding hop -- one that
+        rebuilds an identical declaration rather than passing the object on --
+        indistinguishable from no hop at all.
+
+    Raises
+    ------
+    TypeError
+        If ``signature`` is not a
+        :class:`~sih141.protocol.signature.Signature`.
+
+    Notes
+    -----
+    Consumes no randomness (D3): an unkeyed hash of a fixed encoding.
+
+    One pass over the declaration, about ``16 ms`` at
+    :data:`~sih141.protocol.params.DEFAULT_PARAMS`, and computed only where a
+    binding is actually being compared -- :func:`verify` skips it entirely when
+    the count it was handed names no declaration.
+
+    Examples
+    --------
+    >>> from sih141.protocol.keys import KeyElement, PrivateKey
+    >>> from sih141.protocol.signature import Signature
+    >>> from sih141.protocol.verify import _declaration_digest
+    >>> key = PrivateKey(0, (KeyElement("X", 1), KeyElement("Z", -1)))
+    >>> flipped = PrivateKey(0, (KeyElement("X", 1), KeyElement("Z", 1)))
+    >>> first = _declaration_digest(Signature(0, key))
+    >>> len(first), first == _declaration_digest(Signature(0, key))
+    (32, True)
+    >>> first == _declaration_digest(Signature(0, flipped))
+    False
+    """
+    if not isinstance(signature, Signature):
+        raise TypeError(
+            f"signature must be a Signature, got {type(signature).__name__}; "
+            f"a declaration digest fingerprints a declaration."
+        )
+    # The encoding is injective, which is what the comparison downstream needs:
+    # the length is fixed first, every basis is one character of the fixed
+    # {X, Y, Z} alphabet, and every eigenvalue is one byte of the equally long
+    # bit string that follows, so exactly one declaration produces any payload.
+    header = f"{signature.message_bit}|{len(signature)}|"
+    payload = (header + "".join(signature.bases)).encode("utf-8") + bytes(
+        signature.bits
+    )
+    return hashlib.blake2b(
+        payload, digest_size=_DECLARATION_DIGEST_BYTES
+    ).hexdigest()
+
+
+class _BoundMatchedCount(int):
+    """A matched count that remembers which declaration produced it.
+
+    An :class:`int` in every respect -- it compares, adds, serialises and prints
+    as the number it is -- carrying one extra attribute naming the declaration
+    it was counted against. That is what lets
+    :meth:`sih141.protocol.tally.PooledMatchedCounts.counterpart_of` hand
+    :func:`verify` a count *and* its provenance through the existing
+    ``counterpart_matched`` argument, so that every call site which already
+    passes an integer keeps working and gains the check for free. A count whose
+    provenance travels separately from the count is a count that can be pooled
+    with the wrong one, which is :ref:`one-declaration`.
+
+    Nothing stores this type: :class:`VerificationAbort` coerces the value with
+    :func:`_as_count`, so a recorded refusal holds a plain :class:`int` and the
+    binding lives only on the wire.
+
+    Parameters
+    ----------
+    value : int
+        The count.
+    declaration_digest : str or None
+        :func:`_declaration_digest` of the declaration it was computed against,
+        or ``None`` for a count whose provenance was never recorded -- against
+        which no mismatch can be proved and none is claimed.
+
+    Attributes
+    ----------
+    declaration_digest : str or None
+        As passed.
+
+    Examples
+    --------
+    >>> from sih141.protocol.verify import _BoundMatchedCount
+    >>> bound = _BoundMatchedCount(212, "0f1e")
+    >>> bound, bound + 1, bound == 212
+    (212, 213, True)
+    >>> bound.declaration_digest
+    '0f1e'
+    """
+
+    declaration_digest: str | None
+
+    def __new__(
+        cls, value: int, declaration_digest: str | None = None
+    ) -> _BoundMatchedCount:
+        """Build the count and attach its declaration.
+
+        Parameters
+        ----------
+        value : int
+            The count.
+        declaration_digest : str or None, optional
+            The declaration it was counted against.
+
+        Returns
+        -------
+        _BoundMatchedCount
+
+        Raises
+        ------
+        TypeError
+            If ``declaration_digest`` is neither a string nor ``None``.
+        """
+        if declaration_digest is not None and not isinstance(
+            declaration_digest, str
+        ):
+            raise TypeError(
+                f"declaration_digest must be a string or None, got "
+                f"{type(declaration_digest).__name__}"
+            )
+        count = super().__new__(cls, value)
+        count.declaration_digest = declaration_digest
+        return count
+
+
+def _counterpart_binding(value: Any) -> str | None:
+    """Return the declaration a reported count was computed against, if it says.
+
+    Parameters
+    ----------
+    value : Any
+        Whatever was passed as ``counterpart_matched``: ``None``, a plain
+        :class:`int` from a caller that tracks provenance elsewhere, or a
+        :class:`_BoundMatchedCount` from the count exchange.
+
+    Returns
+    -------
+    str or None
+        The digest, or ``None`` when the count carries no usable one. An empty
+        string counts as absent: a binding that names nothing cannot disagree
+        with anything.
+    """
+    digest = getattr(value, "declaration_digest", None)
+    return digest if isinstance(digest, str) and digest else None
 
 
 def minimum_matched_count(params: ProtocolParams) -> int:
@@ -689,9 +973,9 @@ def enforced_repudiation_bound(params: ProtocolParams) -> float:
     Charlie returns no verdict*, his own matched set being non-empty but under
     his floor -- which no exponent covers, and which a log-reading signer
     reaches about half the time by aiming ``M`` at ``2 m_min`` and letting the
-    symmetrisation coins split it. Measured through the shipped seams before the
-    fix: ``78/200`` at ``L = 360`` and ``85/200`` at ``L = 600``, against a
-    published ``4.4e-05``. Two things close it, and both ride on the one extra
+    symmetrisation coins split it. Closed form ``0.432`` at ``L = 360`` and
+    ``0.466`` at ``L = 600``, against a published ``4.4e-05``; for the measured
+    counts and their provenance see :ref:`split-coin-provenance`. Two things close it, and both ride on the one extra
     classical message of :mod:`sih141.protocol.tally`:
 
     * the **pooled floor** ``M >= M_min`` (:func:`minimum_pooled_matched_count`),
@@ -847,13 +1131,15 @@ class VerificationAbort:
         The verifier who reached no verdict. Alice is refused: she signs and
         keeps no record.
     reason : AbortReason or str
-        Which floor was not met. Cross-checked against the counts, so the label
-        and the numbers cannot disagree: see :class:`AbortReason` for the four
-        cases and the order :func:`verify` tests them in.
+        Which floor was not met -- or, for
+        :attr:`AbortReason.COUNTS_FROM_TWO_DECLARATIONS`, which floor could not
+        be applied at all. Cross-checked against the counts, so the label and
+        the numbers cannot disagree: see :class:`AbortReason` for the five cases
+        and the order :func:`verify` tests them in.
     matched_count : int
         ``|M_R|`` as observed. May be ``0``. Below ``minimum_matched`` for the
-        two own-count reasons and at or above it for the two pooled ones, since
-        a verifier only reaches those checks having cleared his own floor.
+        two own-count reasons and at or above it for the three pair reasons,
+        since a verifier only reaches those checks having cleared his own floor.
     minimum_matched : int
         ``m_min`` from :func:`minimum_matched_count` for the parameter set the
         run executed under. Carried rather than recomputed so that a stored
@@ -869,14 +1155,15 @@ class VerificationAbort:
     counterpart_matched : int or None, optional
         ``m`` as the *other* verifier reported it over the count exchange
         (:mod:`sih141.protocol.tally`), or ``None`` on a run whose recipients
-        did not exchange counts. Required by the two pooled reasons, which are
+        did not exchange counts. Required by the three pair reasons, which are
         statements about the pair and are unreadable without it; carried as
         context by the two own-count reasons when it happens to be known.
     minimum_pooled : int or None, optional
         ``M_min`` from :func:`minimum_pooled_matched_count`, or ``None`` when no
-        exchange happened. Required by the two pooled reasons, for the same
+        exchange happened. Required by the three pair reasons, for the same
         reason ``minimum_matched`` is carried: a stored transcript has to say
-        what the rule was.
+        what the rule was -- including on the one refusal that says the rule
+        could not be applied.
 
     Raises
     ------
@@ -888,9 +1175,9 @@ class VerificationAbort:
         :class:`AbortReason`; if the counts are negative, if
         ``minimum_matched < 1``, if a per-verifier count exceeds ``key_length``;
         if an own-count reason has ``matched_count >= minimum_matched`` (that is
-        a verdict, not an abort) or a pooled reason has
+        a verdict, not an abort) or a pair reason has
         ``matched_count < minimum_matched`` (that is an own-count abort); if a
-        pooled reason is missing ``counterpart_matched`` or ``minimum_pooled``;
+        pair reason is missing ``counterpart_matched`` or ``minimum_pooled``;
         or if ``reason`` disagrees with the counts in any other way.
 
     See Also
@@ -1020,19 +1307,24 @@ class VerificationAbort:
     def _check_reason_against_counts(self) -> None:
         """Enforce that the label and the numbers are one observation.
 
-        Four reasons, four conditions, and the verifier reaches them in the
-        order :func:`verify` tests them: his own count first, then the pooled
-        total, then his counterpart's. So the two pooled reasons *imply* that
-        this verifier cleared his own floor, which is asserted rather than
+        Five reasons, five conditions, and the verifier reaches them in the
+        order :func:`verify` tests them: his own count first, then whether the
+        counterpart's count is about the same declaration, then the pooled
+        total, then his counterpart's count. So the three pair reasons *imply*
+        that this verifier cleared his own floor, which is asserted rather than
         assumed -- an abort labelled ``pooled`` on a verifier who was starved
         himself would misattribute a local failure to the pair.
+
+        :attr:`AbortReason.COUNTS_FROM_TWO_DECLARATIONS` is the one reason with
+        nothing further to check: its whole content is that ``matched_count``
+        and ``counterpart_matched`` are not comparable, so no relation between
+        them can be insisted on without contradicting the refusal itself.
 
         Raises
         ------
         ValueError
-            If the reason and the counts describe different runs, or if a
-            pooled reason is missing the exchanged numbers it is a statement
-            about.
+            If the reason and the counts describe different runs, or if a pair
+            reason is missing the exchanged numbers it is a statement about.
         """
         own_short = self.matched_count < self.minimum_matched
         if self.reason in _OWN_COUNT_REASONS:
@@ -1065,8 +1357,9 @@ class VerificationAbort:
                 )
             return
 
-        # A pooled reason. Both exchanged numbers are mandatory, and this
-        # verifier must have cleared his own floor to have reached the check.
+        # A reason about the pair. Both exchanged numbers are mandatory, and
+        # this verifier must have cleared his own floor to have reached the
+        # check.
         if self.counterpart_matched is None or self.minimum_pooled is None:
             raise ValueError(
                 f"reason={self.reason.value!r} is a statement about the two "
@@ -1088,6 +1381,12 @@ class VerificationAbort:
                 f"{AbortReason.BELOW_FLOOR.value!r}; labelling it pooled would "
                 f"blame the pair for a local failure."
             )
+        if self.reason is AbortReason.COUNTS_FROM_TWO_DECLARATIONS:
+            # The two counts are about two declarations, so their sum is not a
+            # pooled count and no arithmetic relation between them is being
+            # claimed. Both numbers are recorded exactly because a reader has to
+            # be able to see the total that was *not* enforced.
+            return
         pooled = self.matched_count + self.counterpart_matched
         if self.reason is AbortReason.POOLED_BELOW_FLOOR:
             if pooled >= self.minimum_pooled:
@@ -1135,13 +1434,21 @@ class VerificationAbort:
     def shortfall(self) -> int:
         """int: How far under *the floor that was missed* this run fell.
 
-        Always at least ``1``, and always about the floor named by
-        :attr:`reason`: the verifier's own for the two own-count reasons, the
-        pooled floor for :attr:`AbortReason.POOLED_BELOW_FLOOR`, and the
-        counterpart's own for :attr:`AbortReason.COUNTERPART_BELOW_FLOOR`.
-        Reading it against any other floor would report a shortfall nobody
-        measured.
+        Always about the floor named by :attr:`reason`: the verifier's own for
+        the two own-count reasons, the pooled floor for
+        :attr:`AbortReason.POOLED_BELOW_FLOOR`, and the counterpart's own for
+        :attr:`AbortReason.COUNTERPART_BELOW_FLOOR`. Reading it against any
+        other floor would report a shortfall nobody measured.
+
+        At least ``1`` on each of those four, and exactly ``0`` on
+        :attr:`AbortReason.COUNTS_FROM_TWO_DECLARATIONS`, which names no floor:
+        that refusal reports that the pooled rule could not be *applied*, not
+        that it was missed, and quoting a distance from a floor nobody evaluated
+        would invite a reader to treat "one record short" and "not the same
+        experiment" as the same finding.
         """
+        if self.reason is AbortReason.COUNTS_FROM_TWO_DECLARATIONS:
+            return 0
         if self.reason is AbortReason.POOLED_BELOW_FLOOR:
             assert self.minimum_pooled is not None  # enforced in __post_init__
             pooled = self.pooled_count
@@ -1156,11 +1463,14 @@ class VerificationAbort:
     def is_pooled(self) -> bool:
         """bool: ``True`` iff the refusal is a statement about the pair.
 
-        The two pooled reasons need the count exchange to have happened and
+        The three pair reasons need the count exchange to have happened and
         carry :attr:`counterpart_matched`; the two own-count reasons are
         reachable with or without it. Phase 4 and Phase 5 read this to separate
         "this verifier had nothing to score" from "the two of them together did
         not clear the pooled rule", which are different findings about a run.
+        Read :attr:`reason` to separate the third case --
+        :attr:`AbortReason.COUNTS_FROM_TWO_DECLARATIONS`, where the pooled rule
+        was never evaluated -- from the two where it was and failed.
         """
         return self.reason not in _OWN_COUNT_REASONS
 
@@ -1184,10 +1494,13 @@ class VerificationAbort:
         str
             Party, bit, the counts, the floor and the reason, e.g.
             ``'Bob NO VERDICT bit 0: 0/600 positions matched, floor 67,
-            honest mean 200.0 (empty-matched-set). Not a rejection.'`` A pooled
-            refusal adds the pair's numbers, because on one of those this
+            honest mean 200.0 (empty-matched-set). Not a rejection.'`` A refusal
+            about the pair adds the pair's numbers, because on one of those this
             verifier's own count is *fine* and quoting it alone would read as a
-            contradiction.
+            contradiction. On
+            :attr:`AbortReason.COUNTS_FROM_TWO_DECLARATIONS` the pair's total is
+            printed with the two counts, since seeing the number that was *not*
+            enforced is the point.
 
         Examples
         --------
@@ -1381,12 +1694,21 @@ def _abort_message(abort: VerificationAbort) -> str:
         must not happen.
     """
     party = abort.party.value
+    # Split so that the one refusal which is *not* about a starved matched set
+    # can keep the framing -- and the sentence a caller greps for -- without
+    # claiming the verifier had no evidence.
+    not_a_signature_failure = (
+        "This is not a signature failure and is not reported as one"
+    )
+    recorded_not_lost = (
+        "QDSSession records it as a no-verdict outcome (VerificationAbort) "
+        "rather than losing the run."
+    )
     common = (
-        f"This is not a signature failure and is not reported as one: "
-        f"accepting would accept any declaration whatsoever on zero evidence, "
-        f"and rejecting would be recorded as a forgery detection when no "
-        f"evidence of forgery exists. QDSSession records it as a no-verdict "
-        f"outcome (VerificationAbort) rather than losing the run."
+        f"{not_a_signature_failure}: accepting would accept any declaration "
+        f"whatsoever on zero evidence, and rejecting would be recorded as a "
+        f"forgery detection when no evidence of forgery exists. "
+        f"{recorded_not_lost}"
     )
     if abort.reason is AbortReason.POOLED_BELOW_FLOOR:
         return (
@@ -1420,6 +1742,26 @@ def _abort_message(abort: VerificationAbort) -> str:
             f"{abort.pooled_count} against a pooled floor of "
             f"{abort.minimum_pooled}, so the shortfall is in the *split*, not "
             f"in the total."
+        )
+    if abort.reason is AbortReason.COUNTS_FROM_TWO_DECLARATIONS:
+        return (
+            f"the count {party} was given was computed against a different "
+            f"declaration from the one he is scoring, so the two numbers "
+            f"({party} {abort.matched_count}, the other verifier "
+            f"{abort.counterpart_matched}) are not a pooled count and the "
+            f"pooled floor of {abort.minimum_pooled} has nothing to be applied "
+            f"to. Their sum, {abort.pooled_count}, is no run's M. "
+            f"{not_a_signature_failure}: what failed is the bookkeeping, the "
+            f"verifier has learned nothing about the signature either way, and "
+            f"a rejection here would be recorded as a forgery detection when "
+            f"no evidence of forgery exists. {recorded_not_lost} "
+            f"m_B + m_C is conserved across one fixed pair of records against "
+            f"one fixed declaration and means nothing across two, so the run "
+            f"is refused rather than scored on a mixed total -- see "
+            f"sih141.protocol.verify on counting against one declaration. The "
+            f"usual cause is a forwarding hop that altered the declaration "
+            f"after the recipients had already exchanged counts: what to "
+            f"investigate is the hop, not the verifiers."
         )
     if abort.reason is AbortReason.EMPTY_MATCHED_SET:
         return (
@@ -1979,16 +2321,24 @@ def _evidence_refusal(
     params: ProtocolParams,
     floor: int,
     message_bit: int,
+    counterpart_declaration: str | None = None,
+    scored_declaration: str | None = None,
 ) -> VerificationAbort | None:
-    """Apply the three matched-count floors and return the first refusal.
+    """Apply the matched-count rule and return the first refusal.
 
     The whole abort rule in one place, so that :func:`verify` and any future
     caller cannot apply two different versions of it. The order is the order a
-    verifier can reach the checks in -- his own count needs nobody, the pooled
-    total and the counterpart's count need the exchange -- and it is also the
-    order that attributes a failure to the smallest thing that explains it: a
-    starved verifier is a local finding, a low total is a finding about the
-    declaration, and a lopsided split is a finding about the split.
+    verifier can reach the checks in -- his own count needs nobody, everything
+    after it needs the exchange -- and it is also the order that attributes a
+    failure to the smallest thing that explains it: a starved verifier is a
+    local finding, counts against two declarations are a finding about the
+    wiring, a low total is a finding about the declaration, and a lopsided split
+    is a finding about the split.
+
+    The binding check sits directly after the local floor and before both
+    pooled ones, because a pooled floor evaluated on two declarations' counts is
+    not a weaker check than the real one -- it is a check on a quantity no run
+    produced, and reporting its outcome either way would be a fabrication.
 
     Parameters
     ----------
@@ -1998,7 +2348,8 @@ def _evidence_refusal(
         ``|M_R|``, this verifier's own count.
     counterpart_matched : int or None
         What the other verifier reported, or ``None`` if the recipients did not
-        exchange counts. The two pooled checks are skipped when it is ``None``.
+        exchange counts. Every check after the first is skipped when it is
+        ``None``.
     params : ProtocolParams
         The parameter set the run executes under.
     floor : int
@@ -2006,6 +2357,13 @@ def _evidence_refusal(
         already paid for it.
     message_bit : int
         The bit being signed.
+    counterpart_declaration : str or None, optional
+        :func:`_declaration_digest` of the declaration ``counterpart_matched``
+        was counted against, when the count says which.
+    scored_declaration : str or None, optional
+        The digest of the declaration *this* verifier is scoring. The binding
+        check needs both and is skipped unless both are present: a count of
+        unrecorded provenance can disagree with nothing.
 
     Returns
     -------
@@ -2038,6 +2396,16 @@ def _evidence_refusal(
         )
     if counterpart_matched is None:
         return None
+    if (
+        counterpart_declaration is not None
+        and scored_declaration is not None
+        and counterpart_declaration != scored_declaration
+    ):
+        return VerificationAbort(
+            reason=AbortReason.COUNTS_FROM_TWO_DECLARATIONS,
+            matched_count=matched_count,
+            **common,
+        )
     pooled_floor = minimum_pooled_matched_count(params)
     if matched_count + counterpart_matched < pooled_floor:
         return VerificationAbort(
@@ -2072,17 +2440,20 @@ def verify(
     verifier can actually apply them::
 
         |M_R| >= m_min                         his own, computed locally
+        counterpart counted this declaration   the counts are one experiment
         |M_R| + counterpart_matched >= M_min   the pooled floor
         counterpart_matched >= m_min           the counterpart's own floor
 
     with ``m_min`` from :func:`minimum_matched_count` and ``M_min`` from
-    :func:`minimum_pooled_matched_count`. The last two need ``counterpart``'s
+    :func:`minimum_pooled_matched_count`. The last three need ``counterpart``'s
     count, which arrives over the recipients' count exchange
     (:mod:`sih141.protocol.tally`); they are skipped when it is not supplied,
     and :ref:`pooled-floor` says exactly what a run gives up by skipping them.
-    Any failed check scores nothing and raises :exc:`MatchedSetTooSmall`
-    carrying a :class:`VerificationAbort`; use :func:`verify_or_abort` to get
-    that as a returned outcome instead.
+    The second is :ref:`one-declaration`: adding a count made against another
+    declaration to this one produces a number no run ever had, so such a pair is
+    refused rather than pooled. Any failed check scores nothing and raises
+    :exc:`MatchedSetTooSmall` carrying a :class:`VerificationAbort`; use
+    :func:`verify_or_abort` to get that as a returned outcome instead.
 
     Parameters
     ----------
@@ -2106,7 +2477,11 @@ def verify(
         than the other record because that is all that crosses the wire: the
         counterpart sends a count, never his log, and modelling it as a number
         keeps it impossible for this function to read evidence its verifier
-        does not hold.
+        does not hold. "Against this same declaration" is checked rather than
+        trusted when the count says which one it counted --
+        :meth:`sih141.protocol.tally.PooledMatchedCounts.counterpart_of` returns
+        a count that does -- and a plain :class:`int` from a caller that tracks
+        provenance elsewhere is taken at its word.
 
     Returns
     -------
@@ -2124,10 +2499,11 @@ def verify(
         message bit or length), if either does not belong to ``params``, or if
         ``counterpart_matched`` exceeds the key length. These are wiring errors.
     MatchedSetTooSmall
-        A :class:`ValueError` subclass, if any of the three floors above is not
-        met -- including the ``0/0`` case. This is a plumbing failure rather
-        than a signature failure, is explained at length in the module
-        docstring, and must never be recorded as a rejection.
+        A :class:`ValueError` subclass, if any of the checks above refuses --
+        including the ``0/0`` case, and including a counterpart count computed
+        against another declaration. This is a plumbing failure rather than a
+        signature failure, is explained at length in the module docstring, and
+        must never be recorded as a rejection.
 
     See Also
     --------
@@ -2174,6 +2550,10 @@ def verify(
     _check_pairing(signature, record)
     signature.check_against(params)
     record.check_against(params)
+    # Read the provenance off the count *before* coercing it: _as_count returns
+    # a plain int, and the declaration a count was computed against is the one
+    # thing that cannot be recovered afterwards.
+    counterpart_declaration = _counterpart_binding(counterpart_matched)
     reported = _as_optional_count(counterpart_matched, "counterpart_matched")
     if reported is not None and reported > params.key_length:
         raise ValueError(
@@ -2192,6 +2572,14 @@ def verify(
         params=params,
         floor=floor,
         message_bit=record.message_bit,
+        counterpart_declaration=counterpart_declaration,
+        # Only worth fingerprinting the declaration when there is a binding to
+        # compare it against; an unbound count skips the check entirely.
+        scored_declaration=(
+            None
+            if counterpart_declaration is None
+            else _declaration_digest(signature)
+        ),
     )
     if refusal is not None:
         # A no-verdict outcome, not a rejection: see the module docstring.
@@ -2502,7 +2890,9 @@ def _exchanged_counts(
     -------
     dict of Party to int
         Empty when the exchange did not happen or when the mapping does not
-        hold both verifiers.
+        hold both verifiers. Each count carries the declaration it was computed
+        against, so :func:`verify` can check that the number it is handed is
+        about the declaration it is scoring (:ref:`one-declaration`).
     """
     if not enabled or set(records) != set(VERIFIERS):
         # Nobody to exchange with. A single-verifier call makes no cross-party
@@ -2523,7 +2913,9 @@ def _exchanged_counts(
     pooled = exchange_matched_counts(messages, params)
     if pooled is None:
         return {}
-    return {
-        Party.BOB: pooled.charlie_count,
-        Party.CHARLIE: pooled.bob_count,
-    }
+    # counterpart_of, never the two count fields by hand: inverting the mapping
+    # here is the one way a verifier is handed his own count and clears the
+    # pooled floor twice over. tests/test_protocol_verify_abort.py pins the
+    # direction on a pair whose two counts differ, which is the only kind of
+    # pair that can tell the two mappings apart at all.
+    return {party: pooled.counterpart_of(party) for party in VERIFIERS}

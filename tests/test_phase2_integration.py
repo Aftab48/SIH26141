@@ -186,7 +186,12 @@ def test_honest_run_discards_about_two_thirds_of_the_positions() -> None:
 
 
 def test_the_same_seed_reproduces_the_entire_run_byte_for_byte() -> None:
-    """One generator, threaded through every phase including the coins.
+    """One seed, two derived streams, one reproducible transcript.
+
+    The session draws material once from the caller's generator and derives an
+    Alice stream and a recipient stream from it, so the coins no longer come off
+    the same object the distribution seam is handed. Determinism survives that
+    split: one seed still fixes both streams and therefore the whole run.
 
     Asserted at three strengths: equal transcripts, equal JSON, and a *different*
     transcript from a different seed. The last one matters because "equal" would

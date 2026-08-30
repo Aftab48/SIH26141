@@ -130,10 +130,13 @@ def test_exchange_is_reproducible_under_a_seed() -> None:
 def test_exchange_consumes_one_draw_whatever_the_key_length() -> None:
     """One array draw per call, so the stream position does not depend on ``L``.
 
-    Pinned because the session threads a single generator through every phase:
-    a per-position draw here would make the number of variates consumed before
-    the *second* message bit's distribution depend on ``L``, and a clean run and
-    an attacked run would stop being comparable position by position.
+    The original reason for this pin no longer applies: the coins now come off the
+    session's *recipient* stream while the distributions come off its *Alice*
+    stream, so a per-position draw here can no longer shift the distributions at
+    all. The property is still worth pinning, for a narrower reason -- it keeps the
+    recipient stream's position after the first message bit independent of ``L``,
+    so the second bit's coins stay reproducible from the seed alone rather than
+    from the seed plus the key length.
     """
     reference = np.random.default_rng(99)
     reference.integers(0, 2, size=17)

@@ -2,7 +2,7 @@
 
 Companion to ``tests/test_protocol_verify_abort.py``, which pins the
 per-verifier floor. What is pinned *here* is the second floor and the message
-that makes it checkable, and the file is organised around the three claims the
+that makes it checkable, and the file is organised around the four claims the
 pooled rule rests on. Each of them is a place the rule could be wrong while
 still looking right.
 
@@ -24,6 +24,14 @@ still looking right.
    recipient from his own log, validated as a pair, and replaceable by a seam
    that skips it. Nothing about the exchange reads a position, and a run made
    without it says so in its transcript.
+4. **The two counts are about one declaration.** ``m_B + m_C`` is conserved
+   across one fixed pair of records against one fixed declaration and is a
+   quantity of nothing across two, so the message names the declaration it
+   counted and the exchange refuses a pair that names two. Neither the message
+   bit nor the key length can see that difference: they agree across every
+   declaration for one distribution. The verifier's half of the rule -- what he
+   does when the count he is handed names another declaration -- is pinned in
+   ``tests/test_protocol_verify_abort.py`` beside the other abort reasons.
 
 Notes
 -----
@@ -45,7 +53,7 @@ import numpy as np
 import pytest
 
 from sih141.protocol.distribute import distribute_public_key
-from sih141.protocol.keys import generate_private_key
+from sih141.protocol.keys import KeyElement, PrivateKey, generate_private_key
 from sih141.protocol.params import (
     DEFAULT_PARAMS,
     DEMO_PARAMS,
@@ -132,6 +140,32 @@ def _honest_pair(
     raw = distribute_public_key(key, params, rng=np.random.default_rng(seed + 1))
     records = symmetrise_records(raw, rng=np.random.default_rng(seed + 2))
     return sign(0, key, params), records
+
+
+def _with_flipped_eigenvalue(declaration: Signature) -> Signature:
+    """Return the same declaration with position ``0``'s eigenvalue negated.
+
+    The smallest possible alteration: same message bit, same length, same
+    declared bases, so every field the exchange compares still agrees and only
+    the declaration itself has changed. That is exactly the case a check on the
+    message bit and the key length cannot see.
+
+    Parameters
+    ----------
+    declaration : Signature
+        The declaration to alter. Not modified: it is frozen.
+
+    Returns
+    -------
+    Signature
+        The altered declaration, which no honest forwarding hop would produce.
+    """
+    elements = list(declaration.declared_key.elements)
+    elements[0] = KeyElement(elements[0].basis, -elements[0].eigenvalue)
+    return Signature(
+        declaration.message_bit,
+        PrivateKey(declaration.message_bit, tuple(elements)),
+    )
 
 
 # ==========================================================================
@@ -383,7 +417,13 @@ def test_a_message_carries_a_count_and_no_positions() -> None:
     A recipient who learned *which* positions the other matched would hold
     evidence the threat model does not give him -- half of it is exactly what
     symmetrisation hid, and a recipient forger's advantage is positional. So the
-    message is checked to be four scalars and nothing else.
+    message is checked to be five scalars and nothing else.
+
+    The fifth, ``declaration_digest``, is the one that has to be argued rather
+    than counted: it is a function of the *declaration*, which both recipients
+    already hold, and of nothing else. The test below pins that -- two logs that
+    match at different positions produce the same digest -- so the field cannot
+    be carrying anything about the sender's log.
     """
     message = MatchedCountMessage("Bob", 0, 204, 600)
     blob = json.loads(json.dumps(message.to_dict()))
@@ -392,10 +432,70 @@ def test_a_message_carries_a_count_and_no_positions() -> None:
         "message_bit",
         "matched_count",
         "key_length",
+        "declaration_digest",
     }
     for value in blob.values():
-        assert isinstance(value, (int, str))
+        assert value is None or isinstance(value, (int, str))
     assert MatchedCountMessage.from_dict(blob) == message
+
+
+def test_the_digest_names_the_declaration_and_nothing_about_a_log() -> None:
+    """One declaration, one digest -- whatever either recipient measured.
+
+    The privacy half of the binding: if the digest depended on the record it
+    would be a positional leak dressed as a checksum, and if it did not depend
+    on the declaration it could not catch two counts made against two
+    declarations. Both halves are measured here on the shipped function.
+    """
+    params = ProtocolParams(key_length=300)
+    declaration, records = _honest_pair(params, SEED + 11)
+    messages = {
+        party: matched_count_message(declaration, record, params)
+        for party, record in records.items()
+    }
+    bob, charlie = messages[Party.BOB], messages[Party.CHARLIE]
+    # Different logs, different counts, one declaration: one digest.
+    assert bob.matched_count != charlie.matched_count
+    assert bob.declaration_digest == charlie.declaration_digest
+    assert isinstance(bob.declaration_digest, str) and bob.declaration_digest
+
+    # A different declaration over the *same* log is a different digest.
+    altered = _with_flipped_eigenvalue(declaration)
+    assert matched_count_message(
+        altered, records[Party.BOB], params
+    ).declaration_digest != bob.declaration_digest
+
+    # It survives the wire unchanged, and it is the same 32 characters in every
+    # process: a message is compared against one that was serialised, restored,
+    # and possibly written by another interpreter, so a salted value -- the
+    # builtin hash() is one -- would make the check pass or fail at random.
+    restored = MatchedCountMessage.from_dict(
+        json.loads(json.dumps(bob.to_dict()))
+    )
+    assert restored.declaration_digest == bob.declaration_digest
+    assert restored == bob
+    pinned = Signature(
+        0,
+        PrivateKey(
+            0,
+            (
+                KeyElement("X", 1),
+                KeyElement("Z", -1),
+                KeyElement("Y", 1),
+            ),
+        ),
+    )
+    assert matched_count_message(
+        pinned,
+        RecipientRecord.from_measurements("Bob", 0, ["X", "X", "X"], [1, 1, 1]),
+        ProtocolParams(key_length=3),
+    ).declaration_digest == "10a9a600e3b317cb4ab3617e542e34cd", (
+        "the digest of a fixed declaration moved. If the encoding changed on "
+        "purpose, re-pin the constant; if it did not, the digest is a function "
+        "of something other than the declaration -- a per-process value such as "
+        "the builtin hash(), an address, or a clock -- and two messages written "
+        "by two processes can no longer be compared at all"
+    )
 
 
 def test_alice_sends_no_matched_count() -> None:
@@ -456,6 +556,60 @@ def test_the_exchange_reports_which_floor_failed() -> None:
     assert lopsided.parties_below_floor == (Party.CHARLIE,)
     assert not lopsided.meets_every_floor
     assert "Below the per-verifier floor: Charlie" in lopsided.summary()
+
+
+def test_a_run_landing_exactly_on_a_floor_meets_it() -> None:
+    """``>=``, not ``>``, and ``<``, not ``<=``, at both floors.
+
+    Both floors are derived as "abort iff *below*": ``m_min = ceil((1 - d) mu)``
+    and ``M_min`` likewise, and the honest-abort budget is computed for
+    ``P[count < floor]``. A run landing exactly on a floor is therefore inside
+    the budget and must be scored -- shifting either comparison by one would
+    refuse runs the derivation counts as honest, and would do it invisibly,
+    since every other case in this file sits well clear of the boundary.
+    """
+    params = ProtocolParams(key_length=600)
+    floor = minimum_matched_count(params)
+    pooled_floor = minimum_pooled_matched_count(params)
+    assert (floor, pooled_floor) == (67, 212)
+    half = pooled_floor - pooled_floor // 2
+
+    def view(bob: int, charlie: int) -> PooledMatchedCounts:
+        """Return an exchange with the two counts and this run's floors.
+
+        Parameters
+        ----------
+        bob, charlie : int
+            ``m_B`` and ``m_C``.
+
+        Returns
+        -------
+        PooledMatchedCounts
+        """
+        return PooledMatchedCounts(
+            bob, charlie, floor, pooled_floor, params.key_length, 0
+        )
+
+    on_the_pooled_floor = view(half, pooled_floor - half)
+    assert on_the_pooled_floor.pooled == pooled_floor
+    assert on_the_pooled_floor.meets_pooled_floor
+    assert on_the_pooled_floor.parties_below_floor == ()
+    assert on_the_pooled_floor.meets_every_floor
+    assert "Every floor met." in on_the_pooled_floor.summary()
+
+    one_short = view(half, pooled_floor - half - 1)
+    assert one_short.pooled == pooled_floor - 1
+    assert not one_short.meets_pooled_floor
+    assert one_short.parties_below_floor == ()
+    assert not one_short.meets_every_floor
+
+    on_the_per_verifier_floor = view(floor, pooled_floor)
+    assert on_the_per_verifier_floor.parties_below_floor == ()
+    assert on_the_per_verifier_floor.meets_every_floor
+    one_record_less = view(floor - 1, pooled_floor)
+    assert one_record_less.parties_below_floor == (Party.BOB,)
+    assert one_record_less.meets_pooled_floor
+    assert not one_record_less.meets_every_floor
 
 
 def test_the_exchange_refuses_a_pair_that_is_not_one_run() -> None:
@@ -694,3 +848,140 @@ def test_the_default_parameter_set_earns_its_published_floor() -> None:
     assert minimum_matched_count(DEFAULT_PARAMS) == 36555
     assert minimum_pooled_matched_count(DEFAULT_PARAMS) == 74190
     assert minimum_pooled_matched_count(DEFAULT_PARAMS) > 2 * 36555
+
+
+# ==========================================================================
+# 5. The declaration the counts were about
+# ==========================================================================
+
+
+def test_the_exchange_refuses_two_counts_against_two_declarations() -> None:
+    """Same run, same bit, same length -- and two different declarations.
+
+    The pair a check on ``message_bit`` and ``key_length`` cannot see: those
+    two fields agree across *every* declaration for one distribution, and it is
+    the declaration that decides which positions are matched at all. Pooling
+    here would add matches to two different basis strings and call the result
+    ``M``, which is a quantity of neither run.
+    """
+    params = ProtocolParams(key_length=300)
+    declaration, records = _honest_pair(params, SEED + 12)
+    altered = _with_flipped_eigenvalue(declaration)
+
+    crossed = {
+        Party.BOB: matched_count_message(
+            declaration, records[Party.BOB], params
+        ),
+        Party.CHARLIE: matched_count_message(
+            altered, records[Party.CHARLIE], params
+        ),
+    }
+    assert crossed[Party.BOB].message_bit == crossed[Party.CHARLIE].message_bit
+    assert crossed[Party.BOB].key_length == crossed[Party.CHARLIE].key_length
+
+    with pytest.raises(ValueError, match="counted different declarations"):
+        exchange_matched_counts(crossed, params)
+    # The Phase 3 seam validates identically, so both arms fail the same way.
+    with pytest.raises(ValueError, match="counted different declarations"):
+        no_count_exchange(crossed, params)
+
+    # Both against one declaration: pooled as before.
+    together = exchange_matched_counts(
+        {
+            party: matched_count_message(declaration, record, params)
+            for party, record in records.items()
+        },
+        params,
+    )
+    assert together.declaration_digest == crossed[Party.BOB].declaration_digest
+
+
+def test_a_pooled_view_hands_on_the_declaration_its_counts_named() -> None:
+    """The binding has to reach the verifier, or it checks nothing.
+
+    :meth:`PooledMatchedCounts.counterpart_of` is the one place a count crosses
+    from the exchange into a verdict, so it is where the declaration has to
+    travel with it. The value is an integer in every respect a caller can
+    observe -- it compares, adds and serialises as the count it is -- and
+    carries the declaration besides.
+    """
+    params = ProtocolParams(key_length=300)
+    declaration, records = _honest_pair(params, SEED + 13)
+    pooled = exchange_matched_counts(
+        {
+            party: matched_count_message(declaration, record, params)
+            for party, record in records.items()
+        },
+        params,
+    )
+
+    handed = pooled.counterpart_of(Party.BOB)
+    assert handed == pooled.charlie_count
+    assert isinstance(handed, int)
+    assert handed + 1 == pooled.charlie_count + 1
+    assert json.loads(json.dumps({"m": handed}))["m"] == pooled.charlie_count
+    assert handed.declaration_digest == pooled.declaration_digest
+    assert (
+        pooled.counterpart_of(Party.CHARLIE).declaration_digest
+        == pooled.declaration_digest
+    )
+
+    # It survives the transcript boundary, because that is where a stored run is
+    # re-read from.
+    restored = PooledMatchedCounts.from_dict(
+        json.loads(json.dumps(pooled.to_dict()))
+    )
+    assert restored == pooled
+    assert restored.counterpart_of(Party.BOB).declaration_digest == (
+        pooled.declaration_digest
+    )
+
+
+def test_an_exchange_recorded_before_the_binding_still_restores() -> None:
+    """Forward compatibility, and the honest reading of a missing field.
+
+    A stored exchange that names no declaration is one whose provenance was
+    never recorded, not one known to be coherent and not one known to be
+    mixed. It restores as ``None``, and a verifier reading it applies the pooled
+    floor exactly as the package did before the field existed -- inventing a
+    refusal for it would turn an old run into an abort it never had.
+    """
+    blob = PooledMatchedCounts(204, 196, 67, 212, 600, 1).to_dict()
+    assert blob["declaration_digest"] is None
+    del blob["declaration_digest"]
+    restored = PooledMatchedCounts.from_dict(blob)
+
+    assert restored.declaration_digest is None
+    assert restored.counterpart_of(Party.BOB) == 196
+    assert restored.counterpart_of(Party.BOB).declaration_digest is None
+    assert restored.meets_every_floor
+    assert restored.summary().startswith("POOLED EVIDENCE bit 1")
+
+
+def test_a_declaration_digest_must_be_a_string_or_absent() -> None:
+    """Two spellings of "not recorded" would be one comparison nobody can read."""
+    with pytest.raises(ValueError, match="non-empty string or None"):
+        MatchedCountMessage("Bob", 0, 204, 600, "")
+    with pytest.raises(TypeError, match="must be a string or None"):
+        MatchedCountMessage("Bob", 0, 204, 600, 17)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="non-empty string or None"):
+        PooledMatchedCounts(204, 196, 67, 212, 600, 0, "")
+    with pytest.raises(TypeError, match="must be a string or None"):
+        PooledMatchedCounts(204, 196, 67, 212, 600, 0, 17)  # type: ignore[arg-type]
+
+
+def test_the_session_records_the_declaration_its_exchange_counted() -> None:
+    """A transcript says which declaration the pooled numbers are about."""
+    params = ProtocolParams(key_length=300)
+    session = QDSSession(params, rng=np.random.default_rng(SEED + 14))
+    transcript = session.run(0)
+
+    pooled = transcript.pooled
+    assert pooled is not None
+    assert pooled.declaration_digest is not None
+    assert pooled.declaration_digest == (
+        matched_count_message(
+            transcript.signature, transcript.records_for(0)[Party.BOB], params
+        ).declaration_digest
+    )
+    assert SessionTranscript.from_json(transcript.to_json()) == transcript

@@ -8,7 +8,7 @@
 > on the maintainer's explicit instruction. The permanent record is
 > `docs/METRICS.md` and the `docs/PHASE*.md` notes.
 
-**40 entries** — 18 issue · 10 decision · 8 finding · 3 fix · 1 note
+**45 entries** — 21 issue · 11 decision · 9 finding · 3 fix · 1 note
 
 
 ## Phase 0 — Scaffold
@@ -567,6 +567,123 @@ match, and triggered a commit the rule exists to prevent.
 
 Fixed by splitting on the two-character status field (line[:2], line[2:].strip()), which
 is correct whether or not the leading space survived. Verified both cases.
+
+### `[!]` OPEN for Phase 3 -- seed sharing silently restores full coin prediction
+
+*issue · verify:close · 2026-08-30T21:28:15Z*
+
+STATUS: OPEN. Must become a hard convention before any Phase 3 attack is written.
+
+The two-stream fix closes the leak through the seam. It does NOT close the case where an
+attack closes over the same seed the harness passes to the session: rebuild the material
+with default_rng(seed).bytes(32), derive the recipient stream, and predict every coin. The
+verifier confirmed this rather than taking it on trust -- 120/120 coins on both message bits,
+exact array equality, in roughly ten lines.
+
+WHY IT MATTERS: any Phase 3 or Phase 5 attack written the natural way -- reusing the harness
+seed so the run is reproducible -- silently regains full coin prediction and would publish
+bogus repudiation rates that look entirely legitimate.
+
+This needs to be a structural rule (attacks take their own generator as a constructor
+argument, enforced by a test), not a paragraph in a docstring that an author may not read.
+
+### `[!]` Closing verifier returned UNSOUND -- repairs 1 and 2 sound, documentation incomplete
+
+*issue · verify:close · 2026-08-30T21:28:15Z*
+
+STATUS: partly closed (see the two OPEN entries that follow).
+
+The rng-leak repair and the untested-wire repair were both verified SOUND by independent
+execution. The verifier wrote its own coin-reading Distributor from scratch and measured
+pre-fix 3/3 repudiations at DEFAULT_PARAMS against post-fix 0/3, then hunted siblings
+exhaustively: an object-graph walk of all six seams (depth 5, cycle-safe), 0/4001 generator
+rewind steps in both directions, 0/19 seed-reconstruction routes, and independently
+recomputed the pinned SHA-256 digests.
+
+What it found still open was documentation, and I closed those by hand rather than spawning
+another round:
+  - verify.py:230 still quoted 4.8e-05. Fixed to 3.6e-05 AND converted the two derivable
+    figures into doctests, since prose is exactly what --doctest-modules cannot check.
+  - The transcript's closing NO VERDICT line hardcoded one abort reason, so it read 'the
+    matched set was below the floor' two lines under 'Every floor met.' Now names the
+    reason each verifier actually gave.
+  - PHASE2.md rule D3 still described one threaded generator; there are now two derived
+    streams. Rewritten, with the security rationale.
+  - PHASE2.md's verifier pseudo-code listed three checks; there are four. The provenance
+    check was missing entirely.
+  - Two test docstrings explained a mechanism that no longer exists.
+
+I verified the corrected tail figures myself with scipy before writing them
+(3.611637e-05 one-sided, 3.855276e-04 Chernoff, 4.948696e-04 asymptote) rather than
+copying an auditor's number -- propagating an unchecked figure is how the wrong one got
+there in the first place.
+
+### `[*]` Full-scale validation at L = 115,200 passes
+
+*finding · claude · 2026-08-30T21:28:15Z*
+
+STATUS: closed.
+
+Everything measured at production parameters rather than extrapolated from demo runs.
+
+  ARITHMETIC (the actual guarantee, instant)
+    m_min 36,555   M_min 74,190   2*m_min 73,110   margin 1,080
+    guaranteed pooled count 74,190;  enforced bound 1.4139e-09
+    M_min > 2*m_min  ->  PASS
+
+  HONEST SESSION (241.8 s)
+    Bob      38,421 matched, 0 mismatches, rate 0.000000, accepted
+    Charlie  38,395 matched, 0 mismatches, rate 0.000000, accepted
+    no abort; transferable; not repudiated
+    Matched counts sit 21 and 5 away from the theoretical mean L/3 = 38,400.
+
+  STARVED DECLARATION (244.5 s)
+    A signer declaring a basis absent from BOTH raw logs at every position.
+    Both verifiers aborted with 'empty-matched-set'. No crash, not transferable,
+    not repudiated.
+
+What this rules out: scale-dependent bugs. The floors compute correctly at full L,
+an honest run does not trip them, and an attacker cannot crash a verifier.
+
+### `[D]` Provenance repaired on the 78/200 split-coin figure
+
+*decision · claude · 2026-08-30T21:28:15Z*
+
+STATUS: closed.
+
+The figure was cited in six source files as 'measured through the shipped seams', and it does
+not reproduce from this tree: the verifier measured 86/200 pre-fix and 99/200 post-fix on the
+repo's canonical seed set, and agent 1's two-stream change moved every seeded transcript.
+
+All the values -- 78, 85, 86, 87, 99 -- agree with the closed form (0.432 at L=360) to within
+sampling error, so nothing is substantively wrong. What was wrong was presenting an
+irreproducible count as the authoritative number.
+
+All six sites now lead with the closed form and cross-reference a single provenance note in
+verify.py that states plainly which tree the counts came from and that they are not
+reproducible from this one. The counts are kept rather than deleted, because a measured
+attack is worth more than a formula alone -- but dropped provenance is how a figure becomes
+folklore.
+
+### `[!]` OPEN for Phase 3 -- the declaration-binding check can be stripped by the adversary it targets
+
+*issue · verify:close · 2026-08-30T21:28:15Z*
+
+STATUS: OPEN. Carried into Phase 3.
+
+The binding check is advisory rather than enforced: a count_exchange seam that performs the
+honest arithmetic but returns PooledMatchedCounts(..., declaration_digest=None) restores
+exactly the behaviour the check was added to stop. Verified by execution -- with the shipped
+exchange Charlie aborts 'counts-from-two-declarations'; with the digest dropped he reaches a
+verdict again on a count whose real evidence base is zero, pooled with Bob's count from a
+different declaration.
+
+Consequence is bounded in the measured instance (Charlie rejects rather than accepts), but
+'a count of unrecorded provenance is taken at its word' is a bypass, and Phase C' is the
+recipients' own step -- the adversary here IS a recipient.
+
+Not fixed in Phase 2 because the fix belongs with the Phase 3 seam-restriction work, and
+because I committed to reporting rather than starting another repair round.
 
 
 ## Phase 3 — Attack suite
