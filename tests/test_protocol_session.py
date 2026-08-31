@@ -62,6 +62,8 @@ from sih141.protocol import (
     DEMO_PARAMS,
     MESSAGE_BITS,
     VERIFIERS,
+    AbortReason,
+    MatchedSetTooSmall,
     Party,
     PrivateKey,
     ProtocolParams,
@@ -69,6 +71,7 @@ from sih141.protocol import (
     RecipientRecord,
     SessionTranscript,
     Signature,
+    VerificationAbort,
     VerificationResult,
     KeyElement,
     distribute_public_key,
@@ -78,6 +81,7 @@ from sih141.protocol import (
     no_symmetrisation,
     sign,
     symmetrise_records,
+    verify_or_abort,
 )
 from sih141.protocol.session import (
     _ALICE_STREAM_LABEL,
@@ -1179,12 +1183,72 @@ def test_session_state_flags_track_the_phases() -> None:
     assert session.is_complete
 
 
-def test_verifying_twice_reaches_the_same_verdict() -> None:
-    """Verification is pure: same frozen inputs, same decision, no randomness."""
+def test_verifying_twice_refuses_instead_of_reaching_a_second_verdict() -> None:
+    """One distribution round yields one verdict per verifier.
+
+    This test used to assert the opposite -- that verification was pure and a
+    second call recomputed the same decision -- and that purity was precisely
+    the replay hole: a captured declaration re-presented after the run collected
+    a fresh acceptance every time it was offered, 3/3 at ``DEMO_PARAMS``. The
+    verifier now keeps a ``ConsumedRecords`` of the rounds he has decided, so
+    the second ask is refused as the replay it is.
+
+    The verdict is not lost and not changed: it is still in ``results``, still
+    the only outcome recorded for that party, and the refusal is *not* filed as
+    an abort, because the run did reach a verdict.
+    """
     session = _session()
     session.run(0)
-    assert session.verify(Party.BOB) == session.results[Party.BOB]
+    first = session.results[Party.BOB]
+
+    with pytest.raises(MatchedSetTooSmall) as excinfo:
+        session.verify(Party.BOB)
+
+    assert excinfo.value.abort.reason is AbortReason.RECORD_ALREADY_VERIFIED
+    assert excinfo.value.abort.party is Party.BOB
+    assert not excinfo.value.abort.is_pooled
+    assert excinfo.value.abort.shortfall == 0
+    assert session.results[Party.BOB] == first
     assert len(session.transcript().results) == len(VERIFIERS)
+
+
+def test_a_verifier_who_refused_can_still_be_asked_again() -> None:
+    """A refusal spends nothing, so the ledger cannot be burnt by an abort.
+
+    Charlie aborts on the unforwarded declaration and is then asked again on the
+    forwarded one -- which is exactly what ``transfer`` does after an abort, and
+    what would be impossible if the ledger were written on every call rather
+    than only on a verdict.
+    """
+    session = _session()
+    params = session.params
+    session.distribute()
+    session.sign(0)
+    record = session.records[0][Party.CHARLIE]
+    ledger = session.ledger_for(Party.CHARLIE)
+
+    # A declaration in the same round whose bases avoid the log entirely, so
+    # Charlie has nothing to score and refuses.
+    avoided = tuple(
+        KeyElement(
+            next(b for b in params.bases if b != entry.basis),
+            1,
+        )
+        for entry in record
+    )
+    starved = Signature(
+        0,
+        PrivateKey(0, avoided),
+        session_opening=session.opening_for(0),
+    )
+    refusal = verify_or_abort(starved, record, params, ledger=ledger)
+    assert isinstance(refusal, VerificationAbort)
+    assert refusal.reason is AbortReason.EMPTY_MATCHED_SET
+    assert len(ledger) == 0
+
+    session.verify(Party.BOB)
+    assert session.transfer().accepted
+    assert len(ledger) == 1
 
 
 def test_the_records_accessor_hands_out_a_copy() -> None:

@@ -300,22 +300,34 @@ that no Phase 4 or Phase 5 statistic can conflate the two.
 
 What the session is not
 -----------------------
-Not a channel, not a detector and not a ledger. It holds no quantum state at
-any point -- by the time :meth:`QDSSession.distribute` returns, every teleported
-qubit has been measured and discarded and the session's memory is four tables of
-integers (:mod:`sih141.protocol.records`). Detection statistics are Phase 4's
-job and read a :class:`SessionTranscript`; replay defence is a ledger over
-transcripts, not a field on one.
+Not a channel and not a detector. It holds no quantum state at any point -- by
+the time :meth:`QDSSession.distribute` returns, every teleported qubit has been
+measured and discarded and the session's memory is four tables of integers
+(:mod:`sih141.protocol.records`). Detection statistics are Phase 4's job and
+read a :class:`SessionTranscript`.
 
-The ledger does, however, need something to key on, and content is not it: two
-runs made with the same seed produce byte-identical transcripts, by design and
-by test, so a content hash cannot tell a replay from a legitimate repeat. So a
-session takes an optional ``run_id``, carried verbatim into the transcript and
-used by nothing here. It is deliberately caller-supplied rather than generated:
-a generated identifier would either be random -- breaking the reproducibility
-that Phase 5 rests on -- or derived from the seed, in which case it would repeat
-exactly when a replay does and defeat its own purpose. The harness that owns the
-ledger owns the namespace.
+It *is*, now, a ledger -- of one specific thing. Each verifier holds a
+:class:`~sih141.protocol.verify.ConsumedRecords` of the distribution rounds he
+has already decided, and :meth:`~QDSSession.verify` hands each verifier his own
+and nobody else's. That is the replay defence, and it changed a documented
+promise: verifying the same party twice used to recompute the same verdict and
+now refuses as
+:attr:`~sih141.protocol.verify.AbortReason.RECORD_ALREADY_VERIFIED`. One
+distribution round yields one verdict per verifier;
+:ref:`sih141.protocol.verify <replay>` says why, and what it costs.
+
+The application-level ledger is still somebody else's, and it still needs
+something to key on. Content is not it: two runs made with the same seed produce
+byte-identical transcripts, by design and by test, so a content hash cannot tell
+a replay from a legitimate repeat. So a session takes an optional ``run_id``,
+carried verbatim into the transcript and used by nothing here. It is
+deliberately caller-supplied rather than generated: a generated identifier would
+either be random -- breaking the reproducibility that Phase 5 rests on -- or
+derived from the seed, in which case it would repeat exactly when a replay does
+and defeat its own purpose. The harness that owns that ledger owns the
+namespace. Distinct from :attr:`QDSSession.session_ids`, which is *this* run's
+per-bit round identifier, is derived rather than supplied, and is the thing the
+verifiers actually check.
 
 Notes
 -----
@@ -326,6 +338,9 @@ Single use (replay)
     being consumed: signing both bits against one distribution would hand a
     verifier two declarations scored against logs that are not independent of
     each other. Build a new session per run.
+
+    Each *verification* is single-use too, for the same reason and by the same
+    logic one level down: see :meth:`~QDSSession.verify`.
 Determinism (D3)
     One keyword-only ``rng``, resolved once in the constructor through
     :func:`sih141.core.rng.resolve_rng`. It is drawn from exactly once, for the
@@ -387,7 +402,12 @@ from sih141.protocol.params import (
     _as_party,
 )
 from sih141.protocol.records import RecipientRecord
-from sih141.protocol.signature import Signature, sign
+from sih141.protocol.signature import (
+    Signature,
+    fresh_opening,
+    session_identifier,
+    sign,
+)
 from sih141.protocol.symmetrise import Symmetriser, symmetrise_records
 from sih141.protocol.tally import (
     CountExchange,
@@ -397,6 +417,8 @@ from sih141.protocol.tally import (
     matched_count_message,
 )
 from sih141.protocol.verify import (
+    AbortReason,
+    ConsumedRecords,
     MatchedSetTooSmall,
     VerificationAbort,
     VerificationResult,
@@ -448,6 +470,23 @@ Distinct from :data:`_ALICE_STREAM_LABEL` and hashed with the same material, so
 the two streams are independent for anyone who cannot invert SHA-256. Changing
 either label changes every seeded transcript in the project, which is why they
 are named constants rather than literals at the call site.
+"""
+
+_BINDING_STREAM_LABEL: Final[bytes] = b"sih141.protocol.session/binding"
+"""Domain separator for the stream the session openings are drawn from.
+
+A third label rather than a third *place to draw from the first*: the openings
+that name a run's distribution rounds (:ref:`sih141.protocol.signature
+<session-binding>`) have to come from somewhere, and taking them from the Alice
+stream would shift every subsequent draw and change every seeded transcript in
+the project for a value none of them depend on. Deriving a stream instead costs
+one SHA-256 and leaves the other two byte-identical, which is what keeps "the
+same seed reproduces the run" true across this change.
+
+It is also the stream no seam is ever handed. That is not load-bearing -- Alice
+knows her own openings, and they are revealed in Phase B anyway -- but it means
+a ``distributor`` cannot read the opening of the *other* message bit, which is
+the one that stays sealed.
 """
 
 
@@ -1026,18 +1065,60 @@ class SessionTranscript:
         )
 
     @property
+    def session_coherent(self) -> bool:
+        """bool: ``True`` iff every scored log belongs to the declaration's round.
+
+        A transcript is a record, so it will hold whatever it is given -- but
+        two of its derived claims are claims about a *transaction*, and a
+        declaration scored against another run's logs is not one. This is the
+        check that says so. It was the missing one: before it existed, a
+        transcript pairing one run's signature with another run's records and
+        verdicts constructed without complaint and reported
+        ``transferable=True``.
+
+        Each verifier's log for the signed bit is compared against the
+        declaration that verifier actually scored -- :attr:`signature` for Bob,
+        :attr:`forwarded_signature` where there was one for Charlie -- using
+        :attr:`~sih141.protocol.signature.Signature.session_id` and
+        :attr:`~sih141.protocol.records.RecipientRecord.session_id`. A log that
+        names no round is coherent with anything, which is what keeps every
+        transcript written before the binding existed readable exactly as
+        before.
+
+        See Also
+        --------
+        sih141.protocol.verify.verify : Where the same comparison refuses to
+            score rather than merely reporting.
+        """
+        for record in self.records:
+            if (
+                record.message_bit != self.message_bit
+                or record.session_id is None
+            ):
+                continue
+            scored = self.signature_for(record.party)
+            if scored.session_id != record.session_id:
+                return False
+        return True
+
+    @property
     def transferable(self) -> bool:
-        """bool: ``True`` iff Bob accepted **and** Charlie accepted.
+        """bool: ``True`` iff Bob accepted **and** Charlie accepted, in one round.
 
         The property the ``s_a < s_v`` gap exists to deliver: a signature Bob
         accepts is one he can forward. ``False`` while either verdict is still
-        missing -- an unfinished run has not demonstrated transferability.
+        missing -- an unfinished run has not demonstrated transferability -- and
+        ``False`` on a transcript whose verdicts and declaration come from
+        different distribution rounds (:attr:`session_coherent`), because "both
+        verifiers accepted" is a statement about one transaction and such a
+        transcript records two.
         """
         return (
             self.bob is not None
             and self.charlie is not None
             and self.bob.accepted
             and self.charlie.accepted
+            and self.session_coherent
         )
 
     @property
@@ -1052,12 +1133,20 @@ class SessionTranscript:
         :func:`sih141.protocol.symmetrise.no_symmetrisation` exists to show. On
         honest runs it should never be seen; Phase 3 tries to force it and Phase
         5 counts how often it succeeds.
+
+        Gated on :attr:`session_coherent` for the same reason
+        :attr:`transferable` is: "Bob accepted and Charlie did not" is a
+        statement about one transaction, and on a transcript assembled from two
+        rounds it would name a repudiation that no signer performed. On every
+        run this module produces the gate is open, since a session stamps its
+        own round on every log it hands out.
         """
         return (
             self.bob is not None
             and self.charlie is not None
             and self.bob.accepted
             and not self.charlie.accepted
+            and self.session_coherent
         )
 
     @property
@@ -1289,7 +1378,7 @@ class SessionTranscript:
             )
         if self.aborted:
             # Name the reason each verifier actually gave. A hardcoded cause here
-            # was wrong for three of the five AbortReason members, and on an
+            # was wrong for six of the eight AbortReason members, and on an
             # altered-forwarding run it read "the matched set was below the floor"
             # two lines under "Every floor met." -- the reason must come from the
             # abort, never from an assumption about which one fired.
@@ -1505,9 +1594,21 @@ class QDSSession:
         Keyword-only. The Bob-to-Charlie hop. ``None`` selects
         :func:`honest_forwarder`, the identity.
     run_id : str or None, optional
-        Keyword-only. Carried verbatim into the transcript for a replay ledger
-        to key on; used by nothing here. See the module docstring on why it is
-        not generated.
+        Keyword-only. Carried verbatim into the transcript for an
+        application-level ledger to key on; used by nothing here. See the module
+        docstring on why it is not generated.
+    context : str or None, optional
+        Keyword-only. What the signed bit *means* to the application, together
+        with a freshness nonce --
+        :func:`sih141.protocol.signature.fresh_context` builds one. It is hashed
+        into every round identifier this session announces, so it is fixed here,
+        at distribution time, and not at signing time: a context chosen after
+        the recipients had already recorded their identifiers would be a label
+        nothing covers, which is exactly what
+        :mod:`sih141.protocol.signature` refuses to carry. Two authorisations of
+        one instruction under different nonces are two rounds, and each verifier
+        decides each round once, which is how a valid signed instruction is
+        stopped from being executed twice.
     rng : numpy.random.Generator or None, optional
         Keyword-only (D3). Resolved once, in this constructor, and drawn from
         once: :data:`_STREAM_MATERIAL_BYTES` bytes of material, from which two
@@ -1561,6 +1662,7 @@ class QDSSession:
         count_exchange: CountExchange | None = None,
         forwarder: Forwarder | None = None,
         run_id: str | None = None,
+        context: str | None = None,
         rng: np.random.Generator | None = None,
     ) -> None:
         if not isinstance(params, ProtocolParams):
@@ -1607,6 +1709,15 @@ class QDSSession:
                 f"{type(run_id).__name__}. It is a ledger key carried into the "
                 f"transcript verbatim; this module never reads it."
             )
+        if context is not None and not isinstance(context, str):
+            raise TypeError(
+                f"context must be a string or None, got "
+                f"{type(context).__name__}. It is the application's "
+                f"instruction-and-nonce string -- build one with "
+                f"sih141.protocol.signature.fresh_context(instruction, nonce) "
+                f"-- and it is hashed into every round identifier this session "
+                f"announces, so it is fixed here and not at signing time."
+            )
 
         self._params = params
         self._resource_factory = resource_factory
@@ -1626,16 +1737,21 @@ class QDSSession:
             honest_forwarder if forwarder is None else forwarder
         )
         self._run_id = run_id
-        # One draw from the caller's generator, then two independent streams
-        # derived from it -- Alice's, which the seams may see, and the
-        # recipients', which they may not. See :ref:`two-streams`. The caller's
-        # generator is not retained: a seam that was handed it could rewind it
-        # to whatever the other stream was derived from.
+        self._context = context
+        # One draw from the caller's generator, then three independent streams
+        # derived from it -- Alice's, which the seams may see, the recipients',
+        # which they may not, and the binding stream the session keeps to
+        # itself. See :ref:`two-streams` and :data:`_BINDING_STREAM_LABEL`. The
+        # caller's generator is not retained: a seam that was handed it could
+        # rewind it to whatever the other streams were derived from.
         material = resolve_rng(rng).bytes(_STREAM_MATERIAL_BYTES)
         self._alice_rng = _derive_stream(material, _ALICE_STREAM_LABEL)
         self._recipient_rng = _derive_stream(material, _RECIPIENT_STREAM_LABEL)
+        self._binding_rng = _derive_stream(material, _BINDING_STREAM_LABEL)
 
         self._keys: tuple[PrivateKey, PrivateKey] | None = None
+        self._openings: dict[int, str] = {}
+        self._session_ids: dict[int, str] = {}
         self._raw_records: dict[int, dict[Party, RecipientRecord]] = {}
         self._records: dict[int, dict[Party, RecipientRecord]] = {}
         self._signature: Signature | None = None
@@ -1644,6 +1760,13 @@ class QDSSession:
         self._counts_compared = False
         self._results: dict[Party, VerificationResult] = {}
         self._aborts: dict[Party, VerificationAbort] = {}
+        # One ledger per verifier, never one shared between them: the two are
+        # adversaries to each other in half of this package's attacks, so Bob's
+        # history must not be reachable from Charlie's decision. See
+        # :ref:`sih141.protocol.verify <replay>`.
+        self._ledgers: dict[Party, ConsumedRecords] = {
+            party: ConsumedRecords(party) for party in VERIFIERS
+        }
 
     def __repr__(self) -> str:
         """Return a debugging representation naming the phase reached.
@@ -1807,6 +1930,94 @@ class QDSSession:
         """
         return self._counts_compared
 
+    @property
+    def session_ids(self) -> dict[int, str]:
+        """dict: The identifier of each distribution round, keyed by message bit.
+
+        What Alice announced with the states in Phase A and what every log from
+        this run is stamped with. Public from distribution time -- it names a
+        round, it does not open it.
+
+        Raises
+        ------
+        ValueError
+            Before :meth:`distribute` has run, when no round exists to name.
+        """
+        if not self._session_ids:
+            raise self._not_yet(
+                "no distribution round has been opened", "session.distribute()"
+            )
+        return dict(self._session_ids)
+
+    def opening_for(self, message_bit: int) -> str:
+        """Return the secret opening of one round, for a dispute.
+
+        The value the round identifier commits to. It is revealed on the
+        signature for the bit that gets signed, and this accessor is how an
+        auditor obtains the *other* one -- the round Alice never signed -- in
+        order to check that the identifier she announced for it was really a
+        commitment and not a fabricated string. Recomputing
+        :func:`~sih141.protocol.signature.session_identifier` from it must
+        reproduce :attr:`session_ids`; nothing else can, short of a preimage
+        search.
+
+        Parameters
+        ----------
+        message_bit : int
+            ``0`` or ``1``.
+
+        Returns
+        -------
+        str
+            The 32-hex-character opening.
+
+        Raises
+        ------
+        ValueError
+            If ``message_bit`` is not ``0``/``1``, or before :meth:`distribute`
+            has run.
+        """
+        bit = _as_message_bit(message_bit)
+        if not self._openings:
+            raise self._not_yet(
+                "no distribution round has been opened", "session.distribute()"
+            )
+        return self._openings[bit]
+
+    def ledger_for(self, party: Party | str) -> ConsumedRecords:
+        """Return one verifier's ledger of rounds he has already decided.
+
+        Read-only in practice: the object is the live one this session hands
+        :func:`sih141.protocol.verify.verify`, and it is exposed so that a
+        harness can see what a verifier has spent, not so that anything can
+        spend on his behalf. Each verifier has his own; there is no way to
+        obtain a view of both, which is the point (:ref:`sih141.protocol.verify
+        <replay>`).
+
+        Parameters
+        ----------
+        party : Party or str
+            :attr:`~sih141.protocol.params.Party.BOB` or
+            :attr:`~sih141.protocol.params.Party.CHARLIE`.
+
+        Returns
+        -------
+        ConsumedRecords
+
+        Raises
+        ------
+        ValueError
+            If ``party`` is Alice, who reaches no verdict and spends nothing.
+        """
+        resolved = _as_party(party)
+        if resolved not in self._ledgers:
+            raise ValueError(
+                f"{resolved.value} keeps no consumed-records ledger: only the "
+                f"verifiers reach verdicts, so only they have rounds to spend. "
+                f"Ask for Party.BOB or Party.CHARLIE."
+            )
+        return self._ledgers[resolved]
+
     # -- Phase A ------------------------------------------------------------ #
 
     def distribute(self) -> dict[int, dict[Party, RecipientRecord]]:
@@ -1866,9 +2077,23 @@ class QDSSession:
             )
 
         keys = generate_key_pair(self._params, rng=self._alice_rng)
+        openings: dict[int, str] = {}
+        session_ids: dict[int, str] = {}
         raw_records: dict[int, dict[Party, RecipientRecord]] = {}
         records: dict[int, dict[Party, RecipientRecord]] = {}
         for bit in MESSAGE_BITS:
+            # The round's opening, drawn from the session's own stream so that
+            # the two the seams and the recipients use are untouched, and its
+            # identifier, which Alice announces with the distribution. The
+            # opening stays here until Phase B reveals it on the signature. See
+            # :ref:`sih141.protocol.signature <session-binding>`.
+            openings[bit] = fresh_opening(rng=self._binding_rng)
+            session_ids[bit] = session_identifier(
+                bit,
+                self._params.key_length,
+                opening=openings[bit],
+                context=self._context,
+            )
             returned = self._distributor(
                 keys[bit],
                 self._params,
@@ -1879,16 +2104,33 @@ class QDSSession:
                 # tossed on the next line. See :ref:`two-streams`.
                 rng=self._alice_rng,
             )
-            raw = self._check_distribution(returned, bit)
+            raw = {
+                party: record.with_session_id(session_ids[bit])
+                for party, record in self._check_distribution(
+                    returned, bit
+                ).items()
+            }
             # Phase A': the recipients' own step, applied to whatever the
             # distributor produced -- an adversary standing in Alice's place
             # cannot skip it, because he does not run it, and cannot read its
             # coins, because they are drawn from a generator he is never given.
             exchanged = self._symmetriser(raw, rng=self._recipient_rng)
             raw_records[bit] = raw
-            records[bit] = self._check_distribution(exchanged, bit)
+            # Re-stamped after the exchange as well as before it. Each recipient
+            # heard the announcement himself and re-attaches it to whatever log
+            # he ends up holding, so a symmetriser seam cannot strip the
+            # recipients' own binding on the way through -- which would leave
+            # them scoring unbound evidence and quietly reopen the replay route.
+            records[bit] = {
+                party: record.with_session_id(session_ids[bit])
+                for party, record in self._check_distribution(
+                    exchanged, bit
+                ).items()
+            }
 
         self._keys = keys
+        self._openings = openings
+        self._session_ids = session_ids
         self._raw_records = raw_records
         self._records = records
         return self.records
@@ -2059,9 +2301,52 @@ class QDSSession:
                 f"should be asked to sign that bit."
             )
         signature.check_against(self._params)
+        signature = self._bind_to_round(signature)
 
         self._signature = signature
         return signature
+
+    def _bind_to_round(self, signature: Signature) -> Signature:
+        """Attach this run's opening and context to a declaration.
+
+        Phase B reveals the opening of the round whose states were distributed,
+        and it is *this* session that ran that distribution, so the opening is
+        supplied here rather than taken from whatever the seam returned. A seam
+        is free to declare any key it likes -- that is the point of the
+        :class:`Signer` and :class:`Forwarder` seams -- but it does not get to
+        say which round the declaration belongs to, and overriding rather than
+        trusting is what keeps that true.
+
+        The consequence is worth stating, because it is the difference between
+        a useful measurement and an empty one: a forging seam's declaration
+        carries the *correct* round identifier, so it is scored and rejected on
+        its mismatch rate exactly as before. If the seam could leave the round
+        unnamed, every forgery would abort as
+        :attr:`~sih141.protocol.verify.AbortReason.SESSION_MISMATCH` and the
+        whole of Phase 3's forgery table would empty into the no-verdict column.
+        The binding is a replay defence, never a key check; see
+        :ref:`sih141.protocol.verify <replay>`.
+
+        Parameters
+        ----------
+        signature : Signature
+            Whatever the seam produced, already checked for bit and shape.
+
+        Returns
+        -------
+        Signature
+            The same declaration, naming this session's round for its bit. The
+            declared key object is shared, not copied.
+        """
+        opening = self._openings.get(signature.message_bit)
+        if opening is None:
+            return signature
+        return Signature(
+            message_bit=signature.message_bit,
+            declared_key=signature.declared_key,
+            session_opening=opening,
+            context=self._context,
+        )
 
     # -- Phase C' ----------------------------------------------------------- #
 
@@ -2205,10 +2490,27 @@ class QDSSession:
 
         Notes
         -----
-        Pure and repeatable: verifying twice recomputes the same verdict from
-        the same frozen inputs and consumes no randomness (D3). Each verifier
-        holds exactly one current outcome, so a call that reaches a verdict
-        clears any refusal recorded for that party, and vice versa.
+        **One verdict per verifier per round, and asking twice is refused.**
+        This used to be a repeatable pure call; it is now backed by a
+        per-verifier :class:`~sih141.protocol.verify.ConsumedRecords`, so a
+        second :meth:`verify` for the same party aborts as
+        :attr:`~sih141.protocol.verify.AbortReason.RECORD_ALREADY_VERIFIED`
+        rather than re-deciding. That is the replay defence and not an
+        implementation accident: a captured declaration re-presented after the
+        run collected a fresh acceptance every time it was offered, measured
+        3/3 before the ledger existed. Read the verdict already reached from
+        :attr:`results` instead of asking again. Consumes no randomness (D3).
+
+        A refusal spends nothing, so a verifier who aborted can be asked again
+        once the cause is fixed -- which is what lets :meth:`transfer` re-verify
+        Charlie against a forwarded declaration after an abort on the
+        unforwarded one. Each verifier holds exactly one current outcome, so a
+        call that reaches a verdict clears any refusal recorded for that party,
+        and vice versa -- with the single exception of the replay refusal, which
+        leaves the standing verdict alone. Recording it as this verifier's
+        outcome would let a replayed presentation *delete* the acceptance that
+        spent the round, which would be a larger hole than the one the ledger
+        closes.
         """
         if self._signature is None:
             raise self._not_yet(
@@ -2235,12 +2537,16 @@ class QDSSession:
         pooled = self.exchange_counts()
         counterpart = None if pooled is None else pooled.counterpart_of(resolved)
         try:
-            # The module-level verify(), not this method.
+            # The module-level verify(), not this method. The ledger handed over
+            # is this verifier's own and nobody else's, so asking twice is
+            # refused as the replay it is, and Bob's history stays out of
+            # Charlie's decision. See :ref:`sih141.protocol.verify <replay>`.
             result = verify(
                 declaration,
                 record,
                 self._params,
                 counterpart_matched=counterpart,
+                ledger=self._ledgers[resolved],
             )
         except MatchedSetTooSmall as too_small:
             # Recorded *before* it propagates, so that run() -- and any harness
@@ -2248,6 +2554,18 @@ class QDSSession:
             # the run. A starved matched set is a plumbing failure, never a
             # rejection, so it is stored in a different field and a different
             # type from the verdicts.
+            #
+            # With one exception, and it matters: a refusal to decide a round
+            # *again* is not a new outcome for this verifier, it is the old one
+            # standing. Overwriting the verdict with it would let a replayed
+            # presentation delete the acceptance that spent the round -- turning
+            # the replay defence into a way of erasing the very decision it
+            # protects, which is a worse hole than the one it closes.
+            if (
+                too_small.abort.reason is AbortReason.RECORD_ALREADY_VERIFIED
+                and resolved in self._results
+            ):
+                raise
             self._results.pop(resolved, None)
             self._aborts[resolved] = too_small.abort
             raise
@@ -2334,7 +2652,12 @@ class QDSSession:
                 f"verify against states that were never sent for this run."
             )
         forwarded.check_against(self._params)
-        self._forwarded = forwarded
+        # Bound to this run's round for the same reason the signed declaration
+        # is: the hop can alter the declaration -- that is what the seam is for
+        # -- but Charlie is still in this round, and a hop that could also
+        # unname the round would convert every altered-forwarding detection
+        # into a no-verdict. See _bind_to_round.
+        self._forwarded = self._bind_to_round(forwarded)
         return self.verify(Party.CHARLIE)
 
     # -- the whole run ------------------------------------------------------ #

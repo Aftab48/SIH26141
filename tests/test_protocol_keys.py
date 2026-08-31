@@ -1012,10 +1012,16 @@ def test_record_stores_the_chosen_basis_not_a_pre_filtered_match() -> None:
         "message_bit",
         "entries",
         "symmetrised",
+        "session_id",
     }
-    # "symmetrised" is provenance -- whether the recipients have run their
-    # private exchange yet -- and is the one field that is not a measurement.
+    # "symmetrised" and "session_id" are provenance -- whether the recipients
+    # have run their private exchange yet, and which distribution round this log
+    # came from -- and are the two fields that are not measurements. Neither is
+    # derived from a key, which is what this test is really about: a raw log off
+    # the channel knows nothing about Alice's bases and nothing about which run
+    # it belongs to until she announces it.
     assert record.to_dict()["symmetrised"] is False
+    assert record.to_dict()["session_id"] is None
 
 
 def test_record_rejects_alice() -> None:

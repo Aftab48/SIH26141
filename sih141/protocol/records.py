@@ -154,7 +154,18 @@ protocol that produced it -- and says nothing about who signed:
 >>> record.symmetrised
 False
 >>> sorted(record.to_dict())
-['entries', 'message_bit', 'party', 'symmetrised']
+['entries', 'message_bit', 'party', 'session_id', 'symmetrised']
+
+-- and the round it came from, which is the second piece of provenance and the
+one a verifier checks a declaration against (:ref:`sih141.protocol.verify's
+<replay>` replay defence). It is ``None`` on a log straight off the channel,
+because raw measurements do not say which round they belong to until Alice's
+announcement is attached:
+
+>>> record.session_id is None
+True
+>>> record.with_session_id("9f3c").session_id
+'9f3c'
 
 .. _recipient-view:
 
@@ -411,16 +422,31 @@ class RecipientRecord:
         refuses a raw pair by default rather than silently scoring it, and
         :class:`~sih141.protocol.session.SessionTranscript` records the flag so
         that a run read back from disk still says which protocol it ran.
+    session_id : str or None, optional
+        Which distribution round produced this log:
+        :func:`sih141.protocol.signature.session_identifier` as Alice announced
+        it in Phase A, before any declaration existed. Provenance again rather
+        than data, and the *anchor* of the replay defence -- a verifier checks a
+        declaration against the identifier on his own record, which is the one
+        end of the comparison no signer can reach.
+
+        ``None`` means the log names no round, which is what
+        :func:`~sih141.protocol.distribute.distribute_to_recipient` produces on
+        its own and what every log written before the binding existed is. A
+        verifier holding one has nothing to compare and scores exactly as
+        before; see :ref:`sih141.protocol.verify's <replay>` account of why the
+        record and not the signature is the side that decides.
 
     Raises
     ------
     ValueError
         If ``party`` is Alice or names no party; if ``message_bit`` is not
-        ``0``/``1``; if ``entries`` is empty; or if the indices are not exactly
-        ``0 .. n-1`` in order.
+        ``0``/``1``; if ``entries`` is empty; if the indices are not exactly
+        ``0 .. n-1`` in order; or if ``session_id`` is the empty string.
     TypeError
-        If ``entries`` is not a sequence of :class:`RecordEntry`, or
-        ``symmetrised`` is not a :class:`bool`.
+        If ``entries`` is not a sequence of :class:`RecordEntry`,
+        ``symmetrised`` is not a :class:`bool`, or ``session_id`` is neither a
+        string nor ``None``.
 
     Attributes
     ----------
@@ -428,6 +454,7 @@ class RecipientRecord:
     message_bit : int
     entries : tuple of RecordEntry
     symmetrised : bool
+    session_id : str or None
 
     Notes
     -----
@@ -459,6 +486,7 @@ class RecipientRecord:
     message_bit: int
     entries: tuple[RecordEntry, ...]
     symmetrised: bool = False
+    session_id: str | None = None
 
     def __post_init__(self) -> None:
         """Validate the party and bit, then freeze and check the entry indices."""
@@ -517,6 +545,21 @@ class RecipientRecord:
                 f"whether this log has been through symmetrise_records -- not a "
                 f"count or a rate."
             )
+        if self.session_id is not None and not isinstance(self.session_id, str):
+            raise TypeError(
+                f"session_id must be a string or None, got "
+                f"{type(self.session_id).__name__}. It is the identifier Alice "
+                f"announced with the distribution -- see "
+                f"sih141.protocol.signature.session_identifier -- not a count "
+                f"or an index."
+            )
+        if self.session_id == "":
+            raise ValueError(
+                "session_id must be non-empty or None. An empty identifier "
+                "would match no declaration and yet claim to name a round, so "
+                "every verification against this log would refuse; a log that "
+                "names no round says so with None and is scored as before."
+            )
 
     # -- alternative constructor -------------------------------------------- #
 
@@ -529,6 +572,7 @@ class RecipientRecord:
         eigenvalues: Sequence[int],
         *,
         symmetrised: bool = False,
+        session_id: str | None = None,
     ) -> RecipientRecord:
         """Build a record from parallel basis and eigenvalue sequences.
 
@@ -551,6 +595,10 @@ class RecipientRecord:
             Keyword-only provenance flag, forwarded verbatim; see the class
             docstring. Defaults to ``False``, because the caller that builds a
             log out of raw measurements is by definition building a raw log.
+        session_id : str or None, optional
+            Keyword-only, forwarded verbatim. Defaults to ``None``: raw
+            measurements alone do not say which round they came from, and
+            :meth:`with_session_id` is how the announcement gets attached.
 
         Returns
         -------
@@ -591,6 +639,54 @@ class RecipientRecord:
             message_bit=message_bit,
             entries=entries,
             symmetrised=symmetrised,
+            session_id=session_id,
+        )
+
+    def with_session_id(self, session_id: str | None) -> RecipientRecord:
+        """Return a copy of this log stamped with the round it came from.
+
+        The record is frozen and the identifier arrives as a separate
+        announcement, so attaching it is a rebuild rather than an assignment.
+        The entries are shared by reference; they are immutable.
+
+        Parameters
+        ----------
+        session_id : str or None
+            :func:`sih141.protocol.signature.session_identifier` as announced
+            with the distribution, or ``None`` to clear it.
+
+        Returns
+        -------
+        RecipientRecord
+            A new record; ``self`` is unchanged.
+
+        Raises
+        ------
+        TypeError
+            If ``session_id`` is neither a string nor ``None``.
+        ValueError
+            If it is the empty string.
+
+        See Also
+        --------
+        sih141.protocol.verify.verify : Where the stamp is checked.
+
+        Examples
+        --------
+        >>> from sih141.protocol.records import RecipientRecord
+        >>> raw = RecipientRecord.from_measurements("Bob", 0, ["X"], [1])
+        >>> stamped = raw.with_session_id("9f3c")
+        >>> stamped.session_id, raw.session_id
+        ('9f3c', None)
+        >>> stamped.entries is raw.entries
+        True
+        """
+        return RecipientRecord(
+            party=self.party,
+            message_bit=self.message_bit,
+            entries=self.entries,
+            symmetrised=self.symmetrised,
+            session_id=session_id,
         )
 
     # -- sequence protocol -------------------------------------------------- #
@@ -703,15 +799,16 @@ class RecipientRecord:
         -------
         dict
             ``{"party": Party, "message_bit": int, "entries": [...],
-            "symmetrised": bool}``. :class:`Party` and :class:`PauliBasis` are
-            both :class:`enum.StrEnum`, so the result passes to
-            :func:`json.dumps` unchanged.
+            "symmetrised": bool, "session_id": str | None}``. :class:`Party` and
+            :class:`PauliBasis` are both :class:`enum.StrEnum`, so the result
+            passes to :func:`json.dumps` unchanged.
         """
         return {
             "party": self.party,
             "message_bit": self.message_bit,
             "entries": [entry.to_dict() for entry in self.entries],
             "symmetrised": self.symmetrised,
+            "session_id": self.session_id,
         }
 
     @classmethod
@@ -725,6 +822,10 @@ class RecipientRecord:
             ``"symmetrised"`` is optional and defaults to ``False`` -- the
             conservative reading, since a log written before the flag existed
             was produced by a run that had no symmetrisation step.
+            ``"session_id"`` is optional in the same way and for the same
+            reason, and defaults to ``None``: a log written before the binding
+            existed names no round, and restoring it into one that *claimed* a
+            round would be inventing provenance rather than reading it.
 
         Returns
         -------
@@ -742,6 +843,7 @@ class RecipientRecord:
                 RecordEntry.from_dict(item) for item in data["entries"]
             ),
             symmetrised=data.get("symmetrised", False),
+            session_id=data.get("session_id"),
         )
 
 

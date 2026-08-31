@@ -12,12 +12,14 @@ of ``(index, chosen_basis, outcome_eigenvalue)`` made at distribution time, and 
     accept  iff  r_R <= threshold(R)
 
 with ``threshold(Bob) = s_a`` and ``threshold(Charlie) = s_v``. Before any of
-that, **four** checks decide whether there is a verdict to reach at all: three
-counting floors -- his own, the pair's pooled total, and his counterpart's -- and
-one provenance check that both counts were taken against the *same* declaration,
+that, **six** checks decide whether there is a verdict to reach at all: two that
+ask whether this declaration and this record are one undecided transaction --
+the right distribution round, and a round not already scored -- then three
+counting floors, his own, the pair's pooled total and his counterpart's, and one
+provenance check that both counts were taken against the *same* declaration,
 which fails both when the counterpart's count names another declaration and when
-it names none at all. They are the subject of :ref:`matched-count-floor`,
-:ref:`pooled-floor` and :ref:`one-declaration`.
+it names none at all. They are the subject of :ref:`replay`,
+:ref:`matched-count-floor`, :ref:`pooled-floor` and :ref:`one-declaration`.
 
 Only matched positions may be scored
 ------------------------------------
@@ -362,6 +364,89 @@ rather than about the rule. The band is *relatively* wider the shorter the key
 on the forwarding hop, where "which declaration was that count about?" stops
 being a rhetorical question.
 
+.. _replay:
+
+One round, one verdict: the replay defence
+-------------------------------------------
+The scoring rule above is a pure function of ``(signature, record, params)``,
+and for most of this package's life that was the whole of it. A pure function
+cannot tell the *first* time it is asked from the fourth, and it cannot tell
+this run's evidence from last run's, so two attacks in the problem statement
+were open with no defence at all. Both were measured before anything was built,
+at :data:`~sih141.protocol.params.DEMO_PARAMS`:
+
+* a captured signature re-presented after its run was finished verified again at
+  rate ``0.0`` and was accepted, 6 times out of 6;
+* a signature paired with **another run's** records was refused by nothing --
+  the transcript constructed without complaint and reported
+  ``transferable=True`` -- and a fresh scoring of the pair failed only on the
+  mismatch rate, mean ``0.507`` over 40 seed pairs. That is an accident of the
+  arithmetic, not a rule: it is the ``(1 - 1/|B|)/2`` chance noise of scoring
+  against an unrelated key, and nothing in it says "wrong run".
+
+Two mechanisms answer this, and they answer different halves of it.
+
+*Which round is this?* Both sides now carry an identifier of the distribution
+round -- :attr:`sih141.protocol.signature.Signature.session_id`, derived from an
+opening the signer reveals in Phase B, and
+:attr:`sih141.protocol.records.RecipientRecord.session_id`, stamped on the log
+when Alice announced it in Phase A. :func:`verify` recomputes the first and
+compares it with the second, and refuses on disagreement
+(:attr:`AbortReason.SESSION_MISMATCH`). Key states in QDS are genuinely
+one-time, so a declaration and a set of records belong to exactly one round;
+after this, pairing them across rounds fails by construction rather than by
+luck. :ref:`sih141.protocol.signature's <session-binding>` section says what the
+identifier is derived from and why the declared key is deliberately *not* in it.
+
+**The record is the anchor, not the signature.** The comparison is driven by
+whichever side an adversary cannot reach: a verifier who holds a stamped record
+requires the declaration to name that round, and refuses one that names another
+or names none. A verifier whose record names no round has nothing to compare and
+scores exactly as he did before -- which is what keeps every hand-built pair in
+the test suite, and every log written before the binding existed, working
+unchanged. This is not the omission route of :ref:`one-declaration` in another
+guise: there the party who could omit the binding was the adversary the check
+existed to catch, whereas here the side that can omit it is the verifier's own
+record, and a verifier who blinds himself only loses his own protection.
+
+*Has this evidence already been spent?* One distribution round yields one
+verdict per verifier, so :func:`verify` also accepts a
+:class:`ConsumedRecords` -- the verifier's own ledger of rounds he has already
+decided. A second verification against a spent round refuses
+(:attr:`AbortReason.RECORD_ALREADY_VERIFIED`) instead of re-deciding. The ledger
+is what closes the case the identifier cannot: a replay *within* the round it
+belongs to, where the identifier legitimately matches.
+
+The ledger is an object the verifier holds and passes, never a module-level
+default, and that is a security property rather than a style choice: Bob's
+ledger is constructed for Bob, refuses a record belonging to anyone else, and
+offers no way to read Charlie's, so one verifier's history cannot leak into the
+other's decision. A process-wide default would also be wrong for a second and
+more practical reason -- two runs made from the same seed produce the same
+identifier by design, so a shared ledger would refuse the second of two
+identically seeded experiments as a replay of the first.
+
+*What it costs, priced rather than waved away.* Entries are spent only when a
+verdict is actually reached; a refusal spends nothing, so no floor failure and
+no provenance failure can burn a round. An adversary therefore cannot poison a
+verifier's ledger from outside: the only way to add an entry is to make that
+verifier reach the verdict he was entitled to reach. Under the standing
+authentication assumption (see
+:mod:`sih141.protocol.signature`) the one party who can spend a round on a
+declaration that will be *rejected* is the signer herself, and a signer who
+wants to deny service can simply decline to sign. Storage is one 32-character
+identifier per round per verifier, roughly ``10**2`` bytes; a ledger is
+prunable by round because that is exactly what it is keyed on.
+
+*And what it does not claim.* An adversary holding the Bob-to-Charlie hop can
+rewrite a declaration's opening as freely as he can rewrite its key -- the
+channel to Charlie is exactly where Phase 3 puts him. He gains nothing: to make
+one round's declaration pass another round's binding he needs an opening hashing
+to that round's identifier, and if he had that round's opening he would have
+that round's signature and no relabelling would be needed. What he can do is
+turn a refusal into a rejection by relabelling with garbage, which trades a
+no-verdict for a detected forgery and is strictly worse for him.
+
 How small a matched set is reachable, and by whom
 -------------------------------------------------
 No *channel* attack can starve it. The matched set depends only on the declared
@@ -400,13 +485,18 @@ everywhere still refuses to invent a verdict.
 Notes
 -----
 Determinism (D3)
-    Nothing here consumes randomness; verification is a pure function of
-    ``(signature, record, params)``. There is no ``rng`` argument to inject.
+    Nothing here consumes randomness; there is no ``rng`` argument to inject.
+    Verification is a pure function of ``(signature, record, params)`` unless
+    the verifier hands it his own :class:`ConsumedRecords`, in which case one
+    round is marked spent on the way out -- see :ref:`replay` for why one
+    verdict per round is a rule rather than a convenience, and why the state
+    lives on an object the verifier owns.
 Immutability
     :func:`verify` cannot modify the record or the signature it is handed. Both
     are frozen dataclasses holding tuples, it only reads derived views, and a
     test asserts equality across the call. A verifier that could edit its own
-    evidence would not be one.
+    evidence would not be one. The one thing a verification can change is the
+    ledger its own verifier passed in.
 Qubit ordering (D2)
     Positions are key indices ``0 .. L-1``, matching
     :class:`~sih141.protocol.keys.PrivateKey` element order and the record's
@@ -451,6 +541,7 @@ from sih141.protocol.signature import Signature
 __all__ = [
     "HONEST_ABORT_BUDGET",
     "AbortReason",
+    "ConsumedRecords",
     "MatchedSetTooSmall",
     "VerificationAbort",
     "VerificationResult",
@@ -488,15 +579,36 @@ class AbortReason(enum.StrEnum):
     A :class:`enum.StrEnum` like :class:`~sih141.protocol.params.Party`, so it
     passes through :func:`json.dumps` and into a Phase 5 table unchanged.
 
-    The six members are ordered by which check fires first in :func:`verify`:
-    a verifier looks at his own count, then at whether the counterpart's count
-    is even about the same declaration -- which has two ways to fail, naming
-    none and naming another -- then at the pooled total, then at his
-    counterpart's count. The last four exist only on a run where the recipients
-    ran the count exchange of :mod:`sih141.protocol.tally`.
+    The eight members are ordered by which check fires first in :func:`verify`,
+    and they fall into three groups. First the two that ask whether this
+    declaration and this record are even the same transaction -- the right round
+    (:attr:`SESSION_MISMATCH`) and a round not already decided
+    (:attr:`RECORD_ALREADY_VERIFIED`), the subject of :ref:`replay`. Then the
+    verifier's own count. Then four about the pair: whether the counterpart's
+    count is about the same declaration -- which has two ways to fail, naming
+    none and naming another -- then the pooled total, then the counterpart's own
+    count. Those four exist only on a run where the recipients ran the count
+    exchange of :mod:`sih141.protocol.tally`.
 
     Attributes
     ----------
+    SESSION_MISMATCH
+        The declaration names a different distribution round from the one this
+        verifier's log was made in -- or names none while the log names one.
+        Refused rather than scored: the key states are one-time, so a
+        declaration and a record belong to exactly one round, and a rate
+        computed across two of them measures nothing but the ``(1 - 1/|B|)/2``
+        chance noise of an unrelated key. Reported as a no-verdict and never as
+        a rejection, because the verifier has learned nothing about the
+        signature: he has learned that he was handed the wrong pair. See
+        :ref:`replay`.
+    RECORD_ALREADY_VERIFIED
+        This verifier has already reached a verdict on this round, and his
+        :class:`ConsumedRecords` ledger says so. One distribution round yields
+        one verdict per verifier; a second decision on spent evidence is a
+        replay whether it arrives from an attacker or from a harness bug, and
+        the honest answer to both is the same refusal. Only reachable when a
+        ledger was supplied. See :ref:`replay`.
     EMPTY_MATCHED_SET
         ``|M_R| == 0``: the recipient's basis differed from the declared one at
         every position, so the mismatch rate is ``0/0`` and no arithmetic
@@ -537,6 +649,8 @@ class AbortReason(enum.StrEnum):
         that is what closes the split-coin route rather than merely pricing it.
     """
 
+    SESSION_MISMATCH = "session-identifier-mismatch"
+    RECORD_ALREADY_VERIFIED = "records-already-verified"
     EMPTY_MATCHED_SET = "empty-matched-set"
     BELOW_FLOOR = "matched-count-below-floor"
     COUNT_OF_UNRECORDED_PROVENANCE = "counterpart-count-of-unrecorded-provenance"
@@ -546,10 +660,36 @@ class AbortReason(enum.StrEnum):
 
 
 #: Reasons that describe *this* verifier's own matched set, as opposed to the
-#: four that describe the pair. Used to keep the label and the numbers a single
-#: observation; see :class:`VerificationAbort`.
+#: four that describe the pair and the two that describe the pairing itself.
+#: Used to keep the label and the numbers a single observation; see
+#: :class:`VerificationAbort`.
 _OWN_COUNT_REASONS: Final[frozenset[AbortReason]] = frozenset(
     {AbortReason.EMPTY_MATCHED_SET, AbortReason.BELOW_FLOOR}
+)
+
+#: Reasons that refuse before any counting rule is reached at all: the
+#: declaration and the record are not the same transaction, either because they
+#: belong to different distribution rounds or because this round has already
+#: been decided (:ref:`replay`). They make no claim about any count -- the
+#: counts are recorded for diagnosis and nothing is asserted about their
+#: relation to any floor -- so :class:`VerificationAbort` checks nothing further
+#: on them and :attr:`VerificationAbort.shortfall` is ``0``.
+_ROUND_REASONS: Final[frozenset[AbortReason]] = frozenset(
+    {AbortReason.SESSION_MISMATCH, AbortReason.RECORD_ALREADY_VERIFIED}
+)
+
+#: Reasons that are statements about the two verifiers together, and therefore
+#: need both exchanged numbers. The complement of the two sets above, written
+#: out rather than derived so that adding a member to :class:`AbortReason`
+#: without deciding which group it belongs to fails a test instead of silently
+#: joining this one.
+_PAIR_REASONS: Final[frozenset[AbortReason]] = frozenset(
+    {
+        AbortReason.COUNT_OF_UNRECORDED_PROVENANCE,
+        AbortReason.COUNTS_FROM_TWO_DECLARATIONS,
+        AbortReason.POOLED_BELOW_FLOOR,
+        AbortReason.COUNTERPART_BELOW_FLOOR,
+    }
 )
 
 #: Pair reasons that refuse to *apply* the pooled rule rather than reporting it
@@ -778,6 +918,237 @@ def _claims_provenance(value: Any) -> bool:
         or not.
     """
     return hasattr(value, "declaration_digest")
+
+
+class ConsumedRecords:
+    """One verifier's ledger of distribution rounds he has already decided.
+
+    The stateful half of the replay defence (:ref:`replay`). One distribution
+    round yields one verdict per verifier, so a verifier who has scored a round
+    refuses to score it again: :func:`verify` consults the ledger it is handed
+    before it counts anything, and marks the round spent only after a verdict is
+    actually reached.
+
+    **Per verifier, never global.** A ledger is constructed for one party,
+    refuses a record belonging to anyone else, and exposes no way to read
+    another party's, so Bob's history cannot reach Charlie's decision. That is a
+    threat-model requirement rather than tidiness -- the two verifiers are
+    adversaries to each other in half of this package's attacks -- and it also
+    avoids a practical trap: two runs made with the same seed produce the same
+    round identifier by design, so a process-wide ledger would refuse the second
+    of two identically seeded experiments as a replay of the first.
+
+    **What it keys on.** The record's
+    :attr:`~sih141.protocol.records.RecipientRecord.session_id` together with
+    its message bit. Deliberately *not* the record's contents: two structurally
+    identical logs from two different rounds are two rounds, and content
+    addressing would confuse an unlucky coincidence with a replay. A record
+    that names no round is therefore untracked -- :meth:`spend` on one is a
+    no-op and :meth:`is_spent` is ``False`` -- because there is nothing to spend
+    and inventing an identity for it would refuse honest re-verifications of
+    hand-built pairs across the whole test suite.
+
+    **What it costs.** One 32-character identifier per round; a ledger is
+    prunable by round because that is what it is keyed on. Nothing an adversary
+    controls can add an entry: the only way in is a verdict this verifier
+    reached, and a refusal spends nothing, so no floor failure and no
+    provenance failure can burn a round. See :ref:`replay` for the residual
+    denial-of-service surface and why it prices out at zero under the standing
+    channel-authentication assumption.
+
+    Parameters
+    ----------
+    party : Party or str
+        The verifier this ledger belongs to. Alice is refused: she signs, holds
+        no record and reaches no verdict, so there is nothing for her to spend.
+
+    Raises
+    ------
+    ValueError
+        If ``party`` is Alice or names no party.
+
+    Attributes
+    ----------
+    party : Party
+        As passed, resolved.
+
+    See Also
+    --------
+    verify : Consults one, and spends into it.
+    AbortReason.RECORD_ALREADY_VERIFIED : The refusal it produces.
+
+    Notes
+    -----
+    Consumes no randomness (D3). Not thread-safe and deliberately not: a
+    verifier is one party, and a ledger that could be updated from two places at
+    once would be a ledger whose "one verdict per round" was a race.
+
+    Examples
+    --------
+    >>> from sih141.protocol.records import RecipientRecord
+    >>> from sih141.protocol.verify import ConsumedRecords
+    >>> ledger = ConsumedRecords("Bob")
+    >>> record = RecipientRecord.from_measurements(
+    ...     "Bob", 0, ["X"], [1], session_id="9f3c"
+    ... )
+    >>> ledger.is_spent(record)
+    False
+    >>> ledger.spend(record)
+    >>> ledger.is_spent(record), len(ledger)
+    (True, 1)
+
+    A log that names no round is not tracked, and nothing about it is invented:
+
+    >>> unbound = RecipientRecord.from_measurements("Bob", 0, ["X"], [1])
+    >>> ledger.spend(unbound)
+    >>> ledger.is_spent(unbound), len(ledger)
+    (False, 1)
+
+    And one verifier's ledger will not hold the other's evidence:
+
+    >>> ledger.spend(RecipientRecord.from_measurements(
+    ...     "Charlie", 0, ["X"], [1], session_id="9f3c"
+    ... ))
+    Traceback (most recent call last):
+        ...
+    ValueError: this ledger belongs to Bob and was handed Charlie's record, ...
+    """
+
+    __slots__ = ("_party", "_spent")
+
+    def __init__(self, party: Party | str) -> None:
+        resolved = _as_party(party)
+        if resolved is Party.ALICE:
+            raise ValueError(
+                "Alice keeps no ledger of consumed records: she is the signer, "
+                "holds no measurement record and reaches no verdict, so there "
+                "is no round for her to spend. A ConsumedRecords belongs to "
+                "Party.BOB or Party.CHARLIE."
+            )
+        self._party: Final[Party] = resolved
+        self._spent: set[tuple[str, int]] = set()
+
+    @property
+    def party(self) -> Party:
+        """Party: The verifier this ledger belongs to."""
+        return self._party
+
+    def __len__(self) -> int:
+        """int: How many rounds this verifier has decided."""
+        return len(self._spent)
+
+    def __repr__(self) -> str:
+        """Return a debugging representation naming the party and the count."""
+        return (
+            f"ConsumedRecords({self._party.value!r}, "
+            f"{len(self._spent)} round(s) spent)"
+        )
+
+    def _key(self, record: RecipientRecord) -> tuple[str, int] | None:
+        """Return the ledger key for ``record``, or ``None`` if untracked.
+
+        Parameters
+        ----------
+        record : RecipientRecord
+            The log being looked up or spent.
+
+        Returns
+        -------
+        tuple of (str, int) or None
+            ``(session_id, message_bit)``, or ``None`` when the record names no
+            round.
+
+        Raises
+        ------
+        TypeError
+            If ``record`` is not a
+            :class:`~sih141.protocol.records.RecipientRecord`.
+        ValueError
+            If the record belongs to a different party.
+        """
+        if not isinstance(record, RecipientRecord):
+            raise TypeError(
+                f"record must be a RecipientRecord, got "
+                f"{type(record).__name__}; a ledger spends rounds of evidence, "
+                f"not declarations."
+            )
+        if record.party is not self._party:
+            raise ValueError(
+                f"this ledger belongs to {self._party.value} and was handed "
+                f"{record.party.value}'s record, which it must not see. A "
+                f"consumed-records ledger is per verifier: the two verifiers "
+                f"are adversaries to each other in half of this package's "
+                f"attacks, so one verifier's history must not reach the "
+                f"other's decision. Give {record.party.value} his own "
+                f"ConsumedRecords."
+            )
+        if record.session_id is None:
+            return None
+        return (record.session_id, record.message_bit)
+
+    def is_spent(self, record: RecipientRecord) -> bool:
+        """Return whether this verifier has already decided ``record``'s round.
+
+        Parameters
+        ----------
+        record : RecipientRecord
+            The log about to be scored.
+
+        Returns
+        -------
+        bool
+            ``False`` for a record that names no round, always: there is no
+            round to have spent, and answering ``True`` would refuse an honest
+            first verification.
+
+        Raises
+        ------
+        TypeError
+            If ``record`` is not a
+            :class:`~sih141.protocol.records.RecipientRecord`.
+        ValueError
+            If the record belongs to another party.
+        """
+        key = self._key(record)
+        return key is not None and key in self._spent
+
+    def spend(self, record: RecipientRecord) -> None:
+        """Record that this verifier has reached a verdict on ``record``'s round.
+
+        Idempotent, and a no-op for a record that names no round. Called by
+        :func:`verify` **after** a verdict, never after a refusal: an abort has
+        decided nothing, and spending on one would let a starved counterpart
+        count or a mis-provenanced one burn a round the verifier never scored.
+
+        Parameters
+        ----------
+        record : RecipientRecord
+            The log a verdict was just reached on.
+
+        Raises
+        ------
+        TypeError
+            If ``record`` is not a
+            :class:`~sih141.protocol.records.RecipientRecord`.
+        ValueError
+            If the record belongs to another party.
+        """
+        key = self._key(record)
+        if key is not None:
+            self._spent.add(key)
+
+    def spent_rounds(self) -> frozenset[tuple[str, int]]:
+        """Return the ``(session_id, message_bit)`` pairs already decided.
+
+        A snapshot, so a caller that iterates it cannot be surprised by a
+        concurrent verification, and a frozen one, so it cannot be used to
+        forge an entry.
+
+        Returns
+        -------
+        frozenset of (str, int)
+        """
+        return frozenset(self._spent)
 
 
 def minimum_matched_count(params: ProtocolParams) -> int:
@@ -1204,15 +1575,19 @@ class VerificationAbort:
         The verifier who reached no verdict. Alice is refused: she signs and
         keeps no record.
     reason : AbortReason or str
-        Which floor was not met -- or, for
-        :attr:`AbortReason.COUNTS_FROM_TWO_DECLARATIONS`, which floor could not
-        be applied at all. Cross-checked against the counts, so the label and
-        the numbers cannot disagree: see :class:`AbortReason` for the five cases
-        and the order :func:`verify` tests them in.
+        Which floor was not met -- or, for the two unpoolable cases, which floor
+        could not be applied at all; or, for the two round cases of
+        :ref:`replay`, that no counting rule was reached because the declaration
+        and the record are not one transaction. Cross-checked against the
+        counts, so the label and the numbers cannot disagree: see
+        :class:`AbortReason` for the eight cases and the order :func:`verify`
+        tests them in.
     matched_count : int
         ``|M_R|`` as observed. May be ``0``. Below ``minimum_matched`` for the
-        two own-count reasons and at or above it for the three pair reasons,
+        two own-count reasons and at or above it for the four pair reasons,
         since a verifier only reaches those checks having cleared his own floor.
+        Unconstrained for the two round reasons, which are recorded before any
+        floor is applied and carry the count for diagnosis only.
     minimum_matched : int
         ``m_min`` from :func:`minimum_matched_count` for the parameter set the
         run executed under. Carried rather than recomputed so that a stored
@@ -1228,15 +1603,15 @@ class VerificationAbort:
     counterpart_matched : int or None, optional
         ``m`` as the *other* verifier reported it over the count exchange
         (:mod:`sih141.protocol.tally`), or ``None`` on a run whose recipients
-        did not exchange counts. Required by the three pair reasons, which are
+        did not exchange counts. Required by the four pair reasons, which are
         statements about the pair and are unreadable without it; carried as
-        context by the two own-count reasons when it happens to be known.
+        context by the other four when it happens to be known.
     minimum_pooled : int or None, optional
         ``M_min`` from :func:`minimum_pooled_matched_count`, or ``None`` when no
-        exchange happened. Required by the three pair reasons, for the same
+        exchange happened. Required by the four pair reasons, for the same
         reason ``minimum_matched`` is carried: a stored transcript has to say
-        what the rule was -- including on the one refusal that says the rule
-        could not be applied.
+        what the rule was -- including on the refusals that say the rule could
+        not be applied.
 
     Raises
     ------
@@ -1380,13 +1755,15 @@ class VerificationAbort:
     def _check_reason_against_counts(self) -> None:
         """Enforce that the label and the numbers are one observation.
 
-        Five reasons, five conditions, and the verifier reaches them in the
-        order :func:`verify` tests them: his own count first, then whether the
-        counterpart's count is about the same declaration, then the pooled
-        total, then his counterpart's count. So the three pair reasons *imply*
-        that this verifier cleared his own floor, which is asserted rather than
-        assumed -- an abort labelled ``pooled`` on a verifier who was starved
-        himself would misattribute a local failure to the pair.
+        The verifier reaches the checks in the order :func:`verify` tests them:
+        first whether this is even the right, undecided round; then his own
+        count; then whether the counterpart's count is about the same
+        declaration; then the pooled total; then his counterpart's count. So
+        the four pair reasons *imply* that this verifier cleared his own floor,
+        which is asserted rather than assumed -- an abort labelled ``pooled`` on
+        a verifier who was starved himself would misattribute a local failure to
+        the pair. The two round reasons imply nothing about any count and are
+        checked against nothing.
 
         :attr:`AbortReason.COUNTS_FROM_TWO_DECLARATIONS` is the one reason with
         nothing further to check: its whole content is that ``matched_count``
@@ -1399,6 +1776,14 @@ class VerificationAbort:
             If the reason and the counts describe different runs, or if a pair
             reason is missing the exchanged numbers it is a statement about.
         """
+        if self.reason in _ROUND_REASONS:
+            # Nothing to cross-check. These two refuse *before* any counting
+            # rule is reached -- the declaration and the record are not the same
+            # transaction, or the transaction is already closed -- so the counts
+            # they carry are context for a reader and are not a claim about any
+            # floor. Insisting on a relation here would assert something the
+            # refusal explicitly declines to assert; see :ref:`replay`.
+            return
         own_short = self.matched_count < self.minimum_matched
         if self.reason in _OWN_COUNT_REASONS:
             if not own_short:
@@ -1515,15 +1900,17 @@ class VerificationAbort:
         :attr:`AbortReason.COUNTERPART_BELOW_FLOOR`. Reading it against any
         other floor would report a shortfall nobody measured.
 
-        At least ``1`` on each of those four, and exactly ``0`` on the two that
+        At least ``1`` on each of those four, and exactly ``0`` on the four that
         name no floor -- :attr:`AbortReason.COUNTS_FROM_TWO_DECLARATIONS` and
-        :attr:`AbortReason.COUNT_OF_UNRECORDED_PROVENANCE`. Those refusals
-        report that the pooled rule could not be *applied*, not that it was
-        missed, and quoting a distance from a floor nobody evaluated would
-        invite a reader to treat "one record short" and "not the same
-        experiment" as the same finding.
+        :attr:`AbortReason.COUNT_OF_UNRECORDED_PROVENANCE`, which report that
+        the pooled rule could not be *applied*, and
+        :attr:`AbortReason.SESSION_MISMATCH` and
+        :attr:`AbortReason.RECORD_ALREADY_VERIFIED`, which report that no
+        counting rule was reached at all. Quoting a distance from a floor nobody
+        evaluated would invite a reader to treat "one record short" and "not the
+        same experiment" as the same finding.
         """
-        if self.reason in _UNPOOLABLE_REASONS:
+        if self.reason in _UNPOOLABLE_REASONS or self.reason in _ROUND_REASONS:
             return 0
         if self.reason is AbortReason.POOLED_BELOW_FLOOR:
             assert self.minimum_pooled is not None  # enforced in __post_init__
@@ -1541,15 +1928,18 @@ class VerificationAbort:
 
         The four pair reasons need the count exchange to have happened and
         carry :attr:`counterpart_matched`; the two own-count reasons are
-        reachable with or without it. Phase 4 and Phase 5 read this to separate
-        "this verifier had nothing to score" from "the two of them together did
-        not clear the pooled rule", which are different findings about a run.
-        Read :attr:`reason` to separate the two cases where the pooled rule was
-        never evaluated -- :attr:`AbortReason.COUNTS_FROM_TWO_DECLARATIONS` and
+        reachable with or without it, and the two round reasons of
+        :ref:`replay` are about the pairing rather than about anybody's
+        evidence and answer ``False`` here. Phase 4 and Phase 5 read this to
+        separate "this verifier had nothing to score" from "the two of them
+        together did not clear the pooled rule", which are different findings
+        about a run. Read :attr:`reason` to separate the two cases where the
+        pooled rule was never evaluated --
+        :attr:`AbortReason.COUNTS_FROM_TWO_DECLARATIONS` and
         :attr:`AbortReason.COUNT_OF_UNRECORDED_PROVENANCE` -- from the two where
         it was and failed.
         """
-        return self.reason not in _OWN_COUNT_REASONS
+        return self.reason in _PAIR_REASONS
 
     @property
     def accepted_is_undefined(self) -> bool:
@@ -1787,6 +2177,38 @@ def _abort_message(abort: VerificationAbort) -> str:
         f"forgery detection when no evidence of forgery exists. "
         f"{recorded_not_lost}"
     )
+    if abort.reason is AbortReason.SESSION_MISMATCH:
+        return (
+            f"the declaration does not name the distribution round "
+            f"{party}'s log was made in, so there is nothing here to score. "
+            f"The key states are one-time: a declaration and a record belong to "
+            f"exactly one round, and a rate computed across two of them is not "
+            f"a weak measurement of anything -- it is the chance noise of "
+            f"scoring against an unrelated key, near (1 - 1/|B|)/2, which is "
+            f"why this was refused instead of being reported as the rejection "
+            f"it would usually have looked like. "
+            f"{not_a_signature_failure}: the verifier has learned nothing about "
+            f"the signature, only that he was handed the wrong pair. "
+            f"{recorded_not_lost} The usual causes are a captured signature "
+            f"re-presented after its round closed and a harness that paired one "
+            f"run's declaration with another run's logs -- see "
+            f"sih141.protocol.verify on the replay defence -- so what to "
+            f"investigate is which round each half came from."
+        )
+    if abort.reason is AbortReason.RECORD_ALREADY_VERIFIED:
+        return (
+            f"{party} has already reached a verdict on this distribution round "
+            f"and will not reach a second one. One round yields one verdict per "
+            f"verifier: the evidence is spent, and re-deciding it would let a "
+            f"replayed declaration collect as many acceptances as it was "
+            f"presented times. "
+            f"{not_a_signature_failure}: nothing new was learned about the "
+            f"signature, and the verdict already reached still stands -- read "
+            f"it there rather than asking again. {recorded_not_lost} "
+            f"If this is a harness verifying twice on purpose, give that "
+            f"verification its own ConsumedRecords, or none; if it is not, the "
+            f"second presentation is the replay this ledger exists for."
+        )
     if abort.reason is AbortReason.POOLED_BELOW_FLOOR:
         return (
             f"the two verifiers together hold {abort.pooled_count} matched "
@@ -2411,6 +2833,72 @@ def mismatch_positions(
     )
 
 
+def _round_refusal(
+    signature: Signature,
+    record: RecipientRecord,
+    ledger: ConsumedRecords | None,
+    *,
+    matched_count: int,
+    params: ProtocolParams,
+    floor: int,
+) -> VerificationAbort | None:
+    """Apply the two replay checks and return the first refusal.
+
+    Runs before any counting rule, because a count taken across two rounds --
+    or a second count of a round already decided -- is not a weaker measurement
+    but a measurement of nothing. :ref:`replay` is the reasoning.
+
+    The record drives the session comparison, not the signature. A verifier
+    holding a log stamped with a round demands that the declaration name that
+    round and refuses one naming another or naming none; a verifier whose log
+    names no round has nothing to compare and is left exactly as he was. That
+    asymmetry is the point: the record is the end of the comparison no signer
+    can reach, and a verifier who declines to stamp his own log gives up only
+    his own protection, which is not the omission route of
+    :ref:`one-declaration` where the party who could omit the binding was the
+    adversary it was aimed at.
+
+    Parameters
+    ----------
+    signature : Signature
+        The declaration under test.
+    record : RecipientRecord
+        The verifier's log.
+    ledger : ConsumedRecords or None
+        The verifier's own ledger of rounds already decided, or ``None`` for a
+        caller keeping no such state.
+    matched_count : int
+        ``|M_R|``, carried into the refusal for diagnosis. Neither check makes
+        any claim about it.
+    params : ProtocolParams
+        The parameter set the run executes under.
+    floor : int
+        ``m_min``, passed in because the caller has already paid for it.
+
+    Returns
+    -------
+    VerificationAbort or None
+        ``None`` when the declaration and the record are the same, undecided
+        transaction, which is when a count is worth taking.
+    """
+    common = {
+        "party": record.party,
+        "matched_count": matched_count,
+        "minimum_matched": floor,
+        "expected_matched": params.expected_matched,
+        "key_length": params.key_length,
+        "message_bit": record.message_bit,
+    }
+    stamped = record.session_id
+    if stamped is not None and signature.session_id != stamped:
+        return VerificationAbort(reason=AbortReason.SESSION_MISMATCH, **common)
+    if ledger is not None and ledger.is_spent(record):
+        return VerificationAbort(
+            reason=AbortReason.RECORD_ALREADY_VERIFIED, **common
+        )
+    return None
+
+
 def _evidence_refusal(
     *,
     party: Party,
@@ -2544,24 +3032,31 @@ def verify(
     params: ProtocolParams,
     *,
     counterpart_matched: int | None = None,
+    ledger: ConsumedRecords | None = None,
 ) -> VerificationResult:
     """Score a signature against one recipient's record and reach a verdict.
 
-    Phase C for a single verifier. Builds the matched set, checks there is
+    Phase C for a single verifier. Checks that the declaration and the record
+    are one undecided transaction, builds the matched set, checks there is
     enough evidence to carry a verdict at all, counts disagreements **within it
     only**, divides, and compares against the threshold ``params`` assigns to
     the party the record belongs to.
 
-    The evidence checks are the matched-count abort rules, in the order a
-    verifier can actually apply them::
+    The checks that precede a verdict, in the order a verifier can actually
+    apply them::
 
-        |M_R| >= m_min                         his own, computed locally
-        counterpart said which declaration     provenance was recorded at all
-        counterpart counted this declaration   the counts are one experiment
-        |M_R| + counterpart_matched >= M_min   the pooled floor
-        counterpart_matched >= m_min           the counterpart's own floor
+        signature names the record's round      the replay binding
+        this round has not been decided yet     the consumed-records ledger
+        |M_R| >= m_min                          his own, computed locally
+        counterpart said which declaration      provenance was recorded at all
+        counterpart counted this declaration    the counts are one experiment
+        |M_R| + counterpart_matched >= M_min    the pooled floor
+        counterpart_matched >= m_min            the counterpart's own floor
 
-    with ``m_min`` from :func:`minimum_matched_count` and ``M_min`` from
+    The first two are the replay defence of :ref:`replay`, and each is inert
+    unless the caller supplies the state it reads: a record stamped with a
+    distribution round, and a ledger of rounds already decided. Then ``m_min``
+    from :func:`minimum_matched_count` and ``M_min`` from
     :func:`minimum_pooled_matched_count`. The last four need ``counterpart``'s
     count, which arrives over the recipients' count exchange
     (:mod:`sih141.protocol.tally`); they are skipped when it is not supplied,
@@ -2617,6 +3112,16 @@ def verify(
         :class:`~sih141.protocol.session.QDSSession`, it cannot be built
         without a declaration, and it cannot be subclassed to hand on a bare
         integer instead (:ref:`binding-is-mandatory`).
+    ledger : ConsumedRecords or None, optional
+        Keyword-only. **This verifier's own** ledger of distribution rounds he
+        has already decided. When given, a round already spent is refused
+        (:attr:`AbortReason.RECORD_ALREADY_VERIFIED`) and a round newly decided
+        is spent on the way out -- so this is the one argument that makes the
+        call stateful, and the state lives on an object the verifier holds
+        rather than anywhere this module could share between two of them.
+        ``None`` -- the default -- keeps the function pure and is what a caller
+        with no replay surface to defend can honestly pass. A ledger built for
+        the other party raises rather than answering; see :ref:`replay`.
 
     Returns
     -------
@@ -2628,17 +3133,20 @@ def verify(
     ------
     TypeError
         If any argument is of the wrong type, including a
-        ``counterpart_matched`` that is neither ``None`` nor an integer.
+        ``counterpart_matched`` that is neither ``None`` nor an integer and a
+        ``ledger`` that is neither ``None`` nor a :class:`ConsumedRecords`.
     ValueError
         If the signature and the record describe different runs (different
-        message bit or length), if either does not belong to ``params``, or if
-        ``counterpart_matched`` exceeds the key length. These are wiring errors.
+        message bit or length), if either does not belong to ``params``, if
+        ``counterpart_matched`` exceeds the key length, or if ``ledger``
+        belongs to a different party. These are wiring errors.
     MatchedSetTooSmall
         A :class:`ValueError` subclass, if any of the checks above refuses --
-        including the ``0/0`` case, and including a counterpart count computed
-        against another declaration. This is a plumbing failure rather than a
-        signature failure, is explained at length in the module docstring, and
-        must never be recorded as a rejection.
+        including the ``0/0`` case, a counterpart count computed against another
+        declaration, a declaration naming another distribution round, and a
+        round this verifier has already decided. This is a plumbing failure
+        rather than a signature failure, is explained at length in the module
+        docstring, and must never be recorded as a rejection.
 
     See Also
     --------
@@ -2646,6 +3154,7 @@ def verify(
     verify_all : Both verifiers at once, which is what transferability needs.
     minimum_matched_count : The per-verifier floor, and the bound behind it.
     minimum_pooled_matched_count : The pooled floor.
+    ConsumedRecords : The ledger, and what it does and does not cost.
     sih141.protocol.tally.exchange_matched_counts : Where
         ``counterpart_matched`` comes from.
     matched_positions : The evidence base this decision rests on.
@@ -2659,7 +3168,8 @@ def verify(
     budgets measured from that zero, and the acceptance test is ``<=``, so a run
     landing exactly on its threshold is accepted.
 
-    Consumes no randomness (D3).
+    Consumes no randomness (D3). Pure unless a ``ledger`` is supplied, and then
+    the only thing it writes is that ledger.
 
     Examples
     --------
@@ -2677,10 +3187,44 @@ def verify(
     >>> result = verify(sign(0, key, params), record, params)
     >>> result.accepted, result.rate, result.mismatches
     (True, 0.0, 0)
+
+    Bind the pair to one distribution round and a declaration from another round
+    is refused rather than scored on chance noise:
+
+    >>> from sih141.protocol.signature import Signature
+    >>> from sih141.protocol.verify import verify_or_abort
+    >>> bound = record.with_session_id(
+    ...     Signature(0, key, session_opening="round-a").session_id
+    ... )
+    >>> verify(sign(0, key, params, session_opening="round-a"), bound, params).rate
+    0.0
+    >>> verify_or_abort(
+    ...     sign(0, key, params, session_opening="round-b"), bound, params
+    ... ).reason.value
+    'session-identifier-mismatch'
+
+    One round, one verdict, once the verifier keeps a ledger:
+
+    >>> from sih141.protocol.verify import ConsumedRecords
+    >>> ledger = ConsumedRecords(Party.BOB)
+    >>> declaration = sign(0, key, params, session_opening="round-a")
+    >>> verify(declaration, bound, params, ledger=ledger).accepted
+    True
+    >>> verify_or_abort(
+    ...     declaration, bound, params, ledger=ledger
+    ... ).reason.value
+    'records-already-verified'
     """
     if not isinstance(params, ProtocolParams):
         raise TypeError(
             f"params must be a ProtocolParams, got {type(params).__name__}"
+        )
+    if ledger is not None and not isinstance(ledger, ConsumedRecords):
+        raise TypeError(
+            f"ledger must be a ConsumedRecords or None, got "
+            f"{type(ledger).__name__}. It is the verifier's own record of "
+            f"rounds he has already decided; build one per verifier with "
+            f"ConsumedRecords(record.party)."
         )
     _check_pairing(signature, record)
     signature.check_against(params)
@@ -2705,6 +3249,20 @@ def verify(
 
     matched = matched_positions(signature, record)
     floor = minimum_matched_count(params)
+    # The replay checks first. A count taken across two distribution rounds, or
+    # a second count of a round already decided, is not a weaker measurement of
+    # the same thing; it is a measurement of nothing, so no floor is applied to
+    # it and none is quoted. See :ref:`replay`.
+    refusal = _round_refusal(
+        signature,
+        record,
+        ledger,
+        matched_count=len(matched),
+        params=params,
+        floor=floor,
+    )
+    if refusal is not None:
+        raise MatchedSetTooSmall(refusal)
     refusal = _evidence_refusal(
         party=record.party,
         matched_count=len(matched),
@@ -2732,6 +3290,13 @@ def verify(
     rate = mismatches / len(matched)
     threshold = params.threshold_for(record.party)
 
+    # Spent on a verdict and only on a verdict: a refusal has decided nothing,
+    # so spending on one would let a starved counterpart count or a
+    # mis-provenanced one burn a round this verifier never scored. That is also
+    # what keeps the ledger unpoisonable from outside -- see :ref:`replay`.
+    if ledger is not None:
+        ledger.spend(record)
+
     return VerificationResult(
         party=record.party,
         accepted=rate <= threshold,
@@ -2750,6 +3315,7 @@ def verify_or_abort(
     params: ProtocolParams,
     *,
     counterpart_matched: int | None = None,
+    ledger: ConsumedRecords | None = None,
 ) -> VerificationResult | VerificationAbort:
     """Score a signature, returning the refusal instead of raising it.
 
@@ -2777,6 +3343,12 @@ def verify_or_abort(
         Keyword-only, forwarded to :func:`verify` unchanged: the count the other
         verifier reported over the exchange, or ``None`` for the per-verifier
         rule alone.
+    ledger : ConsumedRecords or None, optional
+        Keyword-only, forwarded to :func:`verify` unchanged: this verifier's own
+        ledger of rounds already decided, or ``None``. A round is spent only
+        when a verdict is returned, so the refusals this function hands back
+        leave the ledger untouched -- which is what lets a harness retry a run
+        that aborted for an unrelated reason.
 
     Returns
     -------
@@ -2818,6 +3390,7 @@ def verify_or_abort(
             record,
             params,
             counterpart_matched=counterpart_matched,
+            ledger=ledger,
         )
     except MatchedSetTooSmall as too_small:
         return too_small.abort
@@ -2830,6 +3403,7 @@ def verify_all(
     *,
     require_symmetrised: bool = True,
     exchange_counts: bool = True,
+    ledgers: Mapping[Party | str, ConsumedRecords] | None = None,
 ) -> dict[Party, VerificationResult]:
     """Verify one signature against every recipient's record.
 
@@ -2881,6 +3455,14 @@ def verify_all(
         which is what the package enforced before the pooled rule and what a
         Phase 3 experiment passes when it is measuring the split-coin attack the
         rule closes.
+    ledgers : mapping of Party to ConsumedRecords or None, optional
+        Keyword-only. One ledger **per verifier**, forwarded to that verifier's
+        own :func:`verify` call. A mapping rather than a single object because
+        the two histories must stay apart (:ref:`replay`); a ledger filed under
+        the wrong party raises there rather than answering. Parties absent from
+        the mapping are verified without one, and ``None`` -- the default --
+        keeps every verification pure, which is what a caller scoring a run once
+        wants.
 
     Returns
     -------
@@ -2893,8 +3475,9 @@ def verify_all(
     ------
     TypeError
         If ``records`` is not a mapping, any value is not a
-        :class:`~sih141.protocol.records.RecipientRecord`, or
-        ``exchange_counts`` is not a :class:`bool`.
+        :class:`~sih141.protocol.records.RecipientRecord`,
+        ``exchange_counts`` is not a :class:`bool`, or ``ledgers`` is neither a
+        mapping nor ``None``.
     ValueError
         If ``records`` is empty, if a key disagrees with the party its record is
         tagged with, if a record is unsymmetrised while ``require_symmetrised``
@@ -2954,6 +3537,18 @@ def verify_all(
             f"{type(exchange_counts).__name__}; it selects whether the "
             f"recipients run Phase C', not a count."
         )
+    if ledgers is not None and not isinstance(ledgers, Mapping):
+        raise TypeError(
+            f"ledgers must be a mapping of Party to ConsumedRecords or None, "
+            f"got {type(ledgers).__name__}. One ledger per verifier: a single "
+            f"shared object would put one verifier's history inside the "
+            f"other's decision."
+        )
+    by_party: dict[Party, ConsumedRecords] = (
+        {}
+        if ledgers is None
+        else {_as_party(party): held for party, held in ledgers.items()}
+    )
 
     # Shape first, then the exchange, then the verdicts: a mis-wired pair must
     # fail on the wiring rather than somewhere inside a protocol step it should
@@ -2999,6 +3594,7 @@ def verify_all(
             record,
             params,
             counterpart_matched=reported.get(party),
+            ledger=by_party.get(party),
         )
         for party, record in checked.items()
     }

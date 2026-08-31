@@ -190,7 +190,13 @@ from sih141.protocol.session import (
     honest_forwarder,
     honest_signer,
 )
-from sih141.protocol.signature import Signature, sign
+from sih141.protocol.signature import (
+    Signature,
+    fresh_context,
+    fresh_opening,
+    session_identifier,
+    sign,
+)
 from sih141.protocol.symmetrise import (
     Symmetriser,
     no_symmetrisation,
@@ -207,6 +213,7 @@ from sih141.protocol.tally import (
 from sih141.protocol.verify import (
     HONEST_ABORT_BUDGET,
     AbortReason,
+    ConsumedRecords,
     MatchedSetTooSmall,
     VerificationAbort,
     VerificationResult,
@@ -258,6 +265,9 @@ __all__ = [
     # -- Phase B: signing ----------------------------------------------------- #
     "Signature",
     "sign",
+    "session_identifier",
+    "fresh_opening",
+    "fresh_context",
     # -- Phase C: verification ------------------------------------------------ #
     "VerificationResult",
     "matched_positions",
@@ -281,6 +291,8 @@ __all__ = [
     "guaranteed_pooled_matched_count",
     "enforced_repudiation_bound",
     "verify_or_abort",
+    # -- Phase C: one round, one verdict (the replay defence) ------------------ #
+    "ConsumedRecords",
     # -- orchestration, and the Phase 3 attack seams -------------------------- #
     "MESSAGE_BITS",
     "Distributor",

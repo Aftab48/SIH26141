@@ -8,7 +8,7 @@
 > on the maintainer's explicit instruction. The permanent record is
 > `docs/METRICS.md` and the `docs/PHASE*.md` notes.
 
-**50 entries** — 21 issue · 12 decision · 9 finding · 5 fix · 2 note · 1 deadend
+**54 entries** — 21 issue · 15 decision · 10 finding · 5 fix · 2 note · 1 deadend
 
 
 ## Phase 0 — Scaffold
@@ -979,3 +979,173 @@ NOTE FOR WHOEVER OWNS session.py
 The comment at session.py:1292 says "three of the five AbortReason members". There
 are six now. Prose only, no logic depends on it; I did not touch the file because
 another agent owns it this round.
+
+### `[D]` The session identifier must not depend on the declared key
+
+*decision · replay-defence agent · 2026-08-31T17:01:32Z*
+
+The obvious design for a session identifier is a digest of the round's key
+material -- it makes the identifier a *fact about the round* rather than a name
+the signer picks, and it is what I set out to build. It is wrong, and the reason
+is worth writing down because it is not visible until you trace a forgery
+through it.
+
+The verifier can only recompute the identifier from the key he was *declared*.
+A forgery is precisely a declaration whose key is not the one distributed. So
+with the key in the digest, every forgery recomputes to an identifier that does
+not match the record's, and verify() refuses to score instead of rejecting.
+Phase 3's entire forgery table would have emptied into the no-verdict column,
+and the scheme's headline detection would have been reported as a plumbing
+error. The abort machinery exists exactly so that plumbing failures and
+signature failures never share a channel; folding the key into the binding puts
+them back in one.
+
+So: the identifier names the ROUND, the mismatch rate judges the KEY, and the
+two must not be computed from overlapping inputs. What is hashed is a 128-bit
+opening the signer draws per (round, message bit) and reveals in Phase B, plus
+the message bit, the key length and the application context. Nothing about the
+key, and in particular nothing about k_{1-b}: a digest of key material would
+have been a computational handle on the *unsigned* key, which this scheme does
+not have anywhere else and should not acquire for a replay defence.
+
+What that costs, stated rather than hidden: the identifier is a label the
+verifier compares, not a proof he can check against the key. A signer who wants
+two rounds to carry one identifier can reuse her own opening. She gains nothing
+-- the two rounds' keys differ, so a declaration replayed across them is
+rejected on the rate, and each verifier's ConsumedRecords grants one verdict per
+identifier, so two rounds sharing an identifier are ONE round to every verifier.
+The opening is also the commitment an auditor makes her open in a dispute; a
+fabricated identifier has no opening, and QDSSession.opening_for exposes the
+unsigned round's so that the check is executable rather than rhetorical.
+tests/test_protocol_replay.py::test_the_identifier_does_not_depend_on_the_declared_key
+pins the property this entry is about.
+
+### `[D]` Why the consumed-records ledger is passed, not a module default
+
+*decision · replay-defence agent · 2026-08-31T17:01:51Z*
+
+The brief said "the ledger must be per-verifier state, not global". I first
+reached for the usual shape -- a module-level default keyed by party, so that
+verify() is stateful by default and nobody has to remember to pass anything.
+That is unbuildable here, and the reason is specific to this project rather than
+general good taste.
+
+Round identifiers are derived from a seed-derived opening. Two runs made with
+the same seed produce the SAME identifier, by design: seeded reproducibility is
+what Phase 5 rests on and what tests/test_protocol_session.py pins. A
+process-wide ledger would therefore refuse the second of two identically seeded
+experiments as a replay of the first -- and the suite is full of tests that use
+one base seed. Content-addressing the record instead is worse: two structurally
+identical hand-built logs in two different doctests are two different rounds,
+and a content hash cannot tell a coincidence from a replay. That is the same
+trap the module docstring already documents for run_id, one level down.
+
+So the ledger is an object the verifier holds and passes: verify(..., ledger=).
+ConsumedRecords is constructed for one party and raises on another party's
+record, so there is no object anywhere from which Bob's history reaches
+Charlie's decision -- which is the security half of "per-verifier". QDSSession
+owns one per verifier and passes each verifier his own, so the integrated path
+is stateful by default and only the hand-built pairs in the test suite stay
+pure. That is why exactly two existing tests had to move rather than dozens.
+
+Two consequences that took a real bug to find:
+
+(1) A round is spent on a VERDICT, never on a refusal. If a refusal spent it,
+anything that can make a verifier abort -- a starved matched set, a counterpart
+count of unrecorded provenance, a mismatched round -- would destroy an honest
+signature's one chance to be scored. It is also what makes transfer() work: it
+re-verifies Charlie after an abort on the unforwarded declaration.
+
+(2) QDSSession.verify records the abort and pops the verdict before re-raising.
+With the ledger in place, the second ask for a party who had already accepted
+DELETED his acceptance and replaced it with the replay refusal -- so the replay
+defence became a way of erasing the very decision it protects, which is a bigger
+hole than the one it closes. Fixed by leaving the standing verdict alone when
+the reason is RECORD_ALREADY_VERIFIED and a result already exists for that
+party. Caught by an assertion in the moved test, not by the type checker; if
+anyone adds a third stateful refusal, check this branch again.
+
+### `[*]` Pricing the ledger's denial-of-service surface
+
+*finding · replay-defence agent · 2026-08-31T17:02:09Z*
+
+The brief asked whether the ledger can be exhausted or poisoned to deny service
+to an honest signature. It can, once, by one route, and the honest answer is
+that the route costs nothing to whoever already holds a cheaper denial.
+
+A verdict spends a round, and a REJECTION is a verdict. So a party who can put
+a declaration in front of a verifier before the honest one arrives burns the
+round: the verifier rejects the bad declaration, spends, and the honest
+declaration is then refused. Measured in
+tests/test_protocol_replay.py::test_a_rejection_spends_the_round_and_this_is_the_denial_of_service_price.
+
+The price:
+  - Bob. Phase B runs over an authenticated channel (assumption (AUTH), stated
+    in sih141.protocol.signature). The only party who can put a declaration in
+    front of Bob is the signer, and a signer who wants to deny service can
+    simply not sign. No new capability.
+  - Charlie. The only party who can put one in front of Charlie is whoever holds
+    the Bob-to-Charlie hop, i.e. Bob. Bob withholding the forward is the same
+    denial for less work. No new capability.
+
+The alternative -- spend only on ACCEPTANCE -- removes even this, and I decided
+against it: it lets a verifier be asked the same rejected question without
+limit, and "one round, one verdict" is the rule the whole mechanism is named
+after. A rejection is a verdict.
+
+Exhaustion is linear and prunable: one (32-char identifier, message bit) pair
+per round decided, of order 1e2 bytes, so 1e7 rounds is about a gigabyte. The
+key IS the round, which is what makes a retention policy expressible at all --
+this is the thing the old run_id note said a ledger needed and could not get
+from content.
+
+One more residual, noted and not defended: the classical channel is
+authenticated but NOT secret, so an eavesdropper reads (b, k_b) off it and can
+rush the true declaration to Charlie ahead of Bob. Charlie accepts it -- it is
+valid -- and spends; Bob's forward then aborts. Transferability was achieved,
+just by a different courier, and Charlie cannot tell. Anyone building the
+Phase 5 tables should know that a RECORD_ALREADY_VERIFIED at Charlie is not
+necessarily an attack on Charlie.
+
+### `[D]` Three small replay-defence decisions that are easy to undo by accident
+
+*decision · replay-defence agent · 2026-08-31T17:02:28Z*
+
+Three smaller decisions from the replay work, each of which would be easy to
+undo by accident.
+
+1. A THIRD derived stream for the openings.
+Openings have to come from somewhere. Drawing them from the Alice stream shifts
+every later variate and changes every seeded transcript in the project for a
+value none of them depend on -- keys, records, coins, the lot. So
+_BINDING_STREAM_LABEL joins the two in :ref:`two-streams`; deriving a third
+stream from the same 32 bytes costs one SHA-256 and leaves the other two
+byte-identical. tests/test_protocol_replay.py::test_the_binding_stream_does_not_perturb_the_other_two
+rebuilds a session's keys and all four records from the two documented streams
+alone and asserts equality, so this cannot silently regress. It is also the one
+stream no seam is handed, which means a distributor cannot read the opening of
+the OTHER message bit -- the round that stays sealed.
+
+2. QDSSession OVERRIDES whatever session fields a seam put on a declaration.
+sign() and transfer() both rebuild the returned Signature with this run's
+opening and context (_bind_to_round). A seam may declare any key it likes --
+that is what the Signer and Forwarder seams are for -- but it does not get to
+say which round the declaration belongs to. If it could, a forging signer that
+simply left the round unnamed would turn every forgery into a SESSION_MISMATCH
+abort, which is the failure mode of journal entry "The session identifier must
+not depend on the declared key" arriving by a different door. The consequence is
+that the binding never fires through the shipped seams, and it is not supposed
+to: it fires where the pairing is done by hand, which is where replay lives.
+
+3. The RECORD is the anchor, not the signature.
+The comparison is driven by the side an adversary cannot reach. A verifier
+holding a stamped log demands the declaration name that round and refuses one
+naming another OR naming none; a verifier whose log names no round has nothing
+to compare and scores exactly as before. That asymmetry is what keeps every
+hand-built pair in the suite working, and it is NOT the omission route that
+tally.py had to close: there the party who could omit the binding was the
+adversary the check was aimed at, whereas here the only party who can omit it is
+the verifier himself, and a verifier who blinds himself loses only his own
+protection. QDSSession re-stamps the post-symmetrisation logs for the same
+reason -- a symmetriser seam is the recipients' step, and it must not be able to
+strip the recipients' own binding on the way through.

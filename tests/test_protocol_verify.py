@@ -330,16 +330,44 @@ def test_signature_survives_a_json_round_trip() -> None:
     assert restored == signature
 
 
-def test_signature_carries_no_free_text_message_field() -> None:
+def test_signature_carries_no_free_text_field_the_rule_does_not_cover() -> None:
     """A label the verification rule does not cover would be a real hole.
 
-    Nothing in the protocol binds a human-readable string to the key, so an
-    adversary could rewrite it and every verifier would still accept, having
-    checked only the bit. The type therefore refuses to carry one, and this test
-    is what stops a well-meaning dashboard patch from adding it.
+    The original form of this test asserted that ``Signature`` had exactly two
+    fields, which was the right rule stated as the wrong invariant: what makes a
+    human-readable label dangerous is not its existence but that nothing binds
+    it, so an adversary could rewrite it and every verifier would still accept,
+    having checked only the bit.
+
+    ``context`` is a free-text label and it is admissible for exactly one
+    reason: it is hashed into ``session_id``, the verifier recomputes that from
+    the declaration in front of him and compares it against the identifier his
+    own log was stamped with at distribution time, and a rewritten context
+    therefore matches no record. So the invariant this test now pins is the
+    real one -- every field is either scored or covered -- and it still stops a
+    well-meaning dashboard patch from adding an uncovered one.
     """
     fields = {field.name for field in dataclasses.fields(Signature)}
-    assert fields == {"message_bit", "declared_key"}
+    assert fields == {
+        "message_bit",
+        "declared_key",
+        "session_opening",
+        "context",
+    }
+
+    # Rewriting the label changes the round the declaration names, so a verifier
+    # holding a stamped log refuses it rather than accepting the rewrite.
+    params = _params(10)
+    key = _key(params, message_bit=1)
+    honest = sign(1, key, params, session_opening="a1", context="pay 10")
+    rewritten = sign(1, key, params, session_opening="a1", context="pay 10000")
+    assert honest.session_id != rewritten.session_id
+
+    # And there is no place to write an identifier of one's choosing: session_id
+    # is derived, not stored, so it cannot be set to whatever the record says.
+    assert "session_id" not in fields
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        honest.session_id = rewritten.session_id  # type: ignore[misc]
 
 
 # ==========================================================================
