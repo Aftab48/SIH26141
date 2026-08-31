@@ -41,6 +41,32 @@ symmetrisation exchange is taken into account (see
 :attr:`~sih141.protocol.params.ProtocolParams.unmatched_noise_rate` for the
 former). Nothing about Alice knowing her own key helps him.
 
+A recipient's log has the shape of a key, and that is the whole attack
+--------------------------------------------------------------------
+:class:`~sih141.protocol.records.RecipientRecord` stores
+``(index, chosen_basis, outcome_eigenvalue)`` per position, which is
+column-for-column the shape of a :class:`PrivateKey`. Reading one as the other
+is not a coincidence and not a type pun: it *is* the recipient-forgery strategy.
+Bob measured every position in a basis he chose himself; on the ``1/3`` of
+positions where his basis happened to be Alice's, his outcome is her eigenvalue,
+and declaring his whole log as though it were the key is his best available
+forgery. :func:`key_from_record` is that reading, exported once so that every
+adversary in the Phase 3 suite spells it the same way instead of open-coding the
+same six lines and getting the eigenvalue-versus-bit convention wrong in one of
+them.
+
+What it buys the second verifier is bounded and known. The declaration is
+correct wherever Bob's chosen basis matched Alice's *and* Charlie is scoring an
+entry that came from Bob's raw log; everywhere else it is a fair coin. That is
+the ``1/12`` of :attr:`sih141.protocol.params.ProtocolParams.forger_floor`,
+which is why ``s_v`` sits below it:
+
+>>> from sih141.protocol.params import DEFAULT_PARAMS
+>>> DEFAULT_PARAMS.forger_floor == 1 / 12
+True
+>>> DEFAULT_PARAMS.s_v < DEFAULT_PARAMS.forger_floor
+True
+
 Why the product state is never materialised
 -------------------------------------------
 :func:`public_key_states` returns ``L`` single-qubit
@@ -86,12 +112,14 @@ from sih141.protocol.params import (
     _as_eigenvalue,
     _as_message_bit,
 )
+from sih141.protocol.records import RecipientRecord
 
 __all__ = [
     "KeyElement",
     "PrivateKey",
     "generate_private_key",
     "generate_key_pair",
+    "key_from_record",
     "public_key_states",
 ]
 
@@ -618,3 +646,128 @@ def public_key_states(key: PrivateKey) -> tuple[Statevector, ...]:
             f"generate_private_key(params, message_bit, rng=...)."
         )
     return tuple(element.state() for element in key.elements)
+
+
+
+
+def key_from_record(
+    record: RecipientRecord, *, message_bit: int | None = None
+) -> PrivateKey:
+    """Read a recipient's own measurement log as though it were a private key.
+
+    **What this models: a recipient declaring his own log as the key.** He is
+    not Alice and holds no key; what he holds is
+    ``(chosen_basis_i, outcome_eigenvalue_i)`` at every position, which has
+    exactly the shape of one. Declaring it is the recipient-forgery strategy of
+    :ref:`sih141.protocol.session <phase3-seams>`, and it is honest about its own
+    limits: on the ``1/3`` of positions where his basis happened to be Alice's
+    the declaration is *right*, and everywhere else it is a fair coin, which is
+    the whole content of the ``1/12`` forger floor.
+
+    It is exported because every recipient-flavoured adversary otherwise
+    rewrites the same six lines, and two of the ways to get those six lines
+    wrong are silent. Passing
+    :attr:`~sih141.protocol.records.RecordEntry.bit` where an eigenvalue belongs
+    inverts every declared value and turns a forgery that reaches the floor into
+    one that fails at chance; forgetting to carry
+    :attr:`~sih141.protocol.records.RecipientRecord.message_bit` produces a key
+    for the other run, which
+    :class:`~sih141.protocol.signature.Signature` rejects loudly but only after
+    the attack has been written twice.
+
+    **Which log to pass.** For a forging recipient it is
+    :attr:`~sih141.protocol.records.RecipientView.raw_record`, the pre-exchange
+    one -- after Phase A' roughly half of that log *is* the counterpart's
+    evidence, whereas his post-exchange log is precisely the half the
+    counterpart does not hold and is worth nothing to him. This function does
+    not choose for the caller: it declares whatever log it is handed, and
+    ``record.symmetrised`` says which kind that was.
+
+    Parameters
+    ----------
+    record : RecipientRecord
+        The recipient's log. Its ``party`` is not used and not checked: the
+        point of the function is that a log *can* be read as a key, and which
+        recipient's it is belongs to the caller's threat model, not here.
+    message_bit : int or None, optional
+        Keyword-only. The bit to tag the resulting key with. ``None``, the
+        default, carries the record's own
+        :attr:`~sih141.protocol.records.RecipientRecord.message_bit` across,
+        which is what any adversary signing the bit he was asked to sign wants.
+        Pass one explicitly only to build a deliberately cross-tagged key for a
+        test; :class:`~sih141.protocol.signature.Signature` and
+        :meth:`sih141.protocol.session.QDSSession.sign` both refuse to sign one
+        bit with the other bit's key.
+
+    Returns
+    -------
+    PrivateKey
+        Length ``len(record)``, element ``i`` being
+        ``KeyElement(record[i].basis, record[i].eigenvalue)`` -- the *chosen*
+        basis and the *measured* eigenvalue, in key order.
+
+    Raises
+    ------
+    TypeError
+        If ``record`` is not a
+        :class:`~sih141.protocol.records.RecipientRecord`.
+    ValueError
+        If ``message_bit`` is given and is not ``0``/``1``.
+
+    See Also
+    --------
+    sih141.protocol.records.RecipientView : The one-recipient holdings this is
+        normally called on.
+    sih141.protocol.signature.sign : Wraps the result into the declaration a
+        verifier actually scores.
+    sih141.protocol.params.ProtocolParams.forger_floor : What declaring a log
+        buys, and why ``s_v`` sits below it.
+
+    Notes
+    -----
+    Consumes no randomness (D3): the declaration is a deterministic reading of
+    a log that already exists. An adversary that wants to *perturb* it -- flip a
+    random subset of eigenvalues, redraw some bases -- does so from its own
+    generator afterwards, never from the session's; that rule is
+    :mod:`sih141.attacks.isolation`, and it is checked rather than advised.
+
+    Examples
+    --------
+    >>> from sih141.protocol.keys import key_from_record
+    >>> from sih141.protocol.records import RecipientRecord
+    >>> record = RecipientRecord.from_measurements(
+    ...     "Bob", 1, ["X", "Z", "Y"], [1, -1, -1]
+    ... )
+    >>> declared = key_from_record(record)
+    >>> declared.message_bit, len(declared)
+    (1, 3)
+    >>> declared.bases == record.bases
+    True
+    >>> declared.eigenvalues == record.eigenvalues
+    True
+
+    The declared eigenvalues are eigenvalues, not measurement bits -- the
+    inversion that would otherwise be discovered as a forgery that mysteriously
+    fails at chance:
+
+    >>> declared.eigenvalues, record.bits
+    ((1, -1, -1), (0, 1, 1))
+    """
+    if not isinstance(record, RecipientRecord):
+        raise TypeError(
+            f"record must be a RecipientRecord, got {type(record).__name__}. "
+            f"This function reads one recipient's measurement log as a key; "
+            f"pass view.raw_record for a forging recipient, or "
+            f"session.records[bit][party] if you are the harness."
+        )
+    bit = (
+        record.message_bit
+        if message_bit is None
+        else _as_message_bit(message_bit)
+    )
+    return PrivateKey(
+        message_bit=bit,
+        elements=tuple(
+            KeyElement(entry.basis, entry.eigenvalue) for entry in record
+        ),
+    )

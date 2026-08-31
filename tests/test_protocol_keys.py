@@ -17,10 +17,18 @@ Three things are being pinned here, in order of how badly they fail silently.
    naive dataclass gets wrong -- a list handed to the constructor is *copied*,
    so a caller who mutates it afterwards cannot retroactively change a key or a
    record that has already been used.
+4. **The recipient boundary.** :class:`~sih141.protocol.records.RecipientView`
+   is a threat-model statement written as a type: one recipient's holdings, and
+   no path from them to the other recipient's. "No path" is checked by crawling
+   the object graph out of a view, and -- because a crawl that found nothing
+   would pass for every possible defect -- the same crawl is first pointed at
+   the session's own mapping and asserted to reach both recipients' logs and
+   both private keys.
 
 Determinism (D3) is checked by seeding: identical seeds give identical keys, and
 the basis draw is asserted to be stream-identical to
 :func:`sih141.core.paulis.random_basis` on the default alphabet.
+:func:`~sih141.protocol.keys.key_from_record` is asserted to consume none.
 """
 
 from __future__ import annotations
@@ -28,7 +36,9 @@ from __future__ import annotations
 import dataclasses
 import json
 import math
+import types
 from collections import Counter
+from collections.abc import Mapping
 
 import numpy as np
 import pytest
@@ -54,11 +64,16 @@ from sih141.protocol import (
     Party,
     PrivateKey,
     ProtocolParams,
+    QDSSession,
     RecipientRecord,
+    RecipientView,
     RecordEntry,
+    Signature,
     generate_key_pair,
     generate_private_key,
+    key_from_record,
     public_key_states,
+    recipient_views,
 )
 
 TOL = 1e-12
@@ -1125,3 +1140,562 @@ def test_a_key_and_two_independent_records_share_the_same_positions() -> None:
     assert bob.entries != charlie.entries
     for index in range(len(key)):
         assert bob[index].index == charlie[index].index == index
+
+
+
+# ==========================================================================
+# key_from_record -- reading a recipient's log as the key he declares
+# ==========================================================================
+
+
+def test_key_from_record_reads_the_log_column_for_column() -> None:
+    """The chosen basis becomes the declared basis; the outcome, the value."""
+    record = RecipientRecord.from_measurements(
+        Party.BOB, 0, ["X", "Z", "Y", "X"], [1, -1, -1, 1]
+    )
+    declared = key_from_record(record)
+    assert isinstance(declared, PrivateKey)
+    assert len(declared) == len(record)
+    assert declared.bases == record.bases
+    assert declared.eigenvalues == record.eigenvalues
+    for element, entry in zip(declared, record, strict=True):
+        assert element.basis is entry.basis
+        assert element.eigenvalue == entry.eigenvalue
+
+
+def test_key_from_record_is_exactly_the_six_lines_it_replaces() -> None:
+    """The helper exists to stop five adversaries open-coding this five ways.
+
+    Pinned against the open-coded form so that a future change to the helper
+    that quietly altered the declaration -- reversing the elements, dropping the
+    tag, coercing the eigenvalue -- fails here rather than as an unexplained
+    forgery rate three phases later.
+    """
+    record = RecipientRecord.from_measurements(
+        Party.CHARLIE, 1, ["Y", "Y", "Z"], [-1, 1, -1]
+    )
+    open_coded = PrivateKey(
+        message_bit=record.message_bit,
+        elements=tuple(
+            KeyElement(entry.basis, entry.eigenvalue) for entry in record
+        ),
+    )
+    assert key_from_record(record) == open_coded
+
+
+def test_key_from_record_carries_the_message_bit_across() -> None:
+    """A log for bit b declares a key for bit b, or Signature refuses it."""
+    for bit in (0, 1):
+        record = RecipientRecord.from_measurements(Party.BOB, bit, ["X"], [1])
+        assert key_from_record(record).message_bit == bit
+
+
+def test_key_from_record_message_bit_can_be_overridden_for_a_test() -> None:
+    """The override exists to build a deliberately cross-tagged declaration."""
+    record = RecipientRecord.from_measurements(Party.BOB, 0, ["X", "Z"], [1, 1])
+    crossed = key_from_record(record, message_bit=1)
+    assert crossed.message_bit == 1
+    assert crossed.bases == record.bases
+    # ... and the cross-tagged key is exactly what a Signature refuses.
+    with pytest.raises(ValueError, match="cannot sign message bit"):
+        Signature(0, crossed)
+
+
+def test_key_from_record_rejects_a_bad_override_bit() -> None:
+    """Booleans and out-of-range bits are refused as everywhere else."""
+    record = RecipientRecord.from_measurements(Party.BOB, 0, ["X"], [1])
+    with pytest.raises(ValueError, match="must be 0 or 1"):
+        key_from_record(record, message_bit=2)
+
+
+def test_key_from_record_declares_eigenvalues_and_never_bits() -> None:
+    """The silent inversion this helper exists to prevent.
+
+    ``bit`` is ``(1 - eigenvalue) // 2``, so passing a bit where an eigenvalue
+    belongs maps ``+1 -> 0`` and ``-1 -> 1``: a declaration that is wrong at
+    every position, producing a forgery that fails at chance and looks like a
+    channel problem.
+    """
+    record = RecipientRecord.from_measurements(
+        Party.BOB, 0, ["X", "Z", "Y"], [1, -1, -1]
+    )
+    declared = key_from_record(record)
+    assert declared.eigenvalues == (1, -1, -1)
+    assert record.bits == (0, 1, 1)
+    assert declared.eigenvalues != record.bits
+    assert declared.bits == record.bits
+
+
+def test_key_from_record_rejects_a_non_record() -> None:
+    """A PrivateKey is not a log; the message says which log to pass."""
+    key = generate_private_key(_params(4), 0, rng=np.random.default_rng(SEED))
+    with pytest.raises(TypeError) as excinfo:
+        key_from_record(key)  # type: ignore[arg-type]
+    assert "must be a RecipientRecord" in str(excinfo.value)
+    assert "view.raw_record" in str(excinfo.value)
+
+
+def test_key_from_record_declares_whatever_log_it_is_handed() -> None:
+    """It does not choose raw versus post-exchange; the caller does.
+
+    A forging recipient wants his *raw* log, because after Phase A' half of it
+    is the counterpart's evidence. That choice belongs to the attack, not to
+    this helper, so both logs are accepted and neither is preferred.
+    """
+    raw = RecipientRecord.from_measurements(Party.BOB, 0, ["X", "Z"], [1, -1])
+    post = RecipientRecord.from_measurements(
+        Party.BOB, 0, ["Z", "Z"], [-1, -1], symmetrised=True
+    )
+    assert key_from_record(raw).bases == raw.bases
+    assert key_from_record(post).bases == post.bases
+    assert key_from_record(raw) != key_from_record(post)
+
+
+def test_key_from_record_consumes_no_randomness() -> None:
+    """D3: declaring a log is a reading, not a draw."""
+    record = RecipientRecord.from_measurements(
+        Party.BOB, 0, ["X", "Y", "Z"], [1, 1, -1]
+    )
+    generator = np.random.default_rng(SEED)
+    before = generator.bit_generator.state
+    key_from_record(record)
+    assert generator.bit_generator.state == before
+
+
+# ==========================================================================
+# RecipientView -- the threat-model boundary, as a type
+# ==========================================================================
+
+
+def _view_records(
+    party: Party = Party.BOB, message_bit: int = 0
+) -> tuple[RecipientRecord, RecipientRecord]:
+    """Return a plausible ``(raw, post-exchange)`` pair for one recipient."""
+    raw = RecipientRecord.from_measurements(
+        party, message_bit, ["X", "Z", "Y"], [1, -1, 1]
+    )
+    post = RecipientRecord.from_measurements(
+        party, message_bit, ["X", "Y", "Y"], [1, 1, 1], symmetrised=True
+    )
+    return raw, post
+
+
+def _distributed_session(
+    key_length: int = 12, seed: int = SEED
+) -> QDSSession:
+    """Run Phase A once so the tests have real, symmetrised logs to split."""
+    session = QDSSession(
+        ProtocolParams(key_length=key_length), rng=np.random.default_rng(seed)
+    )
+    session.distribute()
+    return session
+
+
+def test_view_stores_exactly_the_documented_fields() -> None:
+    """The field list is the boundary; adding to it must be deliberate.
+
+    A future field that smuggled the counterpart's log, the session or a key
+    into a view would defeat the whole type, and would otherwise be invisible.
+    Changing this assertion is the moment to ask whether the new field belongs.
+    """
+    raw, post = _view_records()
+    view = RecipientView(Party.BOB, 0, raw, post)
+    assert [field.name for field in dataclasses.fields(view)] == [
+        "party",
+        "message_bit",
+        "raw_record",
+        "record",
+        "matched_count",
+    ]
+    assert set(view.to_dict()) == {
+        "party",
+        "message_bit",
+        "raw_record",
+        "record",
+        "matched_count",
+    }
+
+
+def test_view_is_frozen_and_hashable() -> None:
+    """Frozen over frozen fields, so a view handed to an attack cannot move."""
+    raw, post = _view_records()
+    view = RecipientView(Party.BOB, 0, raw, post)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        view.record = raw  # type: ignore[misc]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        view.matched_count = 3  # type: ignore[misc]
+    assert hash(view) == hash(RecipientView(Party.BOB, 0, raw, post))
+
+
+def test_view_derived_properties_read_the_scored_log() -> None:
+    """len/length/symmetrised come off the post-exchange log, not the raw one."""
+    raw, post = _view_records()
+    view = RecipientView(Party.BOB, 0, raw, post)
+    assert len(view) == view.length == 3
+    assert raw.symmetrised is False
+    assert view.symmetrised is True
+    assert view.has_matched_count is False
+    assert view.with_matched_count(0).has_matched_count is True
+
+
+def test_view_refuses_the_counterparts_log() -> None:
+    """The one mistake the type exists to make impossible."""
+    bob_raw, bob_post = _view_records(Party.BOB)
+    charlie_raw, charlie_post = _view_records(Party.CHARLIE)
+    with pytest.raises(ValueError) as excinfo:
+        RecipientView(Party.BOB, 0, charlie_raw, bob_post)
+    message = str(excinfo.value)
+    assert "Charlie's log but this view is Bob's" in message
+    assert "threat model" in message
+    with pytest.raises(ValueError, match="but this view is Bob's"):
+        RecipientView(Party.BOB, 0, bob_raw, charlie_post)
+    # ... and the same pair the other way round is refused too.
+    with pytest.raises(ValueError, match="but this view is Charlie's"):
+        RecipientView(Party.CHARLIE, 0, bob_raw, charlie_post)
+
+
+def test_view_refuses_alice() -> None:
+    """Alice measures nothing, so there is no view from where she stands."""
+    raw, post = _view_records()
+    with pytest.raises(ValueError) as excinfo:
+        RecipientView(Party.ALICE, 0, raw, post)
+    assert "belongs to a verifier" in str(excinfo.value)
+
+
+def test_view_refuses_mixed_message_bits() -> None:
+    """The two runs share no key and no evidence."""
+    raw, post = _view_records(Party.BOB, 0)
+    other_raw, other_post = _view_records(Party.BOB, 1)
+    with pytest.raises(ValueError, match="tagged with message bit"):
+        RecipientView(Party.BOB, 0, other_raw, post)
+    with pytest.raises(ValueError, match="tagged with message bit"):
+        RecipientView(Party.BOB, 1, other_raw, post)
+    assert RecipientView(Party.BOB, 1, other_raw, other_post).message_bit == 1
+
+
+def test_view_refuses_a_symmetrised_raw_record() -> None:
+    """Passing the post-exchange log twice would silently change the attack.
+
+    A forging recipient declares his *raw* log because half of it is what the
+    counterpart is scored on. Handing the post-exchange log in as the raw one
+    hands him precisely the half the counterpart does not hold, which is worth
+    nothing -- a forgery that quietly fails at chance rather than reaching the
+    ``1/12`` floor.
+    """
+    _, post = _view_records()
+    with pytest.raises(ValueError) as excinfo:
+        RecipientView(Party.BOB, 0, post, post)
+    assert "not a raw log" in str(excinfo.value)
+
+
+def test_view_refuses_logs_of_different_lengths() -> None:
+    """Phase A' creates no positions, so the two logs are the same length."""
+    raw, _ = _view_records()
+    short = RecipientRecord.from_measurements(
+        Party.BOB, 0, ["X"], [1], symmetrised=True
+    )
+    with pytest.raises(ValueError, match="entries and record has"):
+        RecipientView(Party.BOB, 0, raw, short)
+
+
+def test_view_refuses_non_records() -> None:
+    """The message names the constructor to use instead."""
+    raw, post = _view_records()
+    with pytest.raises(TypeError) as excinfo:
+        RecipientView(Party.BOB, 0, "not a log", post)  # type: ignore[arg-type]
+    assert "RecipientView.for_party" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("bad", [-1, 4, 1.5, True, "2"])
+def test_view_matched_count_must_be_an_in_range_integer(bad: object) -> None:
+    """|M_R| is a subset size of this recipient's own logged positions."""
+    raw, post = _view_records()
+    with pytest.raises(ValueError, match="matched_count"):
+        RecipientView(
+            Party.BOB, 0, raw, post, matched_count=bad  # type: ignore[arg-type]
+        )
+
+
+def test_view_matched_count_defaults_to_unknown_and_takes_the_bounds() -> None:
+    """None is not zero: no declaration yet, versus nothing to score."""
+    raw, post = _view_records()
+
+    def count(value: object) -> object:
+        """Build a view carrying ``value`` and read the count back."""
+        return RecipientView(
+            Party.BOB, 0, raw, post, matched_count=value  # type: ignore[arg-type]
+        ).matched_count
+
+    assert RecipientView(Party.BOB, 0, raw, post).matched_count is None
+    assert count(0) == 0
+    assert count(3) == 3
+    assert count(np.int64(2)) == 2
+
+
+def test_with_matched_count_rebuilds_rather_than_mutating() -> None:
+    """The count only becomes knowable in Phase C, and the view is frozen."""
+    raw, post = _view_records()
+    view = RecipientView(Party.BOB, 0, raw, post)
+    filled = view.with_matched_count(2)
+    assert filled is not view
+    assert view.matched_count is None
+    assert filled.matched_count == 2
+    assert filled.raw_record is view.raw_record
+    assert filled.record is view.record
+    assert filled.with_matched_count(None).matched_count is None
+
+
+def test_view_round_trips_through_json() -> None:
+    """Party is a StrEnum, so no bespoke encoder is needed here either."""
+    raw, post = _view_records(Party.CHARLIE, 1)
+    view = RecipientView(Party.CHARLIE, 1, raw, post, matched_count=1)
+    restored = RecipientView.from_dict(json.loads(json.dumps(view.to_dict())))
+    assert restored == view
+    decoded = json.loads(json.dumps(view.to_dict()))
+    assert decoded["party"] == "Charlie"
+    assert decoded["matched_count"] == 1
+    assert decoded["record"]["symmetrised"] is True
+    # A stored view that predates the count defaults to "not known yet".
+    without = {key: value for key, value in view.to_dict().items()
+               if key != "matched_count"}
+    assert RecipientView.from_dict(without).matched_count is None
+
+
+def test_for_party_narrows_a_session_shaped_mapping() -> None:
+    """The narrowing point: both logs go in, one recipient's view comes out."""
+    session = _distributed_session()
+    view = RecipientView.for_party(
+        "Bob", 1, raw_records=session.raw_records, records=session.records
+    )
+    assert view.party is Party.BOB
+    assert view.message_bit == 1
+    assert view.raw_record is session.raw_records[1][Party.BOB]
+    assert view.record is session.records[1][Party.BOB]
+    assert view.symmetrised is True
+    assert len(view) == 12
+
+
+def test_for_party_names_a_missing_bit_or_party() -> None:
+    """A partial mapping is a wiring bug and must not produce a half view."""
+    session = _distributed_session()
+    raw = session.raw_records
+    post = session.records
+    with pytest.raises(ValueError, match="no entry for message bit"):
+        RecipientView.for_party(
+            Party.BOB, 0, raw_records={1: raw[1]}, records=post
+        )
+    lonely = {0: {Party.BOB: raw[0][Party.BOB]}}
+    with pytest.raises(ValueError, match="no log for Charlie"):
+        RecipientView.for_party(
+            Party.CHARLIE, 0, raw_records=lonely, records=post
+        )
+    with pytest.raises(TypeError, match="must be a mapping"):
+        RecipientView.for_party(
+            Party.BOB, 0, raw_records=[], records=post  # type: ignore[arg-type]
+        )
+
+
+def test_recipient_views_splits_a_run_into_two_disjoint_views() -> None:
+    """The harness-side one-liner, in VERIFIERS order."""
+    session = _distributed_session()
+    views = recipient_views(
+        0,
+        raw_records=session.raw_records,
+        records=session.records,
+        matched_counts={Party.BOB: 4, "Charlie": 5},
+    )
+    assert list(views) == list(VERIFIERS)
+    assert views[Party.BOB].party is Party.BOB
+    assert views[Party.CHARLIE].party is Party.CHARLIE
+    assert views[Party.BOB].matched_count == 4
+    assert views[Party.CHARLIE].matched_count == 5
+    assert views[Party.BOB].record != views[Party.CHARLIE].record
+
+
+def test_recipient_views_leaves_missing_counts_unknown() -> None:
+    """Phase C' has not run yet on most of the timeline."""
+    session = _distributed_session()
+    views = recipient_views(
+        1, raw_records=session.raw_records, records=session.records
+    )
+    assert all(view.matched_count is None for view in views.values())
+    with pytest.raises(TypeError, match="matched_counts must be a mapping"):
+        recipient_views(
+            0,
+            raw_records=session.raw_records,
+            records=session.records,
+            matched_counts=[4, 5],  # type: ignore[arg-type]
+        )
+
+
+# -- the reachability crawl ------------------------------------------------- #
+
+
+def _reachable(root: object, *, limit: int = 50_000) -> list[object]:
+    """Return every object reachable from ``root`` by fields and containers.
+
+    Follows dataclass fields, ``__dict__`` entries, and the members of
+    mappings, sequences and sets. Classes and modules are recorded but not
+    descended into, since every object reaches ``object`` through its type and
+    that says nothing about what a view holds.
+
+    Strings, bytes and numbers are leaves: :class:`~sih141.protocol.params.Party`
+    and :class:`~sih141.core.paulis.PauliBasis` are :class:`enum.StrEnum`
+    members, so they stop here rather than dragging in the enum class.
+    """
+    seen: dict[int, object] = {}
+    stack: list[object] = [root]
+    while stack:
+        if len(seen) > limit:  # pragma: no cover - a runaway crawl is a bug
+            raise AssertionError(
+                f"reachability crawl exceeded {limit} objects; the graph out "
+                f"of this object is not the small one the test assumes"
+            )
+        obj = stack.pop()
+        if id(obj) in seen:
+            continue
+        seen[id(obj)] = obj
+        if isinstance(obj, (str, bytes, bytearray, int, float, complex)):
+            continue
+        if obj is None or isinstance(obj, (type, types.ModuleType)):
+            continue
+        if isinstance(obj, Mapping):
+            stack.extend(obj.keys())
+            stack.extend(obj.values())
+            continue
+        if isinstance(obj, (list, tuple, set, frozenset)):
+            stack.extend(obj)
+            continue
+        if dataclasses.is_dataclass(obj):
+            stack.extend(
+                getattr(obj, field.name) for field in dataclasses.fields(obj)
+            )
+        namespace = getattr(obj, "__dict__", None)
+        if isinstance(namespace, dict):
+            stack.extend(namespace.values())
+        for slot in getattr(type(obj), "__slots__", ()):
+            if hasattr(obj, slot):
+                stack.append(getattr(obj, slot))
+    return list(seen.values())
+
+
+def test_the_reachability_crawl_finds_what_it_is_supposed_to_find() -> None:
+    """The positive control, without which the leak test proves nothing.
+
+    A crawl that silently found nothing would pass the leak test for every
+    possible defect. So: run it on the object the view is *carved out of* --
+    the session's own nested mapping -- and assert it does reach both
+    recipients' logs and the private keys. Only then does "the same crawl
+    reaches none of that from a view" mean anything.
+    """
+    session = _distributed_session()
+    found = _reachable(
+        {
+            "raw": session.raw_records,
+            "post": session.records,
+            "keys": session.keys,
+        }
+    )
+    records = [item for item in found if isinstance(item, RecipientRecord)]
+    assert len(records) == 8  # two bits x two parties x (raw, post-exchange)
+    assert {record.party for record in records} == {Party.BOB, Party.CHARLIE}
+    assert sum(isinstance(item, PrivateKey) for item in found) == 2
+    assert any(isinstance(item, KeyElement) for item in found)
+
+
+def test_no_path_out_of_a_view_reaches_the_counterparts_data() -> None:
+    """The boundary, checked by reachability rather than by inspection.
+
+    A comment saying "do not read Charlie's log" is worth nothing against an
+    attack author who does not read comments. What is worth something is that
+    there is no path: Bob's view reaches Bob's two logs and their entries, and
+    no whole log belonging to Charlie, no private key, no signature, no session
+    and no generator.
+    """
+    session = _distributed_session()
+    views = recipient_views(
+        0, raw_records=session.raw_records, records=session.records
+    )
+    bob = views[Party.BOB]
+    charlie = views[Party.CHARLIE]
+
+    found = _reachable(bob)
+    records = [item for item in found if isinstance(item, RecipientRecord)]
+
+    # Not vacuous: the crawl did reach Bob's own evidence.
+    assert len(records) == 2
+    assert {record.party for record in records} == {Party.BOB}
+    assert {id(record) for record in records} == {
+        id(bob.raw_record),
+        id(bob.record),
+    }
+
+    # And nothing of the counterpart's, nor of Alice's.
+    identities = {id(item) for item in found}
+    assert id(charlie.raw_record) not in identities
+    assert id(charlie.record) not in identities
+    assert id(session.raw_records[0][Party.CHARLIE]) not in identities
+    assert id(session.records[0][Party.CHARLIE]) not in identities
+    for forbidden in (PrivateKey, Signature, QDSSession, np.random.Generator):
+        assert not any(isinstance(item, forbidden) for item in found), forbidden
+    # The other message bit is a different run and is not in this view either.
+    assert id(session.records[1][Party.BOB]) not in identities
+
+
+def test_a_view_reaches_no_entry_of_the_other_bit_or_the_other_party() -> None:
+    """The same crawl, stated over entries rather than whole logs.
+
+    Bob's post-exchange log legitimately *contains* entries that came off
+    Charlie's raw log -- that is what Phase A' does, and those entries are now
+    Bob's evidence. So the invariant cannot be "no shared entry". It is: every
+    entry Bob's view reaches belongs to one of the two logs Bob holds.
+    """
+    session = _distributed_session()
+    bob = RecipientView.for_party(
+        Party.BOB, 0, raw_records=session.raw_records, records=session.records
+    )
+    found = _reachable(bob)
+    entries = [item for item in found if isinstance(item, RecordEntry)]
+    held = {id(entry) for entry in bob.raw_record} | {
+        id(entry) for entry in bob.record
+    }
+    assert entries
+    assert {id(entry) for entry in entries} <= held
+    # ... and the shared-entry fact itself, so that a future reader does not
+    # "fix" it: after the exchange some of Bob's entries are Charlie's raw ones.
+    charlie_raw = session.raw_records[0][Party.CHARLIE]
+    shared = sum(
+        1
+        for index in range(len(bob.record))
+        if bob.record[index] is charlie_raw[index]
+    )
+    assert 0 < shared < len(bob.record)
+
+
+def test_a_view_is_all_an_isolated_recipient_forger_needs() -> None:
+    """The point of the pair: staying inside the model is now the easy path.
+
+    A forging Bob written against a view *cannot* read Charlie's log, and the
+    declaration he produces is the documented recipient-forgery strategy in one
+    line rather than six.
+    """
+    session = _distributed_session(key_length=24)
+    bob = RecipientView.for_party(
+        Party.BOB, 0, raw_records=session.raw_records, records=session.records
+    )
+    forged = Signature(0, key_from_record(bob.raw_record))
+    assert len(forged) == 24
+    assert forged.bases == bob.raw_record.bases
+    assert forged.eigenvalues == bob.raw_record.eigenvalues
+    # He declares his own measurements, which agree with Alice's key exactly
+    # where his basis happened to be hers -- and nowhere else.
+    truth = session.keys[0]
+    agreeing = [
+        index
+        for index in range(24)
+        if forged.declared_key[index] == truth[index]
+    ]
+    matched = [
+        index for index in range(24) if forged.bases[index] == truth.bases[index]
+    ]
+    assert set(agreeing) <= set(matched)

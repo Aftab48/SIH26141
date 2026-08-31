@@ -156,6 +156,77 @@ False
 >>> sorted(record.to_dict())
 ['entries', 'message_bit', 'party', 'symmetrised']
 
+.. _recipient-view:
+
+One recipient's holdings, as a type rather than as a comment
+------------------------------------------------------------
+:class:`RecipientRecord` is one log. A *run* has four of them -- two message
+bits times two verifiers -- and both of the objects that carry them,
+:attr:`sih141.protocol.session.QDSSession.records` and
+:attr:`~sih141.protocol.session.QDSSession.raw_records`, are nested mappings
+holding **both** recipients' logs. That is right for the harness, which has to
+schedule the run, and wrong for an adversary, which does not.
+
+The Phase 2 audit found the consequence: mounting a recipient-flavoured
+adversary meant reaching into ``session.raw_records``, so a "Bob" attack was
+silently handed Charlie's log as well and the author had to *self-police* to
+stay inside the threat model. A forging Bob who reads Charlie's record is not a
+forging Bob; he is the two-log signer of
+:ref:`sih141.protocol.session <two-log-signer>`, whose measured numbers are
+already documented as outside the model the bounds are stated for. Nothing in
+the API distinguished the two, and the only thing standing between an honest
+mistake and a published fiction was a paragraph.
+
+:class:`RecipientView` is that distinction expressed as a type: one party, one
+message bit, that party's raw log, that party's post-exchange log, and that
+party's own matched count when a declaration has arrived. Nothing else is stored
+and nothing else is reachable -- no session, no key, no generator, and in
+particular no object belonging to the counterpart:
+
+>>> from sih141.protocol.params import Party
+>>> from sih141.protocol.records import RecipientRecord, recipient_views
+>>> raw = {
+...     0: {
+...         Party.BOB: RecipientRecord.from_measurements(
+...             "Bob", 0, ["X", "Z"], [1, -1]),
+...         Party.CHARLIE: RecipientRecord.from_measurements(
+...             "Charlie", 0, ["Y", "Y"], [-1, 1]),
+...     }
+... }
+>>> post = {
+...     0: {
+...         Party.BOB: RecipientRecord.from_measurements(
+...             "Bob", 0, ["X", "Y"], [1, 1], symmetrised=True),
+...         Party.CHARLIE: RecipientRecord.from_measurements(
+...             "Charlie", 0, ["Y", "Z"], [-1, -1], symmetrised=True),
+...     }
+... }
+>>> views = recipient_views(0, raw_records=raw, records=post)
+>>> bob = views[Party.BOB]
+>>> bob.party, len(bob), bob.matched_count
+(<Party.BOB: 'Bob'>, 2, None)
+>>> {record.party for record in (bob.raw_record, bob.record)}
+{<Party.BOB: 'Bob'>}
+>>> import dataclasses
+>>> sorted(field.name for field in dataclasses.fields(bob))
+['matched_count', 'message_bit', 'party', 'raw_record', 'record']
+
+The narrowing happens once, in :meth:`RecipientView.for_party` or
+:func:`recipient_views`, and it is the *harness* that calls it -- somebody has
+to hold both logs in order to split them. What the split buys is that the
+adversary downstream of it cannot un-split them, which is why the check that
+matters is reachability from the view and not the shape of the call that built
+it. ``tests/test_protocol_keys.py`` walks the object graph out of a view and
+asserts that no :class:`RecipientRecord` belonging to the counterpart, and no
+:class:`~sih141.protocol.keys.PrivateKey`, session or generator, is anywhere in
+it.
+
+One thing the view deliberately does *not* try to hide is a shared
+:class:`RecordEntry`. After Phase A' roughly half of Bob's post-exchange entries
+**are**, by object identity, entries that came off Charlie's raw log -- that is
+what the exchange means, and those entries are now Bob's own evidence. The
+invariant is about whole logs, not about the entries inside them.
+
 Notes
 -----
 Authentication (AUTH)
@@ -183,6 +254,7 @@ from typing import Any, overload
 
 from sih141.core.paulis import PauliBasis
 from sih141.protocol.params import (
+    VERIFIERS,
     Party,
     ProtocolParams,
     _as_basis,
@@ -191,7 +263,12 @@ from sih141.protocol.params import (
     _as_party,
 )
 
-__all__ = ["RecordEntry", "RecipientRecord"]
+__all__ = [
+    "RecordEntry",
+    "RecipientRecord",
+    "RecipientView",
+    "recipient_views",
+]
 
 
 @dataclass(frozen=True)
@@ -666,3 +743,569 @@ class RecipientRecord:
             ),
             symmetrised=data.get("symmetrised", False),
         )
+
+
+
+
+def _as_matched_count(value: Any, length: int) -> int:
+    """Coerce and range-check a recipient's own matched count.
+
+    Parameters
+    ----------
+    value : object
+        The count claimed. Must be a non-boolean integer.
+    length : int
+        The log length ``L``; the count is a size of a subset of ``0 .. L-1``.
+
+    Returns
+    -------
+    int
+
+    Raises
+    ------
+    ValueError
+        If ``value`` is not an integer, is a :class:`bool`, is negative, or
+        exceeds ``length``.
+    """
+    if isinstance(value, bool) or not isinstance(value, numbers.Integral):
+        raise ValueError(
+            f"matched_count must be a non-negative integer or None, got "
+            f"{value!r} of type {type(value).__name__}. It is |M_R|, the number "
+            f"of positions this recipient may score, and None means no "
+            f"declaration has arrived yet."
+        )
+    count = int(value)
+    if not 0 <= count <= length:
+        raise ValueError(
+            f"matched_count must lie in 0..{length}, got {count}. The matched "
+            f"set is a subset of this recipient's own {length} logged "
+            f"positions, so a count outside that range describes a different "
+            f"run."
+        )
+    return count
+
+
+def _narrow(
+    records: Mapping[int, Mapping[Party | str, RecipientRecord]],
+    message_bit: int,
+    party: Party,
+    *,
+    name: str,
+) -> RecipientRecord:
+    """Pull one party's log for one message bit out of a session-shaped mapping.
+
+    Parameters
+    ----------
+    records : mapping
+        Keyed by message bit, then by party, as
+        :attr:`sih141.protocol.session.QDSSession.records` and
+        :attr:`~sih141.protocol.session.QDSSession.raw_records` both are.
+    message_bit : int
+        The bit to select. Already validated by the caller.
+    party : Party
+        The verifier to select. Already resolved by the caller.
+    name : str
+        The argument name, for error messages.
+
+    Returns
+    -------
+    RecipientRecord
+
+    Raises
+    ------
+    TypeError
+        If ``records`` or the inner value is not a mapping.
+    ValueError
+        If the bit or the party is absent.
+    """
+    if not isinstance(records, Mapping):
+        raise TypeError(
+            f"{name} must be a mapping of message bit to (mapping of party to "
+            f"RecipientRecord), got {type(records).__name__}. Pass "
+            f"session.raw_records or session.records straight through."
+        )
+    if message_bit not in records:
+        raise ValueError(
+            f"{name} has no entry for message bit {message_bit}; it holds "
+            f"{sorted(records)}. A run distributes for both bits, so a mapping "
+            f"missing one came from a partial or hand-built distribution."
+        )
+    by_party = records[message_bit]
+    if not isinstance(by_party, Mapping):
+        raise TypeError(
+            f"{name}[{message_bit}] must be a mapping of party to "
+            f"RecipientRecord, got {type(by_party).__name__}"
+        )
+    resolved = {_as_party(key): value for key, value in by_party.items()}
+    if party not in resolved:
+        raise ValueError(
+            f"{name}[{message_bit}] has no log for {party.value}; it holds "
+            f"{sorted(member.value for member in resolved)}. A view is one "
+            f"recipient's holdings, so the log it is built from has to be "
+            f"present."
+        )
+    return resolved[party]
+
+
+@dataclass(frozen=True)
+class RecipientView:
+    """Everything one recipient holds for one message bit, and nothing else.
+
+    The threat-model boundary of :ref:`recipient-view`, expressed as a type. A
+    recipient-flavoured adversary -- a forging Bob, a Charlie who lies about his
+    count -- is handed one of these instead of
+    :attr:`sih141.protocol.session.QDSSession.raw_records`, and therefore
+    *cannot* read the counterpart's evidence even by accident. Staying inside
+    the threat model stops being a discipline the attack author has to remember
+    and becomes the only thing the object supports.
+
+    Frozen and hashable, over frozen fields. There is no session here, no
+    private key, no generator and no log belonging to the other verifier;
+    ``tests/test_protocol_keys.py`` walks the object graph and pins that.
+
+    Parameters
+    ----------
+    party : Party or str
+        :attr:`Party.BOB` or :attr:`Party.CHARLIE`. Alice is refused: she holds
+        no log, so there is no view of the run from where she stands.
+    message_bit : int
+        ``0`` or ``1`` -- which distribution run these logs came from. A view
+        covers one bit, because a recipient scores one declaration against one
+        run and the two runs share nothing.
+    raw_record : RecipientRecord
+        What this recipient measured for himself, before Phase A'. Must be this
+        party's, tagged with this bit, and **not** already symmetrised. This is
+        the log a forging recipient declares: after the exchange roughly half of
+        it *is* the other verifier's evidence, which is what makes it worth more
+        to him than his own post-exchange log (see
+        :ref:`sih141.protocol.session <phase3-seams>`).
+    record : RecipientRecord
+        What this recipient will actually be scored on, after Phase A'. Same
+        party, same bit, same length. On a run wired with
+        :func:`sih141.protocol.symmetrise.no_symmetrisation` this is the raw log
+        itself, and :attr:`symmetrised` says so.
+    matched_count : int or None, optional
+        ``|M_R|``, the number of positions this recipient may score against the
+        declaration -- and ``None``, the default, while no declaration has
+        arrived. It is deliberately optional rather than computed: a view built
+        at the end of Phase A cannot know it, because the key is not revealed
+        until Phase B, and a type that pretended otherwise would be the
+        unmatched-position bug in a new costume. Fill it in with
+        :meth:`with_matched_count` once the declaration is in hand.
+
+    Raises
+    ------
+    ValueError
+        If ``party`` is Alice or names no party; if ``message_bit`` is not
+        ``0``/``1``; if either record belongs to another party, another bit or
+        another length; if ``raw_record`` is already symmetrised; or if
+        ``matched_count`` is out of range.
+    TypeError
+        If either record is not a :class:`RecipientRecord`.
+
+    Attributes
+    ----------
+    party : Party
+    message_bit : int
+    raw_record : RecipientRecord
+    record : RecipientRecord
+    matched_count : int or None
+
+    See Also
+    --------
+    recipient_views : Build both verifiers' views from one run in a single call.
+    sih141.protocol.keys.key_from_record : Turn one of these logs into the
+        declaration a recipient-flavoured adversary makes of it.
+    sih141.protocol.verify.matched_positions : Where ``matched_count`` comes
+        from once a declaration exists -- ``len(matched_positions(signature,
+        view.record))``, fed back in through :meth:`with_matched_count`.
+
+    Notes
+    -----
+    **What the counterpart's floor needs, and why it is not here.** Phase C'
+    (:mod:`sih141.protocol.tally`) has each verifier announce his matched count
+    to the other, so a view eventually coexists with a number that came *from*
+    the counterpart. That number is one integer the protocol says the recipient
+    receives; it is not a field of this type, because a view is what a recipient
+    holds *of his own*, and mixing a received message into it would blur exactly
+    the line the type exists to draw. Pass the counterpart's count alongside the
+    view, as :func:`sih141.protocol.verify.verify` already takes it alongside a
+    record.
+
+    Examples
+    --------
+    >>> from sih141.protocol.params import Party
+    >>> from sih141.protocol.records import RecipientRecord, RecipientView
+    >>> raw = RecipientRecord.from_measurements("Bob", 0, ["X", "Z"], [1, -1])
+    >>> post = RecipientRecord.from_measurements(
+    ...     "Bob", 0, ["X", "Y"], [1, 1], symmetrised=True
+    ... )
+    >>> view = RecipientView(Party.BOB, 0, raw, post)
+    >>> view.party, len(view), view.symmetrised, view.matched_count
+    (<Party.BOB: 'Bob'>, 2, True, None)
+    >>> view.with_matched_count(1).matched_count
+    1
+    """
+
+    party: Party
+    message_bit: int
+    raw_record: RecipientRecord
+    record: RecipientRecord
+    matched_count: int | None = None
+
+    def __post_init__(self) -> None:
+        """Resolve the party and check both logs really are that party's."""
+        resolved = _as_party(self.party)
+        if not resolved.is_verifier:
+            raise ValueError(
+                f"a RecipientView belongs to a verifier, "
+                f"{[member.value for member in VERIFIERS]}, not to "
+                f"{resolved.value}. Alice prepares, teleports and signs; she "
+                f"measures nothing and holds no log, so there is no view of the "
+                f"run from where she stands."
+            )
+        object.__setattr__(self, "party", resolved)
+        object.__setattr__(
+            self, "message_bit", _as_message_bit(self.message_bit)
+        )
+
+        for name, record in (
+            ("raw_record", self.raw_record),
+            ("record", self.record),
+        ):
+            if not isinstance(record, RecipientRecord):
+                raise TypeError(
+                    f"{name} must be a RecipientRecord, got "
+                    f"{type(record).__name__}. Build a view from the logs a "
+                    f"session hands back, or with "
+                    f"RecipientView.for_party(party, bit, raw_records=..., "
+                    f"records=...)."
+                )
+            if record.party is not resolved:
+                raise ValueError(
+                    f"{name} is {record.party.value}'s log but this view is "
+                    f"{resolved.value}'s. A view holds one recipient's evidence "
+                    f"and nothing of the other's; filing the counterpart's log "
+                    f"under this party would hand a {resolved.value}-flavoured "
+                    f"adversary exactly the evidence the threat model says he "
+                    f"does not have."
+                )
+            if record.message_bit != self.message_bit:
+                raise ValueError(
+                    f"{name} is tagged with message bit {record.message_bit} "
+                    f"but this view is for bit {self.message_bit}. The two "
+                    f"distribution runs share no key and no evidence, so a "
+                    f"mixed view scores one run's declaration against the "
+                    f"other's log."
+                )
+
+        if len(self.raw_record) != len(self.record):
+            raise ValueError(
+                f"raw_record has {len(self.raw_record)} entries and record has "
+                f"{len(self.record)}. Phase A' re-assigns the recipients' "
+                f"copies position by position and creates none, so the two logs "
+                f"are the same length by construction; a difference means they "
+                f"came from different runs."
+            )
+        if self.raw_record.symmetrised:
+            raise ValueError(
+                "raw_record is flagged symmetrised, so it is not a raw log. "
+                "The raw log is what this recipient measured for himself, "
+                "straight off the channel and before the private exchange; it "
+                "is what a forging recipient declares, and passing the "
+                "post-exchange log twice would silently give him the half of "
+                "the evidence the counterpart does *not* hold."
+            )
+
+        if self.matched_count is not None:
+            object.__setattr__(
+                self,
+                "matched_count",
+                _as_matched_count(self.matched_count, len(self.record)),
+            )
+
+    # -- alternative constructors ------------------------------------------- #
+
+    @classmethod
+    def for_party(
+        cls,
+        party: Party | str,
+        message_bit: int,
+        *,
+        raw_records: Mapping[int, Mapping[Party | str, RecipientRecord]],
+        records: Mapping[int, Mapping[Party | str, RecipientRecord]],
+        matched_count: int | None = None,
+    ) -> RecipientView:
+        """Narrow a run's two nested log mappings down to one recipient's view.
+
+        The narrowing point, and the *only* place both recipients' logs are in
+        scope at once: somebody has to hold the pair in order to split it, and
+        that somebody is the harness, never the adversary. What the split buys
+        is that nothing downstream can put the pair back together -- see
+        :ref:`recipient-view`.
+
+        Parameters
+        ----------
+        party : Party or str
+            The verifier whose view is wanted.
+        message_bit : int
+            ``0`` or ``1``.
+        raw_records : mapping
+            Keyed by message bit then by party, exactly the shape of
+            :attr:`sih141.protocol.session.QDSSession.raw_records`.
+        records : mapping
+            The same shape, holding the post-exchange logs -- i.e.
+            :attr:`sih141.protocol.session.QDSSession.records`.
+        matched_count : int or None, optional
+            Forwarded verbatim; ``None`` until a declaration exists.
+
+        Returns
+        -------
+        RecipientView
+
+        Raises
+        ------
+        TypeError
+            If either mapping is not nested mappings of records.
+        ValueError
+            If either mapping lacks this bit or this party, or if any check in
+            :meth:`__post_init__` fails.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from sih141.protocol.params import Party, ProtocolParams
+        >>> from sih141.protocol.records import RecipientView
+        >>> from sih141.protocol.session import QDSSession
+        >>> session = QDSSession(
+        ...     ProtocolParams(key_length=12), rng=np.random.default_rng(3)
+        ... )
+        >>> _ = session.distribute()
+        >>> view = RecipientView.for_party(
+        ...     Party.BOB,
+        ...     0,
+        ...     raw_records=session.raw_records,
+        ...     records=session.records,
+        ... )
+        >>> view.party, len(view), view.symmetrised
+        (<Party.BOB: 'Bob'>, 12, True)
+        """
+        resolved = _as_party(party)
+        bit = _as_message_bit(message_bit)
+        return cls(
+            party=resolved,
+            message_bit=bit,
+            raw_record=_narrow(raw_records, bit, resolved, name="raw_records"),
+            record=_narrow(records, bit, resolved, name="records"),
+            matched_count=matched_count,
+        )
+
+    def with_matched_count(self, matched_count: int | None) -> RecipientView:
+        """Return a copy of this view carrying ``matched_count``.
+
+        The view is frozen, and the count only becomes knowable in Phase C, so
+        filling it in is a rebuild rather than an assignment. Everything else is
+        shared by reference; the records are immutable.
+
+        Parameters
+        ----------
+        matched_count : int or None
+            ``|M_R|``, in ``0 .. len(self)``, or ``None`` to clear it.
+
+        Returns
+        -------
+        RecipientView
+            A new view; ``self`` is unchanged.
+
+        Raises
+        ------
+        ValueError
+            If the count is not an integer in range.
+
+        Examples
+        --------
+        >>> from sih141.protocol.records import RecipientRecord, RecipientView
+        >>> raw = RecipientRecord.from_measurements("Bob", 1, ["X"], [1])
+        >>> view = RecipientView("Bob", 1, raw, raw)
+        >>> view.with_matched_count(1).matched_count, view.matched_count
+        (1, None)
+        """
+        return RecipientView(
+            party=self.party,
+            message_bit=self.message_bit,
+            raw_record=self.raw_record,
+            record=self.record,
+            matched_count=matched_count,
+        )
+
+    # -- derived views ------------------------------------------------------ #
+
+    def __len__(self) -> int:
+        """int: The number of logged positions, equal to the key length ``L``."""
+        return len(self.record)
+
+    @property
+    def length(self) -> int:
+        """int: The key length ``L``, the same number :func:`len` gives."""
+        return len(self.record)
+
+    @property
+    def symmetrised(self) -> bool:
+        """bool: Whether Phase A' actually ran on this recipient's log.
+
+        Read off :attr:`record`, which is what the verifier is scored on.
+        ``False`` means the run was wired with
+        :func:`sih141.protocol.symmetrise.no_symmetrisation` and supports no
+        non-repudiation claim at all.
+        """
+        return self.record.symmetrised
+
+    @property
+    def has_matched_count(self) -> bool:
+        """bool: Whether ``|M_R|`` is known yet.
+
+        ``False`` before a declaration exists, which is every moment of Phase A
+        and Phase A'. Distinct from ``matched_count == 0``, which is a run
+        whose declaration this recipient can score at no position at all.
+        """
+        return self.matched_count is not None
+
+    # -- serialisation ------------------------------------------------------ #
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serialisable view of one recipient's holdings.
+
+        Returns
+        -------
+        dict
+            ``{"party": Party, "message_bit": int, "raw_record": {...},
+            "record": {...}, "matched_count": int | None}``. :class:`Party` is a
+            :class:`enum.StrEnum`, so the result passes to :func:`json.dumps`
+            unchanged.
+        """
+        return {
+            "party": self.party,
+            "message_bit": self.message_bit,
+            "raw_record": self.raw_record.to_dict(),
+            "record": self.record.to_dict(),
+            "matched_count": self.matched_count,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> RecipientView:
+        """Rebuild a view from :meth:`to_dict` output.
+
+        Parameters
+        ----------
+        data : mapping
+            Must contain ``"party"``, ``"message_bit"``, ``"raw_record"`` and
+            ``"record"``. ``"matched_count"`` is optional and defaults to
+            ``None`` -- the honest reading, since a stored view that omits it
+            was written before any declaration existed.
+
+        Returns
+        -------
+        RecipientView
+
+        Raises
+        ------
+        KeyError
+            If a required field is missing.
+        """
+        return cls(
+            party=data["party"],
+            message_bit=data["message_bit"],
+            raw_record=RecipientRecord.from_dict(data["raw_record"]),
+            record=RecipientRecord.from_dict(data["record"]),
+            matched_count=data.get("matched_count"),
+        )
+
+
+def recipient_views(
+    message_bit: int,
+    *,
+    raw_records: Mapping[int, Mapping[Party | str, RecipientRecord]],
+    records: Mapping[int, Mapping[Party | str, RecipientRecord]],
+    matched_counts: Mapping[Party | str, int] | None = None,
+) -> dict[Party, RecipientView]:
+    """Split one run's logs into one :class:`RecipientView` per verifier.
+
+    The harness-side one-liner: hand it what a session hands back and get the
+    two disjoint views the two recipient-flavoured adversaries are entitled to.
+    Both views are built here, in one call, because that is the last place the
+    pair is legitimately in scope (:ref:`recipient-view`).
+
+    Parameters
+    ----------
+    message_bit : int
+        ``0`` or ``1``.
+    raw_records : mapping
+        Pre-exchange logs, keyed by message bit then party --
+        :attr:`sih141.protocol.session.QDSSession.raw_records`.
+    records : mapping
+        Post-exchange logs, same shape --
+        :attr:`sih141.protocol.session.QDSSession.records`.
+    matched_counts : mapping of Party to int, optional
+        Each verifier's own ``|M_R|``, when a declaration has already arrived.
+        Missing parties get ``None``. Note that this is each recipient's *own*
+        count, not the counterpart's: the counterpart's arrives as a Phase C'
+        message and is not part of any view.
+
+    Returns
+    -------
+    dict of Party to RecipientView
+        Keyed by party in :data:`~sih141.protocol.params.VERIFIERS` order.
+
+    Raises
+    ------
+    TypeError
+        If a mapping is not nested mappings of records, or ``matched_counts`` is
+        not a mapping.
+    ValueError
+        If a verifier or the message bit is missing from either mapping, or if
+        any check in :class:`RecipientView` fails.
+
+    See Also
+    --------
+    RecipientView.for_party : Build just one of the two.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from sih141.protocol.params import Party, ProtocolParams
+    >>> from sih141.protocol.records import recipient_views
+    >>> from sih141.protocol.session import QDSSession
+    >>> session = QDSSession(
+    ...     ProtocolParams(key_length=12), rng=np.random.default_rng(4)
+    ... )
+    >>> _ = session.distribute()
+    >>> views = recipient_views(
+    ...     1, raw_records=session.raw_records, records=session.records
+    ... )
+    >>> [party.value for party in views]
+    ['Bob', 'Charlie']
+    >>> views[Party.BOB].record is views[Party.CHARLIE].record
+    False
+    """
+    bit = _as_message_bit(message_bit)
+    if matched_counts is None:
+        counts: dict[Party, int] = {}
+    elif isinstance(matched_counts, Mapping):
+        counts = {
+            _as_party(key): value for key, value in matched_counts.items()
+        }
+    else:
+        raise TypeError(
+            f"matched_counts must be a mapping of party to int, or None, got "
+            f"{type(matched_counts).__name__}"
+        )
+    return {
+        party: RecipientView.for_party(
+            party,
+            bit,
+            raw_records=raw_records,
+            records=records,
+            matched_count=counts.get(party),
+        )
+        for party in VERIFIERS
+    }

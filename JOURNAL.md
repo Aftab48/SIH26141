@@ -8,7 +8,7 @@
 > on the maintainer's explicit instruction. The permanent record is
 > `docs/METRICS.md` and the `docs/PHASE*.md` notes.
 
-**45 entries** — 21 issue · 11 decision · 9 finding · 3 fix · 1 note
+**50 entries** — 21 issue · 12 decision · 9 finding · 5 fix · 2 note · 1 deadend
 
 
 ## Phase 0 — Scaffold
@@ -705,3 +705,277 @@ other.
 
 Seeded retrospectively from the Phase 0-2 session history; from Phase 3 onward every
 subagent is instructed to log its own decisions and issues as it goes.
+
+### `[D]` RecipientView: the threat model as a type, checked by reachability
+
+*decision · impl:records+isolation · 2026-08-31T15:42:44Z*
+
+The Phase 2 audit's complaint was that a "Bob" adversary had to reach into
+QDSSession.raw_records and was handed Charlie's log with it. RecipientView
+(sih141/protocol/records.py) fixes that: party, message_bit, raw_record, record,
+matched_count, and nothing else.
+
+THREE DESIGN CALLS WORTH REMEMBERING.
+
+1. matched_count is Optional and NOT computed. A view built at the end of Phase A
+cannot know |M_R| -- the key is not revealed until Phase B -- and a type that
+computed it would need a declaration it does not have. None means "no declaration
+yet", which is deliberately distinct from 0 ("a declaration this recipient can
+score nowhere"). with_matched_count() fills it in later; the view is frozen.
+
+2. The counterpart's count is NOT a field. Phase C' does deliver it, so a view
+eventually coexists with a number that came from the other verifier. Putting it on
+the view would blur exactly the line the type draws, so it is passed alongside,
+the way verify() already takes it alongside a record.
+
+3. raw_record.symmetrised must be False, checked. Passing the post-exchange log in
+as the raw one is a silent downgrade, not a type error: a forging recipient who
+declares his post-exchange log declares precisely the half the counterpart does
+NOT hold, so his forgery quietly fails at chance instead of reaching the 1/12
+floor. That is a wrong number, not a crash, so it is refused at construction.
+
+HOW "IMPOSSIBLE TO REACH THE OTHER RECIPIENT" IS TESTED. Not by reading the class.
+tests/test_protocol_keys.py walks the object graph out of a view (dataclass
+fields, __dict__, containers; classes and modules recorded but not descended) and
+asserts no RecipientRecord of the counterpart, no PrivateKey, no Signature, no
+QDSSession and no Generator is reachable. The crawl has a POSITIVE CONTROL first:
+the same crawl pointed at session.raw_records/records/keys must find all 8 records
+and both keys. Without it, a crawler that silently found nothing would pass the
+leak test for every possible defect.
+
+THE NON-INVARIANT, stated so a later reader does not "fix" it: after Phase A'
+roughly half of Bob's post-exchange entries ARE, by object identity, entries off
+Charlie's raw log. That is what symmetrisation means and those entries are now
+Bob's evidence. The invariant is about whole logs, never about shared entries. A
+test asserts 0 < shared < L so the fact stays visible.
+
+### `[+]` CLOSED: D6 is now a behavioural check, and the seed leak needs no private API
+
+*fix · impl:records+isolation · 2026-08-31T15:43:07Z*
+
+The OPEN issue from Phase 2 ("seed sharing silently restores full coin prediction")
+is now closed by sih141/attacks/isolation.py + tests/test_attack_isolation.py.
+
+CONFIRMED, AND SIMPLER THAN THE ORIGINAL REPORT. The auditor's ten-line version
+rebuilt the material with default_rng(seed).bytes(32) and derived the recipient
+stream. That needs the private _derive_stream and the stream label. It is not
+required. An attack holding the harness seed just rebuilds the session:
+
+    rebuilt = QDSSession(params, rng=np.random.default_rng(seed)); rebuilt.distribute()
+    assert rebuilt.records == honest.records          # True
+
+Four lines, public API only, and every symmetrisation coin falls out: measured
+120/120 across both message bits at L=60, exact array equality. That is now a
+doctest in the module and a test in tests/test_attack_isolation.py, so the claim
+is executable rather than prose. It also means no amount of hiding private names
+would have helped -- determinism itself is the channel, which is exactly why the
+fix has to be a rule about the attack and not about the session.
+
+THE CHECK IS TWO-SIDED, AND THE SECOND SIDE IS THE LOAD-BEARING ONE.
+(a) fix the attack's rng, vary the session seed -> decisions must not move.
+(b) fix the session seed, vary the attack's rng  -> decisions MUST move.
+Without (b), an adversary passes (a) by being constant. DeafForger in the test
+file is the permanent negative control for exactly that, and it is kept forever:
+a test that has never failed is not known to work. SessionSeedForger is the
+control for (a), and its coin prediction is separately pinned as exact so the
+control stands for the real leak rather than for "something that differs".
+
+THE TRAP I ALMOST WALKED INTO, and the single most important thing for whoever
+adds the five real adversaries. Check (a) is only a statement about the ADVERSARY
+if everything it legitimately OBSERVES is identical across the two runs. The
+natural probe -- build a fresh QDSSession per session seed and call the attack --
+hands a recipient-forger a different measurement log each time, so his declaration
+moves for an entirely honest reason and a perfectly isolated attack is reported as
+a cheat. signer_probe() therefore replays ONE frozen honest run (signer_scenario(),
+under SCENARIO_SEED, disjoint from both varied seed lists) on every call, and the
+session seed is a quantity the adversary can only know if it went and took it.
+The false-failure mode is pinned by a test, and the failure message names the
+probe as the other possible culprit.
+
+INTERFACE, so a sixth adversary is one line. build is an AttackBuilder called as
+build(rng=..., session_seed=...) -- the seed only if the signature accepts it. D6
+already requires an adversary's constructor to take rng, so THE CLASS IS THE
+BUILDER: parametrize over [ForgingBob, RepudiatingAlice, ...] and call
+assert_attack_isolated(attack, signer_probe()). A builder that refuses rng is
+rejected up front with D6 quoted at it, rather than dying as a TypeError inside
+the first probe. Adversaries needing injected observations (a RecipientView) get a
+three-line builder closure; ViewForger/build_view_forger in the test file is the
+worked example.
+
+### `[x]` Rejected: a syntactic scan for session-seed use
+
+*deadend · impl:records+isolation · 2026-08-31T15:43:26Z*
+
+DEAD END, recorded so nobody repeats it: a *syntactic* isolation check.
+
+The obvious first idea is to scan an adversary's source (or its closure cells,
+or __init__ defaults) for np.random.default_rng, for a name called "seed", for a
+reference to the session object. I did not build it, and it should not be built
+later, for two reasons.
+
+1. It is evaded by one indirection and by nothing more sophisticated than
+   `factory = np.random.default_rng` at module level, or a seed arriving through
+   a config dict, or a helper in another module. Every one of those is what a
+   real experiment script looks like anyway.
+2. It gives FALSE CONFIDENCE, which is strictly worse than no check. The whole
+   reason this exists is that a leaking attack looks entirely legitimate --
+   same seams, same transcript, same printed bound. A green syntactic scan adds
+   one more legitimate-looking thing to that list.
+
+The behavioural check demonstrates the property instead of looking for its
+absence. That is also why the two failure messages are long: each one names the
+defect, the seeds to reproduce with, AND the alternative explanation (a probe
+that varied the observations), because the same symptom has two causes and
+guessing wrong costs an afternoon.
+
+SMALL THINGS FOUND ALONG THE WAY.
+
+canonical() is not decoration. Decision traces arrive as numpy arrays (unhashable,
+elementwise ==), nested mappings (order), floats (nan != nan), and dataclasses. All
+four break either the equality or the set-cardinality the check runs on. It refuses
+an object with the default repr outright, with an explanation, because an address
+in the trace would make EVERY candidate fail check (a) -- a false-failure mode
+that would be blamed on the adversaries.
+
+A fresh adversary is built per probe, never reused. A reused instance carries its
+generator state forward between session seeds, so an isolated candidate that draws
+at call time would be reported as reading the session. DrawsAtCallTime in the test
+file exists solely to pin that.
+
+Five attack seeds is the default for check (b). An adversary whose own randomness
+is a single fair coin would fail by chance about once in sixteen runs; that is
+documented on DEFAULT_ATTACK_SEEDS and the list is a parameter. Real adversaries
+make L choices, so it is not a practical risk -- but a future one-bit adversary
+should widen the list rather than trust the default.
+
+### `[-]` Files touched outside the brief's ownership list
+
+*note · impl:records+isolation · 2026-08-31T15:43:41Z*
+
+Two files outside my stated ownership (records.py, keys.py,
+tests/test_protocol_keys.py) were touched. Flagging both so the integrator can
+re-apply them if a concurrent agent's write lands on top.
+
+1. sih141/attacks/__init__.py -- CREATED. The brief said "nothing else in
+   sih141/attacks/ exists yet", but the package needs an __init__.py to match
+   sih141/core and sih141/protocol (both have one) and to be collected by
+   --doctest-modules the same way. It is a docstring plus a re-export of
+   isolation's __all__; no logic.
+
+2. sih141/protocol/__init__.py -- THREE ADDITIVE EDITS. key_from_record,
+   RecipientView and recipient_views added to the imports and to __all__. That
+   file's stated purpose is that "Phase 3 onwards never needs to reach into a
+   submodule", and new public API that is not re-exported there defeats it --
+   an attack author would go back to importing from sih141.protocol.records
+   directly, which is the habit the view is trying to break. Purely additive:
+   no existing line changed.
+
+Nothing in session.py, verify.py or tally.py was touched. Those three plus
+tests/test_protocol_tally.py and tests/test_protocol_verify_abort.py showed as
+modified in git status throughout, by other agents working concurrently; the full
+suite was run against whatever state they were in and passed.
+
+WHERE THE NEW SURFACE LIVES, for whoever wires the five real adversaries:
+  sih141/protocol/records.py   RecipientView, recipient_views
+  sih141/protocol/keys.py      key_from_record
+  sih141/attacks/isolation.py  assert_attack_isolated, check_attack_isolation,
+                               signer_probe, signer_scenario, canonical,
+                               IsolationReport, AttackIsolationError
+
+### `[+]` Declaration binding made unforgeable by omission
+
+*fix · phase3-tally-provenance · 2026-08-31T15:50:10Z*
+
+THE HOLE (carried over from Phase 2, logged OPEN)
+
+The declaration-binding check was advisory. `MatchedCountMessage.declaration_digest`
+and `PooledMatchedCounts.declaration_digest` defaulted to None, `verify` skipped the
+binding check whenever the counterpart count named no declaration, and
+`exchange_matched_counts` compared the two digests only when both were present.
+
+Reproduced before touching anything, L = 1200, seed 20260845, forwarder = the
+Bob-log-avoiding hop:
+
+    shipped exchange | charlie verdict: None  | abort: Charlie counts-from-two-declarations
+    digest dropped   | charlie verdict: False | abort: {}
+    (real m_B under the delivered declaration: 0; pooled floor: 534)
+
+A `count_exchange` seam doing the honest arithmetic and returning
+`PooledMatchedCounts(..., declaration_digest=None)` got Charlie back to a verdict on
+a count whose real evidence base under the declaration he scored was zero, pooled
+with Bob's count against a different declaration.
+
+WHY "THE SEAM IS TRUSTED" IS NOT A DEFENCE
+
+Phase C' is the recipients' own step and the adversary in :ref:`one-declaration` IS a
+recipient -- the party holding the Bob-to-Charlie hop is the party running half the
+exchange. An optional provenance field is therefore not a record of ignorance, it is
+a lever: a check the adversary can switch off by declining to answer.
+
+DECISION: BOTH, AT THREE LEVELS, AND WHY NOT A FOURTH
+
+1. Mandatory at construction. `declaration_digest` is a required field on both types,
+   `_as_declaration_digest` refuses None with its own ValueError (separate from the
+   TypeError for non-strings, because omission is the security case), and `from_dict`
+   requires the key. A PooledMatchedCounts is the only thing a count_exchange seam
+   can hand QDSSession, so a seam that cannot express "I decline to say" cannot.
+2. Neither type may be subclassed (`_final`, via `__init_subclass__`). Without this,
+   (1) is routed around in one line: `counterpart_of` is the single point where a
+   count crosses into a verdict and the only thing that attaches the declaration to
+   the number, so a subclass overriding it returns a bare int and declines the
+   provenance one level further out, still passing session's isinstance gate.
+3. `verify` refuses a count that arrives carrying the exchange's provenance slot with
+   nothing in it -- new `AbortReason.COUNT_OF_UNRECORDED_PROVENANCE`, a no-verdict
+   like the rest. After (1) and (2) nothing in the package produces such a count,
+   which is the point: it holds for a carrier arriving from outside their reach.
+
+NOT done: refusing a plain `int` for `counterpart_matched`. Considered and rejected.
+The discriminator is `hasattr(value, "declaration_digest")` (`_claims_provenance`):
+a plain int has no slot to leave empty, so it cannot be an exchange declining to fill
+one -- it can only come from the verifier's own call site, which is not a channel any
+adversary in this threat model holds, and closing it would have meant rewriting ~15
+call sites in tests/test_protocol_verify_abort.py to pass a private carrier type,
+making a public keyword argument's only valid value an instance of a private class.
+The seam's channel is closed at (1)+(2) instead. If a future change lets an adversary
+reach `verify` directly, this reasoning is what has to be revisited.
+
+ALSO NOT closed, deliberately: a seam may still return None. That is
+`no_count_exchange` -- refusal to exchange, not omission of provenance. It is louder
+(counts_exchanged=False, printed in the transcript summary, no pooled claim) and
+Phase 3 needs it to measure the split-coin attack.
+
+A SECOND HOLE FOUND ON THE WAY
+
+`exchange_matched_counts` did `declaration_digest=bob.declaration_digest or
+charlie.declaration_digest`. A malicious recipient sending a message with no digest
+therefore had the honest counterpart's digest adopted as its own -- not a missing
+binding but a fabricated one, and it would have passed the honest verifier's check.
+That is why the digest is mandatory on `MatchedCountMessage` too and not only on the
+pooled view; the fallback is now a plain inequality.
+
+RED/GREEN, both directions, reported as required
+
+* Against pre-fix code, the four new tally tests: 4 failed (DID NOT RAISE ValueError
+  / TypeError / ValueError / MatchedSetTooSmall).
+* After the fix: full suite 1475 passed.
+* Bypass re-installed (digest optional again, `__init_subclass__` removed, from_dict
+  back to `.get`, exchange back to the `is not None and` guard + `or` fallback,
+  `binding_missing` forced False): 6 failed, 76 passed across the two test files.
+* Bypass reverted from a temp-dir snapshot: 82 passed, then full suite 1508 passed
+  (the count moves because other agents are adding tests concurrently).
+
+COST, stated so nobody rediscovers it as a bug
+
+A MatchedCountMessage or PooledMatchedCounts serialised before the field existed no
+longer restores -- KeyError on "declaration_digest". That is the honest outcome: such
+a record's counts cannot be shown to belong to one declaration, so the pooled floor
+cannot be applied to them, and restoring it into an object that *looks* enforceable
+is the omission route reopened at the persistence boundary. SessionTranscript.pooled
+is itself still optional, so a transcript from before Phase C' restores as what it
+is: a run whose recipients did not compare counts.
+
+NOTE FOR WHOEVER OWNS session.py
+
+The comment at session.py:1292 says "three of the five AbortReason members". There
+are six now. Prose only, no logic depends on it; I did not touch the file because
+another agent owns it this round.

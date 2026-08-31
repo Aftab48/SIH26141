@@ -75,6 +75,7 @@ from sih141.protocol.verify import (
     MatchedSetTooSmall,
     VerificationAbort,
     VerificationResult,
+    _BoundMatchedCount,
     matched_positions,
     minimum_matched_count,
     minimum_pooled_matched_count,
@@ -1291,36 +1292,59 @@ def test_a_count_against_another_declaration_is_refused_not_pooled() -> None:
     ).accepted
 
 
-def test_a_count_of_unrecorded_provenance_is_taken_at_its_word() -> None:
-    """A plain integer still means what it always meant.
+def test_a_count_of_unrecorded_provenance_is_refused_not_taken_at_its_word() -> None:
+    """An omitted binding is an omission, not an absence of claim.
 
-    The binding is checked, never demanded: a caller holding one record and a
-    number from elsewhere -- every call site that predates the field, and the
-    transcripts recorded by them -- passes an :class:`int` and gets the pooled
-    rule exactly as before. A count that names no declaration can disagree with
-    nothing, and inventing a disagreement would turn a stored run into an abort
-    it never had.
+    This test used to assert the opposite, and the opposite was a hole. The
+    binding was checked only when the count happened to carry one, so a Phase
+    C' exchange -- the *recipients'* own step, run by the party this check
+    exists to catch -- could switch the check off by returning counts that
+    named no declaration, and reach a verdict on a total belonging to no run.
+    ``tests/test_protocol_tally.py`` mounts that end to end. Here is the
+    verifier's half of the fix: a count that arrives carrying the exchange's
+    provenance slot with nothing in it is refused.
+
+    What is *not* refused is a plain :class:`int`. It has no slot to leave
+    empty, so it cannot be an exchange declining to fill one -- it can only
+    come from the verifier's own call site, which is not a channel any
+    adversary in this threat model holds. The seam's channel is closed where
+    the count is built: see ``binding-is-mandatory`` in
+    :mod:`sih141.protocol.tally`.
     """
     params = ProtocolParams(key_length=1200)
     key = generate_private_key(params, 0, rng=np.random.default_rng(SEED + 29))
     declaration = sign(0, key, params)
     records = _lopsided_pair(key, params, bob_matched=800, charlie_matched=700)
-    unbound = _pooled_over(_rotated(declaration, params), records, params)
-    stripped = PooledMatchedCounts.from_dict(
-        {
-            key_: value
-            for key_, value in unbound.to_dict().items()
-            if key_ != "declaration_digest"
-        }
-    )
 
-    assert stripped.declaration_digest is None
-    assert verify(
-        declaration,
-        records[Party.BOB],
-        params,
-        counterpart_matched=stripped.counterpart_of(Party.BOB),
-    ).accepted
+    # A pooled count that names no declaration cannot be built or restored at
+    # all any more, which is the first half of the closure.
+    unbound = _pooled_over(_rotated(declaration, params), records, params)
+    with pytest.raises(KeyError, match="declaration_digest"):
+        PooledMatchedCounts.from_dict(
+            {
+                key_: value
+                for key_, value in unbound.to_dict().items()
+                if key_ != "declaration_digest"
+            }
+        )
+
+    # And a carried count that reaches the verifier with the slot empty is
+    # refused rather than scored, whatever produced it.
+    with pytest.raises(MatchedSetTooSmall) as excinfo:
+        verify(
+            declaration,
+            records[Party.BOB],
+            params,
+            counterpart_matched=_BoundMatchedCount(700, None),
+        )
+    abort = excinfo.value.abort
+    assert abort.reason is AbortReason.COUNT_OF_UNRECORDED_PROVENANCE
+    assert abort.counterpart_matched == 700
+    assert abort.shortfall == 0
+    assert abort.is_pooled
+    assert "names no declaration" in str(excinfo.value)
+
+    # A caller who tracks provenance elsewhere still passes an integer.
     assert verify(
         declaration, records[Party.BOB], params, counterpart_matched=700
     ).accepted

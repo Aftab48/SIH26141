@@ -63,6 +63,70 @@ two declarations is applied to a number no run produced. See
 :ref:`sih141.protocol.verify's <one-declaration>` section on counting against one
 declaration for the route that reaches it and what is refused.
 
+.. _binding-is-mandatory:
+
+The binding is mandatory, and why it has to be
+----------------------------------------------
+The fingerprint is a required field of both :class:`MatchedCountMessage` and
+:class:`PooledMatchedCounts`. It was optional once, defaulting to ``None`` for
+"provenance not recorded", and a count that named no declaration was taken at
+its word -- the check downstream was skipped, on the reasoning that a binding
+naming nothing can disagree with nothing.
+
+That reasoning is wrong here, and measurably so. Phase C' is the *recipients'*
+own step, and in :ref:`one-declaration` the adversary **is** a recipient: the
+party who holds the Bob-to-Charlie hop is the same party who runs half of this
+exchange. So "the exchange is honest" is not available as a defence, and an
+optional field is not a record of ignorance but a lever. A ``count_exchange``
+replacement doing the honest arithmetic and returning
+``PooledMatchedCounts(..., declaration_digest=None)`` restored exactly the
+behaviour the field was added to stop: with the shipped exchange Charlie
+refuses a mixed pair with
+:attr:`~sih141.protocol.verify.AbortReason.COUNTS_FROM_TWO_DECLARATIONS`, and
+with the digest dropped he reached a verdict again, on a count whose real
+evidence base under the declaration he scored was zero, pooled with Bob's count
+against a different declaration.
+
+A check that an adversary can switch off by declining to answer is advisory.
+Three things make it enforced instead, and all three are needed:
+
+1. **Mandatory at construction.** Neither type can be built without a digest,
+   and neither restores from a blob that omits one. A
+   :class:`PooledMatchedCounts` is the only thing a ``count_exchange`` seam can
+   hand :class:`~sih141.protocol.session.QDSSession`, so a seam that cannot
+   express "I decline to say" cannot decline.
+2. **Neither type may be subclassed** (:func:`_final`).
+   :meth:`PooledMatchedCounts.counterpart_of` is the single point at which a
+   count crosses from this exchange into a verdict and the only thing that
+   attaches the declaration to the number; a subclass overriding it could
+   return a bare :class:`int` and decline the provenance one level further
+   out, while still satisfying the session's ``isinstance`` gate.
+3. **Refused again at the verifier.** :func:`sih141.protocol.verify.verify`
+   refuses a count that arrives carrying the exchange's provenance slot with
+   nothing in it
+   (:attr:`~sih141.protocol.verify.AbortReason.COUNT_OF_UNRECORDED_PROVENANCE`),
+   rather than skipping the check as it used to. After (1) and (2) no path in
+   this package produces such a count, which is the point: the rule holds for a
+   carrier arriving from somewhere (1) and (2) do not reach.
+
+What is *not* closed by this, deliberately: a seam may still return ``None``.
+That is :func:`no_count_exchange`, and it is not omission of provenance but
+refusal to exchange at all -- a different and louder thing, recorded as
+:attr:`~sih141.protocol.session.SessionTranscript.counts_exchanged` ``False``,
+printed in the transcript summary, and stripping the run of any pooled claim.
+Phase 3 needs that arm in order to measure the split-coin attack. The
+distinction the rule draws is between a run that says it did not compare counts
+and a run that compares them while declining to say what they were about.
+
+The cost is compatibility: a message or an exchange serialised before the field
+existed no longer restores. That is the honest outcome rather than an oversight
+-- such a record's counts cannot be shown to belong to one declaration, so the
+pooled floor cannot be applied to them, and restoring it into an object that
+*looks* enforceable would be the omission route reopened at the persistence
+boundary. :attr:`~sih141.protocol.session.SessionTranscript.pooled` is itself
+optional, so a transcript from before Phase C' still restores as what it is: a
+run whose recipients did not compare counts.
+
 Nothing about this message is secret. It is sent over the same private,
 authenticated recipient-to-recipient channel the symmetrisation coins use, so
 **no new channel assumption is introduced**; but even a fully public count would
@@ -226,25 +290,25 @@ class MatchedCountMessage:
     key_length : int
         ``L``, so a receiver can tell at once that the two messages describe the
         same run.
-    declaration_digest : str or None, optional
+    declaration_digest : str
         :func:`~sih141.protocol.verify._declaration_digest` of the declaration
         the count was computed against -- *which* declaration, where
         ``message_bit`` and ``key_length`` say only which run. Two counts
         against two declarations are not a pooled count
         (:ref:`one-declaration`), and this is the field that makes that
-        checkable rather than assumed. ``None`` on a message whose sender did
-        not record it, which is the honest reading of a message from before the
-        field existed: nothing can be proved about its provenance and nothing is.
+        checkable rather than assumed. **Mandatory**: see
+        :ref:`binding-is-mandatory` for why a message that names no declaration
+        is refused instead of being carried as one nothing can be proved about.
 
     Raises
     ------
     TypeError
-        If a count is not an integer, or ``declaration_digest`` is neither a
-        string nor ``None``.
+        If a count is not an integer, or ``declaration_digest`` is not a
+        string.
     ValueError
         If ``party`` is Alice or names no party, if ``message_bit`` is not
         ``0``/``1``, if ``key_length < 1``, if ``matched_count`` exceeds
-        ``key_length``, or if ``declaration_digest`` is an empty string.
+        ``key_length``, or if ``declaration_digest`` is ``None`` or empty.
 
     See Also
     --------
@@ -254,7 +318,7 @@ class MatchedCountMessage:
     Examples
     --------
     >>> from sih141.protocol.tally import MatchedCountMessage
-    >>> message = MatchedCountMessage("Bob", 0, 204, 600)
+    >>> message = MatchedCountMessage("Bob", 0, 204, 600, "0f1e")
     >>> message.party.value, message.matched_count
     ('Bob', 204)
     """
@@ -263,7 +327,11 @@ class MatchedCountMessage:
     message_bit: int
     matched_count: int
     key_length: int
-    declaration_digest: str | None = None
+    declaration_digest: str
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Refuse subclasses; see :func:`_final`."""
+        _final(cls)
 
     def __post_init__(self) -> None:
         """Coerce the fields and refuse a message no recipient could have sent."""
@@ -308,17 +376,19 @@ class MatchedCountMessage:
         Returns
         -------
         dict
-            One key per field. ``declaration_digest`` is a hex string or
-            ``None``; it names a declaration and carries nothing about any
-            position, which is what keeps the message a scalar one.
+            One key per field. ``declaration_digest`` is a hex string; it names
+            a declaration and carries nothing about any position, which is what
+            keeps the message a scalar one.
 
         Examples
         --------
         >>> import json
         >>> from sih141.protocol.tally import MatchedCountMessage
-        >>> json.loads(json.dumps(MatchedCountMessage("Bob", 1, 3, 9).to_dict()))
+        >>> json.loads(
+        ...     json.dumps(MatchedCountMessage("Bob", 1, 3, 9, "0f1e").to_dict())
+        ... )
         {'party': 'Bob', 'message_bit': 1, 'matched_count': 3, 'key_length': 9, \
-'declaration_digest': None}
+'declaration_digest': '0f1e'}
         """
         return {
             "party": self.party,
@@ -335,10 +405,12 @@ class MatchedCountMessage:
         Parameters
         ----------
         data : mapping
-            Must contain every key :meth:`to_dict` emits, except
-            ``"declaration_digest"``, which defaults to ``None`` so that a
-            message recorded before the binding existed still restores -- as
-            what it is, a count whose declaration was not recorded.
+            Must contain every key :meth:`to_dict` emits,
+            ``"declaration_digest"`` included. A blob without it is a count
+            whose declaration nothing recorded, and it does not restore: an
+            optional field here would be the omission route reopened at the
+            persistence boundary, since anything that can serialise a message
+            could serialise one with the key left out.
 
         Returns
         -------
@@ -347,7 +419,7 @@ class MatchedCountMessage:
         Raises
         ------
         KeyError
-            If a required field is missing.
+            If a required field is missing, ``"declaration_digest"`` included.
         ValueError
             If the restored fields are not self-consistent.
         """
@@ -356,7 +428,7 @@ class MatchedCountMessage:
             message_bit=data["message_bit"],
             matched_count=data["matched_count"],
             key_length=data["key_length"],
-            declaration_digest=data.get("declaration_digest"),
+            declaration_digest=data["declaration_digest"],
         )
 
 
@@ -388,24 +460,28 @@ class PooledMatchedCounts:
         ``L``.
     message_bit : int
         The bit being signed.
-    declaration_digest : str or None, optional
+    declaration_digest : str
         The declaration both counts were computed against, as both messages
         reported it (:attr:`MatchedCountMessage.declaration_digest`). Carried
         forward because the check it feeds happens later, at the verifier:
         :func:`sih141.protocol.verify.verify` refuses a count that names a
         declaration other than the one it is scoring (:ref:`one-declaration`).
-        ``None`` when the messages did not say.
+        **Mandatory**, and this is the field the whole of
+        :ref:`binding-is-mandatory` is about: this object is the only thing a
+        ``count_exchange`` seam can hand the session, so a seam that could
+        build one naming no declaration could reach a verdict by declining to
+        supply provenance -- which is the check made advisory again.
 
     Raises
     ------
     TypeError
-        If a count is not an integer, or ``declaration_digest`` is neither a
-        string nor ``None``.
+        If a count is not an integer, or ``declaration_digest`` is not a
+        string.
     ValueError
         If ``message_bit`` is not ``0``/``1``, if ``key_length < 1``, if a floor
         is below ``1``, if either count exceeds ``key_length``, if
         ``minimum_pooled`` exceeds ``2 * key_length``, or if
-        ``declaration_digest`` is an empty string.
+        ``declaration_digest`` is ``None`` or empty.
 
     See Also
     --------
@@ -418,6 +494,7 @@ class PooledMatchedCounts:
     >>> pooled = PooledMatchedCounts(
     ...     bob_count=204, charlie_count=196, minimum_matched=67,
     ...     minimum_pooled=212, key_length=600, message_bit=0,
+    ...     declaration_digest="0f1e",
     ... )
     >>> pooled.pooled, pooled.meets_every_floor
     (400, True)
@@ -431,7 +508,11 @@ class PooledMatchedCounts:
     minimum_pooled: int
     key_length: int
     message_bit: int
-    declaration_digest: str | None = None
+    declaration_digest: str
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Refuse subclasses; see :func:`_final`."""
+        _final(cls)
 
     def __post_init__(self) -> None:
         """Coerce the fields and check the two messages describe one run."""
@@ -590,7 +671,7 @@ class PooledMatchedCounts:
         Examples
         --------
         >>> from sih141.protocol.tally import PooledMatchedCounts
-        >>> PooledMatchedCounts(204, 196, 67, 212, 600, 0).summary()
+        >>> PooledMatchedCounts(204, 196, 67, 212, 600, 0, "0f1e").summary()
         'POOLED EVIDENCE bit 0: m_B = 204, m_C = 196, M = 400 (floors: \
 m_min = 67, M_min = 212). Every floor met.'
         """
@@ -632,7 +713,7 @@ m_min = 67, M_min = 212). Every floor met.'
         --------
         >>> import json
         >>> from sih141.protocol.tally import PooledMatchedCounts
-        >>> blob = PooledMatchedCounts(204, 196, 67, 212, 600, 0).to_dict()
+        >>> blob = PooledMatchedCounts(204, 196, 67, 212, 600, 0, "0f1e").to_dict()
         >>> json.loads(json.dumps(blob))["bob_count"]
         204
         """
@@ -653,11 +734,17 @@ m_min = 67, M_min = 212). Every floor met.'
         Parameters
         ----------
         data : mapping
-            Must contain every key :meth:`to_dict` emits, except
-            ``"declaration_digest"``, which defaults to ``None`` so that an
-            exchange recorded before the binding existed still restores. Such a
-            record names no declaration, and a verifier reading it applies the
-            pooled floor without the check :ref:`one-declaration` describes.
+            Must contain every key :meth:`to_dict` emits,
+            ``"declaration_digest"`` included. A stored exchange that names no
+            declaration does **not** restore: it is a pooled count whose
+            provenance nothing recorded, the pooled floor cannot be applied to
+            it, and a default here would be the omission route reopened at the
+            persistence boundary -- a seam that cannot construct one directly
+            could otherwise round-trip a dict with the key removed.
+            :attr:`sih141.protocol.session.SessionTranscript.pooled` is itself
+            optional, so a transcript from before the exchange existed still
+            restores as what it is: a run whose recipients did not compare
+            counts.
 
         Returns
         -------
@@ -666,7 +753,7 @@ m_min = 67, M_min = 212). Every floor met.'
         Raises
         ------
         KeyError
-            If a required field is missing.
+            If a required field is missing, ``"declaration_digest"`` included.
         ValueError
             If the restored fields are not self-consistent.
         """
@@ -677,7 +764,7 @@ m_min = 67, M_min = 212). Every floor met.'
             minimum_pooled=data["minimum_pooled"],
             key_length=data["key_length"],
             message_bit=data["message_bit"],
-            declaration_digest=data.get("declaration_digest"),
+            declaration_digest=data["declaration_digest"],
         )
 
 
@@ -690,6 +777,13 @@ class CountExchange(Protocol):
     replacement returns either a :class:`PooledMatchedCounts` over the two
     messages it was given, or ``None`` to mean "the recipients did not compare",
     in which case only the per-verifier floor applies.
+
+    A replacement is **not** trusted, and there is no third option: it cannot
+    return a pooled count that declines to name the declaration it counted,
+    because :class:`PooledMatchedCounts` refuses to be built without one and
+    refuses to be subclassed. See :ref:`binding-is-mandatory` for the route
+    that closes and why a seam's honesty is not something this module may
+    assume.
     """
 
     def __call__(
@@ -893,12 +987,13 @@ def _checked_messages(
             )
     # Same run is not the same declaration: the bit and the length agree across
     # every declaration for one distribution, and it is the declaration that
-    # decides which positions are matched at all.
-    if (
-        bob.declaration_digest is not None
-        and charlie.declaration_digest is not None
-        and bob.declaration_digest != charlie.declaration_digest
-    ):
+    # decides which positions are matched at all. Both digests are present --
+    # MatchedCountMessage refuses to exist without one -- so this is an
+    # inequality and not, as it once was, a check skipped whenever either side
+    # declined to say. Under the old reading a message with no digest had its
+    # counterpart's adopted as its own two lines below, which is not a missing
+    # binding but a fabricated one.
+    if bob.declaration_digest != charlie.declaration_digest:
         raise ValueError(
             f"the two messages counted different declarations: Bob's names "
             f"{bob.declaration_digest} and Charlie's {charlie.declaration_digest}. "
@@ -966,8 +1061,8 @@ def exchange_matched_counts(
     ... )
     >>> params = ProtocolParams(key_length=600)
     >>> messages = {
-    ...     Party.BOB: MatchedCountMessage("Bob", 0, 68, 600),
-    ...     Party.CHARLIE: MatchedCountMessage("Charlie", 0, 66, 600),
+    ...     Party.BOB: MatchedCountMessage("Bob", 0, 68, 600, "0f1e"),
+    ...     Party.CHARLIE: MatchedCountMessage("Charlie", 0, 66, 600, "0f1e"),
     ... }
     >>> pooled = exchange_matched_counts(messages, params)
     >>> pooled.pooled, pooled.minimum_pooled, pooled.meets_pooled_floor
@@ -983,11 +1078,9 @@ def exchange_matched_counts(
         minimum_pooled=minimum_pooled_matched_count(params),
         key_length=params.key_length,
         message_bit=bob.message_bit,
-        # Checked equal above wherever both messages name one, so either stands
-        # for the pair; None only when neither recorded it.
-        declaration_digest=(
-            bob.declaration_digest or charlie.declaration_digest
-        ),
+        # Checked equal above, and neither can be absent, so either stands for
+        # the pair.
+        declaration_digest=bob.declaration_digest,
     )
 
 
@@ -1039,8 +1132,8 @@ def no_count_exchange(
     ... )
     >>> params = ProtocolParams(key_length=600)
     >>> messages = {
-    ...     Party.BOB: MatchedCountMessage("Bob", 0, 68, 600),
-    ...     Party.CHARLIE: MatchedCountMessage("Charlie", 0, 66, 600),
+    ...     Party.BOB: MatchedCountMessage("Bob", 0, 68, 600, "0f1e"),
+    ...     Party.CHARLIE: MatchedCountMessage("Charlie", 0, 66, 600, "0f1e"),
     ... }
     >>> no_count_exchange(messages, params) is None
     True
@@ -1049,47 +1142,97 @@ def no_count_exchange(
     return None
 
 
-def _as_declaration_digest(digest: Any) -> str | None:
+def _as_declaration_digest(digest: Any) -> str:
     """Validate the declaration a count says it was computed against.
+
+    Mandatory, and that is the whole of :ref:`binding-is-mandatory`: a count
+    that declines to name its declaration is refused here rather than carried
+    forward as one nothing can be proved about. Both spellings of "I decline"
+    -- ``None`` and the empty string -- are refused, and for the same reason:
+    a count of unrecorded provenance is pooled on trust, and Phase C' is the
+    step whose participants are the adversary.
 
     Parameters
     ----------
-    digest : str or None
-        The fingerprint, or ``None`` for a count whose declaration was not
-        recorded.
+    digest : str
+        The fingerprint,
+        :func:`~sih141.protocol.verify._declaration_digest` of the declaration
+        the count was computed against.
 
     Returns
     -------
-    str or None
+    str
         ``digest`` unchanged.
 
     Raises
     ------
     TypeError
-        If ``digest`` is neither a string nor ``None``.
+        If ``digest`` is not a string. ``None`` is refused as a
+        :exc:`ValueError` rather than a :exc:`TypeError`, because omitting the
+        binding is the security case and deserves its own message.
     ValueError
-        If ``digest`` is the empty string. ``None`` already means "not
-        recorded", and it is read as "no claim to check"; an empty string would
-        be a second spelling of the same thing that instead compares *unequal*
-        to every real digest, turning a message that recorded nothing into one
-        that claims a declaration nothing hashes to.
+        If ``digest`` is ``None`` or the empty string.
     """
     if digest is None:
-        return None
+        raise ValueError(
+            "declaration_digest must name the declaration this count was "
+            "computed against; it is not optional. A count whose provenance "
+            "is unrecorded cannot be shown to be about the declaration a "
+            "verifier is scoring, and m_B + m_C is conserved for one fixed "
+            "declaration and is a quantity of nothing across two -- so such a "
+            "count is refused rather than pooled on trust. Phase C' is the "
+            "recipients' own step and a recipient is the adversary here, so "
+            "'the exchange is honest' is not available as a defence. Pass "
+            "sih141.protocol.verify._declaration_digest(signature), which "
+            "matched_count_message(...) already does."
+        )
     if not isinstance(digest, str):
         raise TypeError(
-            f"declaration_digest must be a string or None, got "
+            f"declaration_digest must be a string, got "
             f"{type(digest).__name__}; it is the fingerprint of the "
             f"declaration the count was computed against."
         )
     if not digest:
         raise ValueError(
-            "declaration_digest must be a non-empty string or None. None is "
-            "how a count says its declaration was not recorded; an empty "
-            "string would be a second way of saying it that no comparison "
-            "could read."
+            "declaration_digest must be a non-empty string. An empty string "
+            "is a second spelling of 'not recorded' that compares *unequal* "
+            "to every real digest, so it would turn a count that named "
+            "nothing into one claiming a declaration nothing hashes to."
         )
     return digest
+
+
+def _final(cls: type) -> None:
+    """Refuse subclasses of ``cls``. Helper for ``__init_subclass__``.
+
+    Mandatory-at-construction only closes the omission route while the
+    construction cannot be routed around, and a subclass is how it would be:
+    :meth:`PooledMatchedCounts.counterpart_of` is the single point where a
+    count crosses from the recipients' exchange into a verdict and the only
+    thing that attaches the declaration to the number, so a subclass overriding
+    it could hand a verifier a bare :class:`int` and decline the provenance
+    while still satisfying the session's ``isinstance`` gate. Neither type has
+    any use as a base class -- both are frozen value types over scalars -- so
+    the cheapest closure is to have none.
+
+    Parameters
+    ----------
+    cls : type
+        The class being defined as a subclass.
+
+    Raises
+    ------
+    TypeError
+        Always.
+    """
+    raise TypeError(
+        f"{cls.__name__}: this type may not be subclassed. It is a frozen "
+        f"scalar message whose whole job is to carry a count together with "
+        f"the declaration it was counted against; a subclass could override "
+        f"that pairing and hand a verifier a count of unrecorded provenance, "
+        f"which is the omission the mandatory declaration_digest exists to "
+        f"refuse. Build one, or convert to and from dict."
+    )
 
 
 def _as_verifier(party: Party | str) -> Party:

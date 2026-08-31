@@ -159,6 +159,7 @@ from sih141.protocol.keys import (
     PrivateKey,
     generate_key_pair,
     generate_private_key,
+    key_from_record,
     public_key_states,
 )
 from sih141.protocol.params import (
@@ -173,7 +174,12 @@ from sih141.protocol.params import (
     Party,
     ProtocolParams,
 )
-from sih141.protocol.records import RecipientRecord, RecordEntry
+from sih141.protocol.records import (
+    RecipientRecord,
+    RecipientView,
+    RecordEntry,
+    recipient_views,
+)
 from sih141.protocol.session import (
     MESSAGE_BITS,
     Distributor,
@@ -232,10 +238,13 @@ __all__ = [
     "PrivateKey",
     "generate_private_key",
     "generate_key_pair",
+    "key_from_record",
     "public_key_states",
     # -- recipients' classical logs ------------------------------------------ #
     "RecordEntry",
     "RecipientRecord",
+    "RecipientView",
+    "recipient_views",
     # -- Phase A: distribution ----------------------------------------------- #
     "ResourceContext",
     "ResourceFactory",

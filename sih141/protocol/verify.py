@@ -14,9 +14,10 @@ of ``(index, chosen_basis, outcome_eigenvalue)`` made at distribution time, and 
 with ``threshold(Bob) = s_a`` and ``threshold(Charlie) = s_v``. Before any of
 that, **four** checks decide whether there is a verdict to reach at all: three
 counting floors -- his own, the pair's pooled total, and his counterpart's -- and
-one provenance check that both counts were taken against the *same* declaration.
-They are the subject of :ref:`matched-count-floor`, :ref:`pooled-floor` and
-:ref:`one-declaration`.
+one provenance check that both counts were taken against the *same* declaration,
+which fails both when the counterpart's count names another declaration and when
+it names none at all. They are the subject of :ref:`matched-count-floor`,
+:ref:`pooled-floor` and :ref:`one-declaration`.
 
 Only matched positions may be scored
 ------------------------------------
@@ -331,6 +332,20 @@ names a declaration other than the one it is scoring
 like every other entry in :class:`AbortReason`: it is not evidence of forgery,
 and the verifier holding it has learned nothing about the signature.
 
+*And the rule cannot be declined.* The fingerprint was optional once, and a
+count that named no declaration had the check skipped -- "no claim, so no
+disagreement". That is the wrong reading when the party supplying the count is
+the adversary, and it was demonstrated: a ``count_exchange`` seam doing the
+honest arithmetic and returning
+``PooledMatchedCounts(..., declaration_digest=None)`` restored the exact
+behaviour this check was added to stop, reaching a verdict on a count whose
+evidence base under the scored declaration was zero. So the binding is now
+mandatory where the count is built, the carrier cannot be subclassed to strip
+it, and :func:`verify` refuses a count that arrives through the exchange with
+the slot empty (:attr:`AbortReason.COUNT_OF_UNRECORDED_PROVENANCE`) instead of
+skipping the check. :ref:`sih141.protocol.tally's <binding-is-mandatory>`
+section gives all three and what each one closes.
+
 *What this is and is not.* The adversary here is **Bob** -- or whoever holds the
 Bob-to-Charlie hop -- and not Alice; every non-repudiation claim is a claim
 about a signer, so no bound in :mod:`sih141.protocol.analysis` moves. Nor was the
@@ -473,10 +488,11 @@ class AbortReason(enum.StrEnum):
     A :class:`enum.StrEnum` like :class:`~sih141.protocol.params.Party`, so it
     passes through :func:`json.dumps` and into a Phase 5 table unchanged.
 
-    The five members are ordered by which check fires first in :func:`verify`:
+    The six members are ordered by which check fires first in :func:`verify`:
     a verifier looks at his own count, then at whether the counterpart's count
-    is even about the same declaration, then at the pooled total, then at his
-    counterpart's count. The last three exist only on a run where the recipients
+    is even about the same declaration -- which has two ways to fail, naming
+    none and naming another -- then at the pooled total, then at his
+    counterpart's count. The last four exist only on a run where the recipients
     ran the count exchange of :mod:`sih141.protocol.tally`.
 
     Attributes
@@ -489,12 +505,22 @@ class AbortReason(enum.StrEnum):
         ``0 < |M_R| < m_min``: a rate could be computed, but on so little
         evidence that no bound in the scheme applies to it. See
         :func:`minimum_matched_count`.
+    COUNT_OF_UNRECORDED_PROVENANCE
+        The counterpart's count arrived carrying the count exchange's
+        provenance slot with nothing in it: it does not say which declaration
+        it was computed against, so it cannot be shown to be about the one this
+        verifier is scoring. Refused rather than taken at its word, because the
+        party who supplies that count is an adversary in this threat model and
+        a check he can switch off by declining to answer is not a check at all
+        -- see :ref:`one-declaration` and
+        :ref:`sih141.protocol.tally's <binding-is-mandatory>` account of the
+        omission route. Like the next member it names no floor.
     COUNTS_FROM_TWO_DECLARATIONS
         The counterpart's count was computed against a *different* declaration
         from the one this verifier is scoring, so ``m_B + m_C`` is not a pooled
         count and the pooled floor has nothing to be applied to. The refusal is
-        about the numbers' provenance rather than their size, and it is the one
-        reason that names no floor: see :ref:`one-declaration`.
+        about the numbers' provenance rather than their size, and it names no
+        floor: see :ref:`one-declaration`.
     POOLED_BELOW_FLOOR
         ``m_B + m_C < M_min``: this verifier cleared his own floor, but the two
         of them together hold less evidence than the *pooled* floor demands. See
@@ -513,16 +539,30 @@ class AbortReason(enum.StrEnum):
 
     EMPTY_MATCHED_SET = "empty-matched-set"
     BELOW_FLOOR = "matched-count-below-floor"
+    COUNT_OF_UNRECORDED_PROVENANCE = "counterpart-count-of-unrecorded-provenance"
     COUNTS_FROM_TWO_DECLARATIONS = "counts-from-two-declarations"
     POOLED_BELOW_FLOOR = "pooled-matched-count-below-floor"
     COUNTERPART_BELOW_FLOOR = "counterpart-matched-count-below-floor"
 
 
 #: Reasons that describe *this* verifier's own matched set, as opposed to the
-#: three that describe the pair. Used to keep the label and the numbers a single
+#: four that describe the pair. Used to keep the label and the numbers a single
 #: observation; see :class:`VerificationAbort`.
 _OWN_COUNT_REASONS: Final[frozenset[AbortReason]] = frozenset(
     {AbortReason.EMPTY_MATCHED_SET, AbortReason.BELOW_FLOOR}
+)
+
+#: Pair reasons that refuse to *apply* the pooled rule rather than reporting it
+#: failed: the two counts cannot be shown to belong to one declaration, either
+#: because the counterpart's names another or because it names none at all. No
+#: arithmetic relation between the two numbers is being claimed on either, so
+#: neither has a floor to quote a distance from -- see
+#: :attr:`VerificationAbort.shortfall` and :ref:`one-declaration`.
+_UNPOOLABLE_REASONS: Final[frozenset[AbortReason]] = frozenset(
+    {
+        AbortReason.COUNT_OF_UNRECORDED_PROVENANCE,
+        AbortReason.COUNTS_FROM_TWO_DECLARATIONS,
+    }
 )
 
 #: Bytes of :func:`hashlib.blake2b` output kept in a declaration digest. Sixteen
@@ -615,7 +655,10 @@ class _BoundMatchedCount(int):
 
     An :class:`int` in every respect -- it compares, adds, serialises and prints
     as the number it is -- carrying one extra attribute naming the declaration
-    it was counted against. That is what lets
+    it was counted against. The presence of that attribute is also what marks a
+    count as having come *through* the exchange, which is how :func:`verify`
+    tells an omitted binding from a caller who never had one
+    (:func:`_claims_provenance`). That is what lets
     :meth:`sih141.protocol.tally.PooledMatchedCounts.counterpart_of` hand
     :func:`verify` a count *and* its provenance through the existing
     ``counterpart_matched`` argument, so that every call site which already
@@ -632,9 +675,12 @@ class _BoundMatchedCount(int):
     value : int
         The count.
     declaration_digest : str or None
-        :func:`_declaration_digest` of the declaration it was computed against,
-        or ``None`` for a count whose provenance was never recorded -- against
-        which no mismatch can be proved and none is claimed.
+        :func:`_declaration_digest` of the declaration it was computed against.
+        ``None`` is representable so that this check has something to refuse:
+        no path through :mod:`sih141.protocol.tally` produces it any more
+        (:ref:`binding-is-mandatory`), and :func:`verify` treats a count that
+        carries this slot empty as an omission rather than as an absence of
+        claim -- see :attr:`AbortReason.COUNT_OF_UNRECORDED_PROVENANCE`.
 
     Attributes
     ----------
@@ -700,11 +746,38 @@ def _counterpart_binding(value: Any) -> str | None:
     -------
     str or None
         The digest, or ``None`` when the count carries no usable one. An empty
-        string counts as absent: a binding that names nothing cannot disagree
-        with anything.
+        string counts as absent: a binding that names nothing cannot name the
+        declaration being scored either.
     """
     digest = getattr(value, "declaration_digest", None)
     return digest if isinstance(digest, str) and digest else None
+
+
+def _claims_provenance(value: Any) -> bool:
+    """Return whether a reported count arrived through the count exchange.
+
+    The distinction :func:`verify` needs in order to refuse an omission rather
+    than skip a check. A count that has a ``declaration_digest`` attribute at
+    all came from :mod:`sih141.protocol.tally` -- it is the slot
+    :meth:`~sih141.protocol.tally.PooledMatchedCounts.counterpart_of` fills --
+    so an *empty* slot on such a count is a Phase C' step that declined to say
+    what it counted, and Phase C' is run by the party this check exists to
+    catch. A plain :class:`int` has no slot to leave empty; it is a number a
+    caller supplied from outside the exchange entirely, and it is refused for
+    nothing, exactly as before.
+
+    Parameters
+    ----------
+    value : Any
+        Whatever was passed as ``counterpart_matched``.
+
+    Returns
+    -------
+    bool
+        ``True`` iff the value carries the exchange's provenance slot, filled
+        or not.
+    """
+    return hasattr(value, "declaration_digest")
 
 
 def minimum_matched_count(params: ProtocolParams) -> int:
@@ -1381,11 +1454,13 @@ class VerificationAbort:
                 f"{AbortReason.BELOW_FLOOR.value!r}; labelling it pooled would "
                 f"blame the pair for a local failure."
             )
-        if self.reason is AbortReason.COUNTS_FROM_TWO_DECLARATIONS:
-            # The two counts are about two declarations, so their sum is not a
-            # pooled count and no arithmetic relation between them is being
-            # claimed. Both numbers are recorded exactly because a reader has to
-            # be able to see the total that was *not* enforced.
+        if self.reason in _UNPOOLABLE_REASONS:
+            # The two counts cannot be shown to be about one declaration --
+            # either the counterpart's names another or it names none -- so
+            # their sum is not a pooled count and no arithmetic relation
+            # between them is being claimed. Both numbers are recorded exactly
+            # because a reader has to be able to see the total that was *not*
+            # enforced.
             return
         pooled = self.matched_count + self.counterpart_matched
         if self.reason is AbortReason.POOLED_BELOW_FLOOR:
@@ -1440,14 +1515,15 @@ class VerificationAbort:
         :attr:`AbortReason.COUNTERPART_BELOW_FLOOR`. Reading it against any
         other floor would report a shortfall nobody measured.
 
-        At least ``1`` on each of those four, and exactly ``0`` on
-        :attr:`AbortReason.COUNTS_FROM_TWO_DECLARATIONS`, which names no floor:
-        that refusal reports that the pooled rule could not be *applied*, not
-        that it was missed, and quoting a distance from a floor nobody evaluated
-        would invite a reader to treat "one record short" and "not the same
+        At least ``1`` on each of those four, and exactly ``0`` on the two that
+        name no floor -- :attr:`AbortReason.COUNTS_FROM_TWO_DECLARATIONS` and
+        :attr:`AbortReason.COUNT_OF_UNRECORDED_PROVENANCE`. Those refusals
+        report that the pooled rule could not be *applied*, not that it was
+        missed, and quoting a distance from a floor nobody evaluated would
+        invite a reader to treat "one record short" and "not the same
         experiment" as the same finding.
         """
-        if self.reason is AbortReason.COUNTS_FROM_TWO_DECLARATIONS:
+        if self.reason in _UNPOOLABLE_REASONS:
             return 0
         if self.reason is AbortReason.POOLED_BELOW_FLOOR:
             assert self.minimum_pooled is not None  # enforced in __post_init__
@@ -1463,14 +1539,15 @@ class VerificationAbort:
     def is_pooled(self) -> bool:
         """bool: ``True`` iff the refusal is a statement about the pair.
 
-        The three pair reasons need the count exchange to have happened and
+        The four pair reasons need the count exchange to have happened and
         carry :attr:`counterpart_matched`; the two own-count reasons are
         reachable with or without it. Phase 4 and Phase 5 read this to separate
         "this verifier had nothing to score" from "the two of them together did
         not clear the pooled rule", which are different findings about a run.
-        Read :attr:`reason` to separate the third case --
-        :attr:`AbortReason.COUNTS_FROM_TWO_DECLARATIONS`, where the pooled rule
-        was never evaluated -- from the two where it was and failed.
+        Read :attr:`reason` to separate the two cases where the pooled rule was
+        never evaluated -- :attr:`AbortReason.COUNTS_FROM_TWO_DECLARATIONS` and
+        :attr:`AbortReason.COUNT_OF_UNRECORDED_PROVENANCE` -- from the two where
+        it was and failed.
         """
         return self.reason not in _OWN_COUNT_REASONS
 
@@ -1742,6 +1819,27 @@ def _abort_message(abort: VerificationAbort) -> str:
             f"{abort.pooled_count} against a pooled floor of "
             f"{abort.minimum_pooled}, so the shortfall is in the *split*, not "
             f"in the total."
+        )
+    if abort.reason is AbortReason.COUNT_OF_UNRECORDED_PROVENANCE:
+        return (
+            f"the count {party} was given names no declaration, so it cannot "
+            f"be shown to have been computed against the one he is scoring: "
+            f"the two numbers ({party} {abort.matched_count}, the other "
+            f"verifier {abort.counterpart_matched}) may or may not be a pooled "
+            f"count, and the pooled floor of {abort.minimum_pooled} is not "
+            f"applied to a sum that might belong to no run. "
+            f"{not_a_signature_failure}: what failed is the bookkeeping, the "
+            f"verifier has learned nothing about the signature either way, and "
+            f"a rejection here would be recorded as a forgery detection when "
+            f"no evidence of forgery exists. {recorded_not_lost} "
+            f"An unprovenanced count is refused rather than taken at its word "
+            f"because Phase C' is the recipients' own step and a recipient is "
+            f"the adversary this check exists for: a check that can be "
+            f"switched off by declining to answer is not one. The usual cause "
+            f"is a count exchange that does not fill in the declaration it "
+            f"counted -- see sih141.protocol.tally on the binding being "
+            f"mandatory -- so what to investigate is the exchange, not the "
+            f"verifiers."
         )
     if abort.reason is AbortReason.COUNTS_FROM_TWO_DECLARATIONS:
         return (
@@ -2323,6 +2421,7 @@ def _evidence_refusal(
     message_bit: int,
     counterpart_declaration: str | None = None,
     scored_declaration: str | None = None,
+    counterpart_binding_missing: bool = False,
 ) -> VerificationAbort | None:
     """Apply the matched-count rule and return the first refusal.
 
@@ -2338,7 +2437,13 @@ def _evidence_refusal(
     The binding check sits directly after the local floor and before both
     pooled ones, because a pooled floor evaluated on two declarations' counts is
     not a weaker check than the real one -- it is a check on a quantity no run
-    produced, and reporting its outcome either way would be a fabrication.
+    produced, and reporting its outcome either way would be a fabrication. It
+    has two failure modes and refuses on both: the count names *another*
+    declaration, or -- the omission this rule is enforced against rather than
+    merely documented for -- it names *none*. Skipping the check on an
+    unprovenanced count would let the party who supplies it turn the check off
+    by declining to answer; see :ref:`one-declaration` and
+    :ref:`sih141.protocol.tally's <binding-is-mandatory>` account.
 
     Parameters
     ----------
@@ -2361,9 +2466,14 @@ def _evidence_refusal(
         :func:`_declaration_digest` of the declaration ``counterpart_matched``
         was counted against, when the count says which.
     scored_declaration : str or None, optional
-        The digest of the declaration *this* verifier is scoring. The binding
-        check needs both and is skipped unless both are present: a count of
-        unrecorded provenance can disagree with nothing.
+        The digest of the declaration *this* verifier is scoring. Computed by
+        the caller only when there is a binding to compare it against, since
+        digesting a full-length declaration is not free.
+    counterpart_binding_missing : bool, optional
+        ``True`` when the count arrived through the count exchange carrying an
+        *empty* provenance slot (:func:`_claims_provenance`). Refused outright:
+        this is the omission route, and it is the one case where saying "no
+        claim, so no disagreement" hands the adversary the check.
 
     Returns
     -------
@@ -2396,6 +2506,12 @@ def _evidence_refusal(
         )
     if counterpart_matched is None:
         return None
+    if counterpart_binding_missing:
+        return VerificationAbort(
+            reason=AbortReason.COUNT_OF_UNRECORDED_PROVENANCE,
+            matched_count=matched_count,
+            **common,
+        )
     if (
         counterpart_declaration is not None
         and scored_declaration is not None
@@ -2440,18 +2556,23 @@ def verify(
     verifier can actually apply them::
 
         |M_R| >= m_min                         his own, computed locally
+        counterpart said which declaration     provenance was recorded at all
         counterpart counted this declaration   the counts are one experiment
         |M_R| + counterpart_matched >= M_min   the pooled floor
         counterpart_matched >= m_min           the counterpart's own floor
 
     with ``m_min`` from :func:`minimum_matched_count` and ``M_min`` from
-    :func:`minimum_pooled_matched_count`. The last three need ``counterpart``'s
+    :func:`minimum_pooled_matched_count`. The last four need ``counterpart``'s
     count, which arrives over the recipients' count exchange
     (:mod:`sih141.protocol.tally`); they are skipped when it is not supplied,
     and :ref:`pooled-floor` says exactly what a run gives up by skipping them.
-    The second is :ref:`one-declaration`: adding a count made against another
-    declaration to this one produces a number no run ever had, so such a pair is
-    refused rather than pooled. Any failed check scores nothing and raises
+    The second and third are :ref:`one-declaration`: adding a count made against
+    another declaration to this one produces a number no run ever had, so such a
+    pair is refused rather than pooled -- and so is a count that came through
+    the exchange without saying which declaration it counted, because the party
+    who runs Phase C' is an adversary here and a check he can switch off by
+    declining to answer is not a check. Any failed check scores nothing and
+    raises
     :exc:`MatchedSetTooSmall` carrying a :class:`VerificationAbort`; use
     :func:`verify_or_abort` to get that as a returned outcome instead.
 
@@ -2477,11 +2598,25 @@ def verify(
         than the other record because that is all that crosses the wire: the
         counterpart sends a count, never his log, and modelling it as a number
         keeps it impossible for this function to read evidence its verifier
-        does not hold. "Against this same declaration" is checked rather than
-        trusted when the count says which one it counted --
+        does not hold.
+
+        "Against this same declaration" is checked rather than trusted.
         :meth:`sih141.protocol.tally.PooledMatchedCounts.counterpart_of` returns
-        a count that does -- and a plain :class:`int` from a caller that tracks
-        provenance elsewhere is taken at its word.
+        a count that names the declaration it counted, and such a count with the
+        name *missing* is refused
+        (:attr:`AbortReason.COUNT_OF_UNRECORDED_PROVENANCE`) rather than having
+        the check skipped -- otherwise the recipients' own Phase C' step, run by
+        the party this check exists to catch, could switch the check off by
+        declining to answer. A plain :class:`int` is still taken at its word,
+        and that is not the same concession: it carries no provenance slot to
+        leave empty, so it cannot be a count exchange declining to fill one. It
+        can only come from the verifier's own call site. Nothing an adversary
+        controls can produce one here --
+        :class:`~sih141.protocol.tally.PooledMatchedCounts` is the sole thing a
+        ``count_exchange`` seam hands
+        :class:`~sih141.protocol.session.QDSSession`, it cannot be built
+        without a declaration, and it cannot be subclassed to hand on a bare
+        integer instead (:ref:`binding-is-mandatory`).
 
     Returns
     -------
@@ -2554,6 +2689,11 @@ def verify(
     # a plain int, and the declaration a count was computed against is the one
     # thing that cannot be recovered afterwards.
     counterpart_declaration = _counterpart_binding(counterpart_matched)
+    binding_missing = (
+        counterpart_matched is not None
+        and _claims_provenance(counterpart_matched)
+        and counterpart_declaration is None
+    )
     reported = _as_optional_count(counterpart_matched, "counterpart_matched")
     if reported is not None and reported > params.key_length:
         raise ValueError(
@@ -2574,12 +2714,15 @@ def verify(
         message_bit=record.message_bit,
         counterpart_declaration=counterpart_declaration,
         # Only worth fingerprinting the declaration when there is a binding to
-        # compare it against; an unbound count skips the check entirely.
+        # compare it against. A count that came through the exchange with an
+        # empty slot is refused without one being computed: there is nothing to
+        # compare, and that is precisely why it is refused.
         scored_declaration=(
             None
             if counterpart_declaration is None
             else _declaration_digest(signature)
         ),
+        counterpart_binding_missing=binding_missing,
     )
     if refusal is not None:
         # A no-verdict outcome, not a rejection: see the module docstring.
