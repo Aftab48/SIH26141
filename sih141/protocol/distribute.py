@@ -110,6 +110,44 @@ A factory that returns ``None`` is rejected rather than forwarded. ``None`` is
 forwarding it would turn a mis-wired attack into a perfect channel and let a
 Phase 3 test pass vacuously.
 
+.. _check-round-lockstep:
+
+Check rounds, and the variate budget that hides them
+----------------------------------------------------
+Passing a :class:`~sih141.protocol.checkrounds.CheckRoundPlan` turns a
+designated subset of positions into *check rounds*: the pair that position drew
+is spent on measuring the channel rather than on teleporting a key element, the
+two wings' outcomes are logged, and the position is left out of the record
+entirely. :func:`distribute_to_recipient_with_checks` returns both halves --
+the shortened :class:`~sih141.protocol.records.RecipientRecord` and the
+:class:`~sih141.protocol.checkrounds.CheckLog` -- and
+:mod:`sih141.protocol.checkrounds` explains what the statistics mean and why the
+key is drawn at full length and sifted afterwards.
+
+The one thing this module has to get right is that **nothing distinguishes a
+check round from a key round on the wire**, because an adversary who could tell
+them apart would behave on the ones that are watched and misbehave on the ones
+that are not, and every estimate here would be a fiction. Two invariants secure
+it, and both are tested:
+
+* The ``resource_factory`` is called **identically** on both -- same call, same
+  :class:`ResourceContext`, in the same order -- before the branch is taken. The
+  factory is the whole of the adversary's access to this loop, so it sees one
+  undifferentiated stream of requests.
+  ``test_the_factory_cannot_tell_a_check_round_from_a_key_round`` pins it.
+* **Exactly three variates are consumed per position, on both branches.** A key
+  round spends them on the recipient's basis draw, the Bell measurement inside
+  :func:`~sih141.core.teleport.teleport`, and the recipient's projective
+  measurement; a check round spends them on the same basis draw -- made and
+  *discarded*, because the draw must not be correlated with the round's role --
+  and the two wings' measurements. The generator is therefore in the same state
+  at the start of every position whether or not a plan is in force, so a
+  retained position of a checked run is **bit-identical** to the same position
+  of an unchecked run under the same seed. That is a far stronger statement than
+  "the retained key tests uniform", and
+  ``test_retained_positions_are_bit_identical_to_an_unchecked_run`` asserts the
+  equality outright.
+
 Notes
 -----
 Canonical state type (D1)
@@ -129,7 +167,8 @@ Determinism (D3)
     consumed per key position**, in this order: the recipient's basis choice,
     the sender's Bell measurement inside
     :func:`~sih141.core.teleport.teleport`, and the recipient's projective
-    measurement. The count does not depend on the resource, so for a fixed seed
+    measurement. The count does not depend on the resource *or on whether the
+    position is a check round* (:ref:`check-round-lockstep`), so for a fixed seed
     the sequence of *chosen bases* is the same under every ``resource_factory``
     and only the outcomes move -- which is what makes a clean run and an attacked
     run directly comparable position by position.
@@ -162,6 +201,16 @@ from sih141.core.paulis import PauliBasis
 from sih141.core.rng import resolve_rng
 from sih141.core.states import BellState, StateLike, bell_state
 from sih141.core.teleport import teleport
+from sih141.protocol.checkrounds import (
+    CheckLog,
+    CheckRoundPlan,
+    ChshObservation,
+    ChshRound,
+    QberObservation,
+    QberRound,
+    observe_chsh_round,
+    observe_qber_round,
+)
 from sih141.protocol.keys import PrivateKey
 from sih141.protocol.params import (
     VERIFIERS,
@@ -172,11 +221,14 @@ from sih141.protocol.params import (
 from sih141.protocol.records import RecipientRecord
 
 __all__ = [
+    "RecipientDistribution",
     "ResourceContext",
     "ResourceFactory",
     "ideal_resource",
     "distribute_to_recipient",
+    "distribute_to_recipient_with_checks",
     "distribute_public_key",
+    "distribute_public_key_with_checks",
 ]
 
 
@@ -463,6 +515,140 @@ def _resolve_verifier(party: Party | str) -> Party:
     return resolved
 
 
+@dataclass(frozen=True)
+class RecipientDistribution:
+    """Everything one recipient is left holding after Phase A.
+
+    The full-information return of
+    :func:`distribute_to_recipient_with_checks`: the classical log that carries
+    key, and -- separately -- the classical log that carries channel
+    diagnostics. They are separate objects because they have different
+    audiences. The record is private evidence a verifier scores; the check log
+    is **published**, and it is safe to publish precisely because its positions
+    were spent on measurement and never entered the key.
+
+    Attributes
+    ----------
+    record : RecipientRecord
+        The recipient's key log, already sifted: ``plan.signing_length`` entries
+        when a plan was in force, re-indexed to ``0 .. signing_length - 1``.
+        Check it against ``params.sifted()``, not against ``params``.
+    log : CheckLog
+        The check-round observations. Empty on a run with no plan, which is the
+        honest representation of "this run published no channel statistics".
+    plan : CheckRoundPlan or None
+        The plan that was executed, kept so that a caller can map a record index
+        back to a run position through
+        :attr:`~sih141.protocol.checkrounds.CheckRoundPlan.signing_positions`.
+        ``None`` when no plan was given.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from sih141.protocol.checkrounds import draw_check_plan, estimate_qber
+    >>> from sih141.protocol.distribute import (
+    ...     distribute_to_recipient_with_checks
+    ... )
+    >>> from sih141.protocol.keys import generate_private_key
+    >>> from sih141.protocol.params import Party, ProtocolParams
+    >>> params = ProtocolParams(key_length=64, check_fraction=0.25)
+    >>> plan = draw_check_plan(params, rng=np.random.default_rng(1))
+    >>> key = generate_private_key(params, 0, rng=np.random.default_rng(2))
+    >>> outcome = distribute_to_recipient_with_checks(
+    ...     key, params, party=Party.BOB, check_plan=plan,
+    ...     rng=np.random.default_rng(3),
+    ... )
+    >>> len(outcome.record) == params.signing_length == 48
+    True
+    >>> outcome.record.check_against(params.sifted())
+    >>> outcome.log.round_count == params.check_count == 16
+    True
+    >>> estimate_qber(outcome.log.qber).errors        # an ideal channel
+    0
+    """
+
+    record: RecipientRecord
+    log: CheckLog
+    plan: CheckRoundPlan | None
+
+
+def _resolve_plan(
+    check_plan: CheckRoundPlan | None, params: ProtocolParams
+) -> CheckRoundPlan | None:
+    """Validate a check-round plan against the parameter set it will run under.
+
+    Parameters
+    ----------
+    check_plan : CheckRoundPlan or None
+        The plan, or ``None`` for a run with no sampled estimation.
+    params : ProtocolParams
+        The parameter set.
+
+    Returns
+    -------
+    CheckRoundPlan or None
+        ``check_plan`` unchanged.
+
+    Raises
+    ------
+    TypeError
+        If ``check_plan`` is neither ``None`` nor a
+        :class:`~sih141.protocol.checkrounds.CheckRoundPlan`.
+    ValueError
+        If a plan disagrees with ``params`` about the key length or the check
+        count, or if ``params`` asks for check rounds and no plan was supplied.
+
+    Notes
+    -----
+    The second refusal is the important one, and it is a *security* check rather
+    than tidiness. ``params.check_fraction > 0`` shortens
+    :attr:`~sih141.protocol.params.ProtocolParams.signing_length`, and both
+    matched-count floors are derived from that; distributing such a parameter
+    set without actually holding check rounds back would produce a full-length
+    record scored against floors sized for a shorter one -- every published
+    bound weakened, silently, with nothing in the transcript to show it. So the
+    combination is refused here, at the only boundary that can see both facts.
+    """
+    if check_plan is None:
+        if params.has_check_rounds:
+            raise ValueError(
+                f"params.check_fraction is {params.check_fraction!r}, which "
+                f"reserves {params.check_count} of {params.key_length} "
+                f"positions for sampled parameter estimation and shortens the "
+                f"effective key to {params.signing_length}, but no check_plan "
+                f"was given. Distributing anyway would build a full-length "
+                f"record and then score it against matched-count floors "
+                f"computed for the shorter key -- every bound weakened with "
+                f"nothing to show for it. Draw a plan from the RECIPIENTS' "
+                f"stream: draw_check_plan(params, rng=recipient_rng). To run "
+                f"without estimation, use params.with_check_fraction(0.0)."
+            )
+        return None
+    if not isinstance(check_plan, CheckRoundPlan):
+        raise TypeError(
+            f"check_plan must be a CheckRoundPlan or None, got "
+            f"{type(check_plan).__name__}. Draw one with "
+            f"draw_check_plan(params, rng=...)."
+        )
+    if check_plan.key_length != params.key_length:
+        raise ValueError(
+            f"check_plan was drawn for a key length of "
+            f"{check_plan.key_length} but params.key_length is "
+            f"{params.key_length}. A plan indexes positions of one specific "
+            f"run and is not portable to another length."
+        )
+    if check_plan.check_count != params.check_count:
+        raise ValueError(
+            f"check_plan designates {check_plan.check_count} check rounds but "
+            f"params.check_fraction={params.check_fraction!r} implies "
+            f"{params.check_count} at L={params.key_length}. The two must "
+            f"agree: params.signing_length is what every matched-count floor "
+            f"is derived from, and the plan is what actually decides how many "
+            f"positions survive."
+        )
+    return check_plan
+
+
 def distribute_to_recipient(
     key: PrivateKey,
     params: ProtocolParams,
@@ -470,6 +656,7 @@ def distribute_to_recipient(
     party: Party | str,
     resource_factory: ResourceFactory | None = None,
     rng: np.random.Generator | None = None,
+    check_plan: CheckRoundPlan | None = None,
 ) -> RecipientRecord:
     """Teleport one copy of the quantum public key and measure it on arrival.
 
@@ -511,12 +698,22 @@ def distribute_to_recipient(
         :func:`sih141.core.rng.resolve_rng`. Exactly three variates are consumed
         per key position: basis choice, Bell measurement, projective
         measurement.
+    check_plan : CheckRoundPlan or None, optional
+        Keyword-only. A plan drawn from the *recipients'* stream by
+        :func:`~sih141.protocol.checkrounds.draw_check_plan`, designating which
+        positions are spent on sampled parameter estimation instead of on key.
+        Defaults to ``None``, which is the historical behaviour exactly. With a
+        plan the returned record is already **sifted** and the check-round
+        diagnostics are discarded -- use
+        :func:`distribute_to_recipient_with_checks` to keep them, which is the
+        only reason to pass a plan here at all.
 
     Returns
     -------
     RecipientRecord
-        A classical log of ``len(key)`` entries, indexed ``0 .. L-1``, tagged
-        with ``party`` and with ``key.message_bit``.
+        A classical log tagged with ``party`` and with ``key.message_bit``:
+        ``len(key)`` entries indexed ``0 .. L-1`` without a plan, and
+        ``check_plan.signing_length`` entries re-indexed from ``0`` with one.
 
     Raises
     ------
@@ -524,16 +721,20 @@ def distribute_to_recipient(
         If ``party`` is Alice or names no party; if ``key`` does not belong to
         ``params`` (length or alphabet mismatch, via
         :meth:`~sih141.protocol.keys.PrivateKey.check_against`); if
-        ``resource_factory`` returns ``None``; or if it returns something that is
-        not a physical two-qubit state.
+        ``resource_factory`` returns ``None``; if it returns something that is
+        not a physical two-qubit state; if ``params`` reserves check rounds and
+        no ``check_plan`` was given; or if a given plan disagrees with ``params``
+        about the key length or the check count.
     TypeError
         If ``key`` is not a :class:`~sih141.protocol.keys.PrivateKey`, ``params``
         is not a :class:`~sih141.protocol.params.ProtocolParams`,
-        ``resource_factory`` is not callable, or ``rng`` is neither ``None`` nor
-        a :class:`numpy.random.Generator`.
+        ``resource_factory`` is not callable, ``check_plan`` is neither ``None``
+        nor a :class:`~sih141.protocol.checkrounds.CheckRoundPlan`, or ``rng``
+        is neither ``None`` nor a :class:`numpy.random.Generator`.
 
     See Also
     --------
+    distribute_to_recipient_with_checks : Keeps the check-round diagnostics.
     distribute_public_key : Both recipients in protocol order.
     sih141.protocol.records.RecipientRecord.check_against : The reverse check.
 
@@ -567,6 +768,96 @@ def distribute_to_recipient(
     >>> all(record.eigenvalues[i] == key.eigenvalues[i] for i in matched)
     True
     """
+    return distribute_to_recipient_with_checks(
+        key,
+        params,
+        party=party,
+        resource_factory=resource_factory,
+        rng=rng,
+        check_plan=check_plan,
+    ).record
+
+
+def distribute_to_recipient_with_checks(
+    key: PrivateKey,
+    params: ProtocolParams,
+    *,
+    party: Party | str,
+    resource_factory: ResourceFactory | None = None,
+    rng: np.random.Generator | None = None,
+    check_plan: CheckRoundPlan | None = None,
+) -> RecipientDistribution:
+    """Run Phase A for one recipient, keeping the check-round diagnostics.
+
+    The full-information form of :func:`distribute_to_recipient`, which is a
+    thin wrapper over this. Every position draws a resource from the seam; the
+    plan then decides what that resource is spent on:
+
+    * a **key round** teleports the key element and the recipient measures what
+      arrives, exactly as before;
+    * a **check round** measures both halves of the pair instead
+      (:func:`~sih141.protocol.checkrounds.observe_qber_round` or
+      :func:`~sih141.protocol.checkrounds.observe_chsh_round`) and contributes
+      nothing to the record.
+
+    See :ref:`check-round-lockstep` for the two invariants that keep the two
+    branches indistinguishable from outside, and
+    :mod:`sih141.protocol.checkrounds` for what the diagnostics mean.
+
+    Parameters
+    ----------
+    key : PrivateKey
+        Alice's **full-length** key for one message bit. She draws all ``L``
+        elements because she does not know which positions the recipients will
+        check; the ones that land on check rounds are simply never prepared.
+    params : ProtocolParams
+        The parameter set.
+    party : Party or str
+        Keyword-only. The recipient. Alice is refused.
+    resource_factory : callable or None, optional
+        Keyword-only. The Phase 3 attack seam, called once per position on both
+        branches alike.
+    rng : numpy.random.Generator or None, optional
+        Keyword-only (D3). Exactly three variates per position, on both
+        branches.
+    check_plan : CheckRoundPlan or None, optional
+        Keyword-only. The plan, shared by both recipients of a message bit.
+        ``None`` runs the historical all-key distribution and returns an empty
+        log.
+
+    Returns
+    -------
+    RecipientDistribution
+        The sifted record, the check log, and the plan that produced them.
+
+    Raises
+    ------
+    ValueError
+        As :func:`distribute_to_recipient`.
+    TypeError
+        As :func:`distribute_to_recipient`.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from sih141.protocol.checkrounds import draw_check_plan, estimate_chsh
+    >>> from sih141.protocol.distribute import (
+    ...     distribute_to_recipient_with_checks
+    ... )
+    >>> from sih141.protocol.keys import generate_private_key
+    >>> from sih141.protocol.params import Party, ProtocolParams
+    >>> params = ProtocolParams(key_length=800, check_fraction=0.5)
+    >>> plan = draw_check_plan(params, rng=np.random.default_rng(41))
+    >>> key = generate_private_key(params, 1, rng=np.random.default_rng(42))
+    >>> outcome = distribute_to_recipient_with_checks(
+    ...     key, params, party=Party.CHARLIE, check_plan=plan,
+    ...     rng=np.random.default_rng(43),
+    ... )
+    >>> len(outcome.record), outcome.log.round_count
+    (400, 400)
+    >>> estimate_chsh(outcome.log.chsh).violates_classical_bound
+    True
+    """
     if not isinstance(key, PrivateKey):
         raise TypeError(
             f"key must be a PrivateKey, got {type(key).__name__}. Draw one with "
@@ -578,48 +869,90 @@ def distribute_to_recipient(
         )
     recipient = _resolve_verifier(party)
     key.check_against(params)
+    plan = _resolve_plan(check_plan, params)
     factory, wants_context = _resolve_factory(resource_factory)
     generator = resolve_rng(rng)
 
     alphabet = params.bases
     chosen_bases: list[PauliBasis] = []
     eigenvalues: list[int] = []
+    qber_seen: list[QberObservation] = []
+    chsh_seen: list[ChshObservation] = []
+    planned = {} if plan is None else plan.rounds_by_position()
 
     for index, element in enumerate(key.elements):
         # 1. The recipient commits to a basis before the qubit arrives; his draw
         #    is independent of Alice's and is what makes the matched set random.
+        #    It is made on EVERY position, check rounds included, and discarded
+        #    there: the draw must not be correlated with the round's role, and
+        #    the constant variate budget is what keeps a checked run and an
+        #    unchecked one in lockstep (:ref:`check-round-lockstep`).
         basis = alphabet[int(generator.integers(len(alphabet)))]
 
-        # 2. A genuine teleportation over a fresh pair. Alice re-prepares the
-        #    eigenstate from its classical label (preparation, not cloning) and
-        #    hands it over as a Statevector, which is teleport()'s exact
-        #    fidelity path for a pure payload.
-        hop = teleport(
-            element.state(),
-            resource=_draw_resource(
-                factory,
-                wants_context,
-                ResourceContext(
-                    party=recipient,
-                    message_bit=key.message_bit,
-                    position=index,
-                ),
+        # 2. One resource per position, drawn from the seam BEFORE the branch
+        #    below, with a context that says nothing about which branch it is.
+        #    An adversary who could tell a watched round from an unwatched one
+        #    would behave on the watched ones and every estimate here would be
+        #    fiction, so the call is deliberately identical on both.
+        resource = _draw_resource(
+            factory,
+            wants_context,
+            ResourceContext(
+                party=recipient,
+                message_bit=key.message_bit,
+                position=index,
             ),
-            rng=generator,
         )
 
-        # 3. Immediate measurement. The received state is a one-qubit density
-        #    matrix, so the measured index is 0 (D2).
-        outcome = projective_measure(hop.received, 0, basis, rng=generator)
+        scheduled = planned.get(index)
+        if scheduled is None:
+            # 3a. Key round: a genuine teleportation. Alice re-prepares the
+            #     eigenstate from its classical label (preparation, not
+            #     cloning) and hands it over as a Statevector, which is
+            #     teleport()'s exact fidelity path for a pure payload; the
+            #     received state is a one-qubit density matrix, so the measured
+            #     index is 0 (D2).
+            hop = teleport(element.state(), resource=resource, rng=generator)
+            outcome = projective_measure(hop.received, 0, basis, rng=generator)
+            chosen_bases.append(basis)
+            eigenvalues.append(outcome.eigenvalue)
+            # `hop` and `outcome.post_state` are rebound on the next iteration
+            # and never stored: no quantum memory is retained anywhere (see the
+            # module docstring). Only the two classical columns above survive.
+        elif isinstance(scheduled, QberRound):
+            # 3b. Check round, QBER arm. The pair is spent here; `element` is
+            #     never prepared, which is why the position carries no key and
+            #     is safe to publish.
+            qber_seen.append(
+                observe_qber_round(resource, scheduled, rng=generator)
+            )
+        elif isinstance(scheduled, ChshRound):
+            # 3c. Check round, CHSH arm.
+            chsh_seen.append(
+                observe_chsh_round(resource, scheduled, rng=generator)
+            )
+        else:
+            # Unreachable through draw_check_plan, and stated rather than
+            # assumed: a future third check role that reached this loop without
+            # a branch would otherwise be silently dropped, quietly shrinking
+            # the published sample while the key stayed sifted for it.
+            raise TypeError(
+                f"check_plan schedules an unknown kind of round at position "
+                f"{index}: {type(scheduled).__name__}. Expected a QberRound or "
+                f"a ChshRound."
+            )
 
-        chosen_bases.append(basis)
-        eigenvalues.append(outcome.eigenvalue)
-        # `hop` and `outcome.post_state` are rebound on the next iteration and
-        # never stored: no quantum memory is retained anywhere (see the module
-        # docstring). Only the two classical columns above survive the loop.
-
-    return RecipientRecord.from_measurements(
-        recipient, key.message_bit, chosen_bases, eigenvalues
+    return RecipientDistribution(
+        record=RecipientRecord.from_measurements(
+            recipient, key.message_bit, chosen_bases, eigenvalues
+        ),
+        log=CheckLog(
+            party=recipient,
+            message_bit=key.message_bit,
+            qber=tuple(qber_seen),
+            chsh=tuple(chsh_seen),
+        ),
+        plan=plan,
     )
 
 
@@ -630,6 +963,7 @@ def distribute_public_key(
     parties: Sequence[Party | str] = VERIFIERS,
     resource_factory: ResourceFactory | None = None,
     rng: np.random.Generator | None = None,
+    check_plan: CheckRoundPlan | None = None,
 ) -> dict[Party, RecipientRecord]:
     """Distribute one copy of the public key to each recipient.
 
@@ -663,13 +997,21 @@ def distribute_public_key(
         target.
     rng : numpy.random.Generator or None, optional
         Keyword-only (D3).
+    check_plan : CheckRoundPlan or None, optional
+        Keyword-only. Shared by every party, which is not an optimisation: the
+        two recipients' records are exchanged position by position during
+        symmetrisation and scored against one declaration, so they must retain
+        the *same* positions or they stop indexing the same key.
+        :class:`~sih141.protocol.checkrounds.CheckRoundPlan` explains the
+        reasoning in full. The diagnostics are discarded here; use
+        :func:`distribute_public_key_with_checks` to keep them.
 
     Returns
     -------
     dict of Party to RecipientRecord
         One **raw** record per party, keyed by
-        :class:`~sih141.protocol.params.Party`, in the order given. Pass the
-        pair through
+        :class:`~sih141.protocol.params.Party`, in the order given, and already
+        sifted when a plan was in force. Pass the pair through
         :func:`sih141.protocol.symmetrise.symmetrise_records` before verifying:
         two raw logs support no non-repudiation claim, and
         :func:`sih141.protocol.verify.verify_all` refuses them.
@@ -697,6 +1039,94 @@ def distribute_public_key(
     >>> records[Party.BOB].bases == records[Party.CHARLIE].bases
     False
     """
+    return {
+        party: outcome.record
+        for party, outcome in distribute_public_key_with_checks(
+            key,
+            params,
+            parties=parties,
+            resource_factory=resource_factory,
+            rng=rng,
+            check_plan=check_plan,
+        ).items()
+    }
+
+
+def distribute_public_key_with_checks(
+    key: PrivateKey,
+    params: ProtocolParams,
+    *,
+    parties: Sequence[Party | str] = VERIFIERS,
+    resource_factory: ResourceFactory | None = None,
+    rng: np.random.Generator | None = None,
+    check_plan: CheckRoundPlan | None = None,
+) -> dict[Party, RecipientDistribution]:
+    """Distribute to each recipient, keeping every check-round diagnostic.
+
+    The full-information form of :func:`distribute_public_key`, which is a thin
+    wrapper over this. One generator is threaded through every party, so one
+    seed reproduces the whole distribution phase, and one plan is executed on
+    every link, so the two recipients retain the same positions.
+
+    The two logs it returns are **separate samples of two different channels**,
+    and should stay separate unless the links are believed identical: pooling
+    Bob's and Charlie's check rounds into one rate reports the average of two
+    things and detects neither, which is precisely the shape of a one-sided
+    attack.
+
+    Parameters
+    ----------
+    key : PrivateKey
+        Alice's full-length key for one message bit.
+    params : ProtocolParams
+        The parameter set.
+    parties : sequence of Party or str, optional
+        Keyword-only. Defaults to
+        :data:`~sih141.protocol.params.VERIFIERS`.
+    resource_factory : callable or None, optional
+        Keyword-only. Shared by every party's run, and invoked once per position
+        *per party* on both branches alike.
+    rng : numpy.random.Generator or None, optional
+        Keyword-only (D3).
+    check_plan : CheckRoundPlan or None, optional
+        Keyword-only. Shared by every party; see
+        :func:`distribute_public_key`.
+
+    Returns
+    -------
+    dict of Party to RecipientDistribution
+        One record, one check log and the plan, per party.
+
+    Raises
+    ------
+    ValueError
+        If ``parties`` is empty, holds a duplicate, or holds Alice; or for any
+        reason :func:`distribute_to_recipient_with_checks` raises.
+    TypeError
+        If ``parties`` is not a sequence of parties, or as
+        :func:`distribute_to_recipient_with_checks`.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from sih141.protocol.checkrounds import draw_check_plan, estimate_qber
+    >>> from sih141.protocol.distribute import (
+    ...     distribute_public_key_with_checks
+    ... )
+    >>> from sih141.protocol.keys import generate_private_key
+    >>> from sih141.protocol.params import Party, ProtocolParams
+    >>> params = ProtocolParams(key_length=200, check_fraction=0.5)
+    >>> plan = draw_check_plan(params, rng=np.random.default_rng(8))
+    >>> key = generate_private_key(params, 0, rng=np.random.default_rng(9))
+    >>> outcomes = distribute_public_key_with_checks(
+    ...     key, params, check_plan=plan, rng=np.random.default_rng(10)
+    ... )
+    >>> outcomes[Party.BOB].log.positions == outcomes[
+    ...     Party.CHARLIE].log.positions == plan.positions
+    True
+    >>> estimate_qber(outcomes[Party.BOB].log.qber).estimate
+    0.0
+    """
     if isinstance(parties, (str, bytes)) or not isinstance(parties, Sequence):
         raise TypeError(
             f"parties must be a sequence of Party members, got "
@@ -717,12 +1147,13 @@ def distribute_public_key(
         )
     generator = resolve_rng(rng)
     return {
-        party: distribute_to_recipient(
+        party: distribute_to_recipient_with_checks(
             key,
             params,
             party=party,
             resource_factory=resource_factory,
             rng=generator,
+            check_plan=check_plan,
         )
         for party in resolved
     }

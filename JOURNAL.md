@@ -8,7 +8,7 @@
 > on the maintainer's explicit instruction. The permanent record is
 > `docs/METRICS.md` and the `docs/PHASE*.md` notes.
 
-**54 entries** — 21 issue · 15 decision · 10 finding · 5 fix · 2 note · 1 deadend
+**58 entries** — 22 issue · 16 decision · 11 finding · 5 fix · 3 note · 1 deadend
 
 
 ## Phase 0 — Scaffold
@@ -1149,3 +1149,243 @@ the verifier himself, and a verifier who blinds himself loses only his own
 protection. QDSSession re-stamps the post-symmetrisation logs for the same
 reason -- a symmetriser seam is the recipients' step, and it must not be able to
 strip the recipients' own binding on the way through.
+
+### `[*]` CHSH needs two measurements, so Alice must know the check set
+
+*finding · check-rounds agent · 2026-08-31T17:56:23Z*
+
+A genuine two-wing CHSH test cannot be hidden from Alice in this architecture,
+and pretending otherwise would have produced a fake number.
+
+The brief says the check set is drawn from the recipient stream because "she
+must not know which positions are checked". I tried to honour that literally and
+could not, for a structural reason worth writing down so nobody spends another
+afternoon on it.
+
+A CHSH violation needs TWO measurements on one shared pair, with two settings
+per wing. In this protocol Alice's half of the pair is consumed by the Bell
+measurement that teleports the payload. So on a check round she must measure her
+half at an announced angle INSTEAD of Bell-measuring it against a payload, and
+one qubit cannot do both. She therefore has to know, at measurement time, that
+the round is a check round.
+
+Three dead ends I tried first:
+
+1. Use Alice's Bell-measurement outcome as her CHSH wing. It does carry
+   correlation: for an ideal pair, her outcome plus her known (basis,
+   eigenvalue) determines the recipient's uncorrected outcome exactly on matched
+   bases. But that makes her wing a PREPARATION, not a measurement -- the
+   accessible correlation matrix is diagonal in {X,Y,Z} with entries 1, and the
+   CHSH combination over any settings from that set is 0. Prepare-and-measure
+   admits no Bell violation, by construction. This is a theorem, not a coding
+   problem.
+2. Extra decoy rounds interleaved with the key rounds, so the check set hides
+   inside a longer stream. Same wall: Alice still has to do something different
+   with her half on a decoy round.
+3. Infer CHSH from the teleportation fidelity via the singlet fraction
+   (F_tel = (2 F_s + 1)/3, S <= 2*sqrt(2)*(4 F_s - 1)/3). This works arithmetically
+   but is an INFERRED number under a Werner assumption, not a measured Bell
+   violation, and publishing it as "CHSH" would be exactly the kind of quiet
+   overclaim this project keeps finding in its own older docstrings.
+
+What is actually true, and what the module now says: the property the estimate
+rests on is that the CHANNEL ADVERSARY does not know the check set WHILE
+ATTACKING. That is bought by timing, not by secrecy from Alice -- the same
+argument sifting rests on in every QKD protocol. Alice learns the set only after
+the pairs are through the channel, and her honesty at that point is assumption
+(AUTH), which is already load-bearing everywhere else in this package (a signer
+who owns both seams is accepted with probability 1 at QBER 0, per params.py).
+
+The enforceable half is testable and is tested: distribute.py calls the
+resource_factory identically on both branches (same call, same ResourceContext,
+same order) and consumes exactly three variates per position either way, so
+nothing on the wire or in the stream distinguishes a watched round from an
+unwatched one. test_the_factory_cannot_tell_a_check_round_from_a_key_round is
+the load-bearing test of the whole feature; if it ever goes red, every number
+checkrounds.py produces describes a channel nobody used.
+
+The module docstring states all of this under :ref:`check-timing`, including the
+sentence that matters most: this is NOT a device-independent test.
+
+### `[D]` Why the check fraction is 1/8, and why CHECKED_PARAMS is longer not weaker
+
+*decision · check-rounds agent · 2026-08-31T17:56:46Z*
+
+DEFAULT_CHECK_FRACTION = 1/8, and every step of the arithmetic is a doctest in
+checkrounds.py. The point of writing it down here is the SHAPE of the
+derivation, which surprised me twice.
+
+Setup: confidence 0.99 two-sided, z = 2.5758 (obtained by bisecting math.erfc,
+not from a table of fitted coefficients -- no magic constants to mistype).
+
+R1, the QBER arm. s_a = 1/64 is a DECISION threshold, so the ask is a half-width
+of s_a/4: then a channel at the budget and a noiseless one have intervals
+separated by s_a/2 with no overlap. n_q >= 16 z^2 (1 - s_a)/s_a = 6688.
+
+R2, the CHSH arm. s_a is a budget on p = 2 s_a = 1/32, and dS/dp = -2*sqrt(2),
+so resolving p_a needs a half-width of 2*sqrt(2)*p_a in S. Each cell is a mean of
++-1 products, 1 - E^2 = 1/2 at the ideal point, so Var(S) = 8/n for balanced
+cells: n_S >= z^2/p_a^2 = 6795.
+
+SURPRISE 1: the weight is derived, not chosen. 6795/(6688+6795) = 0.5040, so
+CHECK_CHSH_WEIGHT = 1/2 falls out of the two requirements being almost exactly
+equal. I had assumed I would have to defend a split by taste. I did not.
+
+SURPRISE 2: CHSH is a much coarser instrument than QBER for small p, and the two
+requirements only look comparable because R2 was stated at the budget scale
+rather than at s_a/4. The weaker ask -- merely CERTIFY a violation of the
+classical bound on an honest channel -- needs 8 z^2/(2sqrt2 - 2)^2 = 78 rounds.
+Seventy-eight. If I had sized the sample on that, the CHSH arm would have been
+free and useless: it could say "entangled" but never "entangled at p = 0.03
+rather than 0.06", which is the question Phase 4 actually asks. The reason is
+structural: QBER's per-round variance is O(p) near a small p, CHSH's is O(1)
+always. Anyone tempted to shrink the check fraction should shrink the CHSH arm
+knowingly, not by accident.
+
+Total 13483, which is 0.1170 of L = 115200, rounded UP to the next binary
+fraction: 1/8. Rounding down would have failed the requirement it was derived
+from.
+
+WHAT IT COSTS, and the decision that follows. Spending 1/8 out of L = 115200
+leaves 100800 signing positions, 33600 expected matched, and moves
+enforced_repudiation_bound from 1.4139e-09 to 1.8853e-08 -- thirteen times
+weaker. I did NOT ship that. CHECKED_PARAMS runs at L = 131664 (the smallest
+multiple of 24 above 115200 * 8/7), whose signing length 115206 is at least the
+old whole key, so the bound comes back to 1.4124e-09 -- no weaker than the
+unchecked set. Check rounds are bought with key length, not with security. Both
+numbers are doctests, printed side by side, precisely so the cheap one cannot be
+quoted by mistake later.
+
+DEFAULT_PARAMS keeps check_fraction = 0.0. That is deliberate: it is the audited
+set whose 1.4139e-09 appears in docstrings across five modules I do not own, and
+silently moving it would have invalidated all of them. Turning estimation on is
+a deployment decision and now looks like one.
+
+Finally: what binds is the COUNT, not the fraction. required_check_rounds()
+exists so a deployment at another L derives its own; DEFAULT_CHECK_FRACTION is
+documented as "the fraction that meets the counts at DEFAULT_PARAMS's length",
+never as a universal constant. At 10x the key length the same sample is 1/80.
+
+### `[!]` The effective length propagates through verify.py but NOT through analysis.py
+
+*issue · check-rounds agent · 2026-08-31T17:57:05Z*
+
+The propagation of the shortened key length is DONE for verify.py and NOT DONE
+for analysis.py, and the gap is real. Anyone touching either module should read
+this before assuming the feature is closed.
+
+The mechanism: ProtocolParams gained check_fraction, and
+
+    check_count     = floor(check_fraction * key_length)
+    signing_length  = key_length - check_count
+    expected_matched = signing_length / |B|        <- the change that matters
+
+verify.py's minimum_matched_count and minimum_pooled_matched_count read
+params.expected_matched and NOTHING else, so both floors and hence
+enforced_repudiation_bound follow the signing length automatically, without
+verify.py knowing check rounds exist. I did not have to touch it (and was not
+allowed to). That is the whole trick and it is pinned by
+test_every_derived_quantity_follows_the_signing_length, which asserts that a
+checked set and a plain set of its signing length agree term for term -- so a
+future edit that points expected_matched back at L fails immediately.
+
+analysis.py is DIFFERENT and is not fixed. It counts Bernoulli trials against
+checked.key_length directly -- Binomial(L, 1/|B|), Binomial(2L, 1/|B|), about
+twenty call sites -- because when it was written every round was a key position.
+Handed a set with check_fraction > 0 it counts the diverted positions as key and
+returns a bound that is TOO GOOD. matched_statistics(checked).expected is 38400
+where the truth is 33600; averaged_repudiation_bound(checked) is strictly
+smaller than the honest one.
+
+I do not own analysis.py, so I closed it the only two ways available:
+
+1. ProtocolParams.sifted() is documented as MANDATORY before any analytic call,
+   naming the affected functions, with the reason.
+2. test_the_analytic_bounds_must_be_given_the_sifted_parameters ASSERTS the
+   discrepancy, including the direction -- the unsifted call must be the
+   better-looking number, which is what makes forgetting sifted() a silent
+   weakening rather than a loud one. If someone later fixes analysis.py to read
+   signing_length, that test goes red and should be replaced by an equality.
+   That is intentional: it is a tripwire, not a blessing.
+
+FOR WHOEVER OWNS analysis.py: the fix is to introduce a "trials" notion that
+reads params.signing_length rather than params.key_length at those ~20 sites.
+It is mechanical but it touches every published bound in the module, so it wants
+its own change and its own review, not a drive-by.
+
+Related sharp edge, already handled: distribute.py now REFUSES a params with
+check_fraction > 0 and no check_plan. Without that refusal QDSSession (which is
+not check-aware and which I must not touch) would happily distribute a
+full-length record and then score it against floors sized for a shorter key --
+every bound weakened, nothing in the transcript to show it. The refusal is at
+the only boundary that can see both facts.
+
+### `[-]` Five check-round decisions that are easy to undo by accident
+
+*note · check-rounds agent · 2026-08-31T17:57:30Z*
+
+Four smaller decisions that are easy to undo by accident, and one derivation
+that turned out sharper than expected.
+
+1. THE CHECK-ROUND QBER EQUALS THE KEY MISMATCH RATE EXACTLY, BASIS BY BASIS,
+   FOR EVERY BELL-DIAGONAL RESOURCE. I expected to have to argue this only for
+   Werner and hand-wave the rest. It is exact. Write the resource as
+   sum_B lam_B |B><B|. The check-round error rates are
+
+       q_Z = lam(Psi+) + lam(Psi-)
+       q_X = lam(Phi-) + lam(Psi-)
+       q_Y = lam(Phi-) + lam(Psi+)
+
+   and teleportation through the same resource is the Pauli channel applying
+   I, X, Z, XZ with probabilities lam(Phi+), lam(Psi+), lam(Phi-), lam(Psi-);
+   a matched position in basis a errs iff the applied Pauli anticommutes with
+   sigma_a, which gives the same three expressions. Werner collapses both to
+   p/2, which is analysis.depolarising_error_rate -- the function s_a was sized
+   against -- so the chain from a measured check statistic to Bob's threshold
+   closes without a modelling assumption beyond Bell-diagonality.
+
+   The test uses lam = (0.70, 0.10, 0.15, 0.05), giving 0.15 / 0.20 / 0.25 in
+   Z / X / Y. DO NOT "simplify" it to a Werner resource: Werner gives the same
+   rate in all three bases and cannot tell the per-basis identity from the
+   weaker averaged one.
+
+2. THE DISCARDED BASIS DRAW ON A CHECK ROUND IS LOAD-BEARING. distribute.py
+   draws the recipient's key basis on EVERY position, including check rounds,
+   and throws it away there. It looks like waste. It is what makes the variate
+   budget constant at three per position on both branches, which makes the
+   generator state identical at the start of every position, which makes a
+   retained position of a checked run BIT-IDENTICAL to the same position of an
+   unchecked run under one seed. test_retained_positions_are_bit_identical_to_
+   an_unchecked_run asserts that as equality, not as a statistic -- it is a far
+   stronger form of "excluding check positions does not bias the key" than any
+   uniformity test, and deleting the draw would silently destroy it.
+
+3. THE PLAN IS SHARED BY BOTH RECIPIENTS, AND MUST BE. Symmetrisation exchanges
+   Bob's and Charlie's entries position by position and verification scores one
+   declaration against both records, so if the two retained different positions
+   the logs would stop indexing the same key. The SETTINGS are shared too, which
+   is harmless (two independent links, and nothing reveals a setting until the
+   pairs are through) but is a choice; a deployment wanting per-party settings
+   would need a per-party plan sharing the position set.
+
+4. NO SYNTHETIC-SAMPLE HELPER IN THE MODULE. The coverage tests need hundreds of
+   samples and build them from a Bernoulli model, but those helpers live in the
+   TEST file, private, not in checkrounds.py. A module that can fabricate a
+   CheckLog is a module from which a fabricated estimate can reach a report. The
+   cost is that Phase 5 will have to write its own if it wants calibration
+   curves; that is the right trade.
+
+5. Intervals are CLIPPED AT THE ALGEBRAIC BOUND +-4, NOT AT TSIRELSON. Quantum
+   mechanics bounds the true S by 2*sqrt(2), but the ESTIMATE can exceed it by
+   sampling noise, and clipping there would assume the conclusion the test
+   exists to check. Same reasoning as the Wilson interval at zero errors: it
+   returns [0, z^2/(n+z^2)], not [0, 0], because absence of evidence is not
+   certainty.
+
+NOT ATTEMPTED, deliberately: the brief quotes 2.0000 for a kept GHZ share and
+1.0020 for intercept-resend as Phase 4 figures. I derived and pinned only what I
+could derive -- 2*sqrt(2) ideal, (1-p)*2*sqrt(2) Werner, the classical bound 2,
+and a classically correlated pair sitting below it -- and made no claim about
+those two. Phase 4 owns them; if they disagree with this module's settings, the
+settings are in CHSH_ALICE_ANGLES / CHSH_RECIPIENT_ANGLES and the prediction is
+depolarising_chsh().

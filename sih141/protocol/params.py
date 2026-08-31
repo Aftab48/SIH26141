@@ -195,7 +195,9 @@ are therefore restated here as tests -- including those documented on
 ...     recipient_forgery_bound,
 ...     repudiation_bound,
 ... )
->>> from sih141.protocol.params import DEFAULT_PARAMS, DEMO_PARAMS
+>>> from sih141.protocol.params import (
+...     CHECKED_PARAMS, DEFAULT_PARAMS, DEMO_PARAMS,
+... )
 >>> from sih141.protocol.verify import (
 ...     enforced_repudiation_bound,
 ...     minimum_matched_count,
@@ -263,6 +265,50 @@ True
 >>> f"{repudiation_bound(DEMO_PARAMS, matched_records=128):.2f}"
 '0.97'
 
+Sampled parameter estimation, and the honest propagation of what it costs.
+:data:`CHECKED_PARAMS` spends an eighth of its rounds on measuring the channel;
+the shortened :attr:`ProtocolParams.signing_length` is what every floor and
+every bound is then computed from, so the checked set is *not weaker* than the
+unchecked one -- it is longer:
+
+>>> CHECKED_PARAMS.check_count, CHECKED_PARAMS.signing_length
+(16458, 115206)
+>>> CHECKED_PARAMS.expected_matched
+38402.0
+>>> minimum_matched_count(CHECKED_PARAMS), minimum_pooled_matched_count(
+...     CHECKED_PARAMS)
+(36557, 74194)
+>>> f"{enforced_repudiation_bound(CHECKED_PARAMS):.4e}"
+'1.4124e-09'
+>>> enforced_repudiation_bound(CHECKED_PARAMS) <= enforced_repudiation_bound(
+...     DEFAULT_PARAMS)
+True
+
+The substitution that makes it work: verification runs under
+:meth:`ProtocolParams.sifted`, whose ``key_length`` *is* the signing length, and
+which is indistinguishable from the checked set in every derived quantity:
+
+>>> sifted = CHECKED_PARAMS.sifted()
+>>> sifted.key_length, sifted.check_fraction
+(115206, 0.0)
+>>> (sifted.expected_matched, minimum_matched_count(sifted),
+...  minimum_pooled_matched_count(sifted)) == (
+...     CHECKED_PARAMS.expected_matched,
+...     minimum_matched_count(CHECKED_PARAMS),
+...     minimum_pooled_matched_count(CHECKED_PARAMS))
+True
+
+The shipped fraction is derived, not chosen, and it meets its own requirement at
+this length -- :mod:`sih141.protocol.checkrounds` shows the arithmetic:
+
+>>> from sih141.protocol.checkrounds import required_check_rounds
+>>> required_check_rounds(CHECKED_PARAMS).total
+13483
+>>> CHECKED_PARAMS.check_count >= required_check_rounds(CHECKED_PARAMS).total
+True
+>>> DEFAULT_PARAMS.check_count, DEFAULT_PARAMS.has_check_rounds
+(0, False)
+
 Notes
 -----
 Determinism (D3)
@@ -279,6 +325,7 @@ Shared coercions
 from __future__ import annotations
 
 import enum
+import math
 import numbers
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -295,8 +342,11 @@ __all__ = [
     "DEFAULT_S_A",
     "DEFAULT_S_V",
     "DEFAULT_BASES",
+    "DEFAULT_CHECK_FRACTION",
     "DEFAULT_PARAMS",
     "DEMO_PARAMS",
+    "CHECKED_PARAMS",
+    "DEMO_CHECKED_PARAMS",
 ]
 
 
@@ -393,8 +443,35 @@ that exponent; pushing it lower costs key length through the ``s_v - s_a`` gap
 in the repudiation bound.
 """
 
+DEFAULT_CHECK_FRACTION: Final[float] = 0.125
+"""The share of positions spent on sampled parameter estimation, ``1/8``.
+
+Not a taste. :mod:`sih141.protocol.checkrounds` derives two sample-size
+requirements -- the QBER arm must resolve ``s_a`` to ``s_a/4`` (``6688``
+rounds), the CHSH arm must resolve the corresponding depolarising strength
+``2 s_a`` (``6795`` rounds) -- whose sum ``13483`` is ``0.1170`` of
+:data:`DEFAULT_PARAMS`'s ``L``, rounded **up** to the next binary fraction.
+:func:`sih141.protocol.checkrounds.required_check_rounds` recomputes it for any
+other parameter set, and should be called rather than this constant copied: what
+the requirements bind is the *count*, and the fraction that delivers it shrinks
+as ``L`` grows.
+
+Applied to :data:`DEFAULT_PARAMS` it would cost a factor of thirteen in the
+enforced repudiation bound. :data:`CHECKED_PARAMS` pays in key length instead;
+both numbers are doctests in the :mod:`sih141.protocol.checkrounds` module
+docstring, side by side, so the cheap one cannot be quoted by mistake.
+"""
+
 _DEFAULT_KEY_LENGTH: Final[int] = 115200
 _DEMO_KEY_LENGTH: Final[int] = 192
+
+_CHECKED_KEY_LENGTH: Final[int] = 131664
+"""``L`` for :data:`CHECKED_PARAMS`: the smallest multiple of 24 above ``115200 * 8/7``.
+
+A multiple of ``8`` so the check count is exact, and of ``24`` so the surviving
+:attr:`ProtocolParams.signing_length` stays divisible by ``3`` and the expected
+matched count is an integer -- the same tidiness ``115200`` was chosen for.
+"""
 
 
 def _as_basis(basis: PauliBasis | str, *, name: str = "basis") -> PauliBasis:
@@ -575,6 +652,59 @@ def _as_threshold(value: Any, name: str) -> float:
     return result
 
 
+def _as_check_fraction(value: Any) -> float:
+    """Coerce and range-check the sampled-estimation fraction.
+
+    Parameters
+    ----------
+    value : float
+        The fraction of positions to spend on check rounds, in ``[0, 1)``.
+
+    Returns
+    -------
+    float
+        The fraction as a plain float.
+
+    Raises
+    ------
+    TypeError
+        If ``value`` is a boolean or not a real number.
+    ValueError
+        If ``value`` is not finite, is negative, or is ``1`` or more -- a run
+        that checks every position has no key left to sign with.
+    """
+    if isinstance(value, bool):
+        raise TypeError(
+            f"check_fraction must be a real number in [0, 1), got the boolean "
+            f"{value!r}"
+        )
+    if not isinstance(value, numbers.Real):
+        raise TypeError(
+            f"check_fraction must be a real number in [0, 1), got "
+            f"{type(value).__name__}"
+        )
+    result = float(value)
+    if result != result or result in (float("inf"), float("-inf")):
+        raise ValueError(
+            f"check_fraction must be a finite fraction in [0, 1), got "
+            f"{result!r}"
+        )
+    if result < 0.0:
+        raise ValueError(
+            f"check_fraction must be non-negative, got {result!r}. It is the "
+            f"share of the run's positions diverted from the key to sampled "
+            f"parameter estimation; 0 disables estimation entirely."
+        )
+    if result >= 1.0:
+        raise ValueError(
+            f"check_fraction must be strictly less than 1, got {result!r}. "
+            f"Check positions are excluded from the key, so a fraction of 1 "
+            f"leaves signing_length = 0 and there is nothing left to sign. "
+            f"Try DEFAULT_CHECK_FRACTION = {DEFAULT_CHECK_FRACTION!r}."
+        )
+    return result
+
+
 @dataclass(frozen=True)
 class ProtocolParams:
     """The parameter set one QDS run is executed under.
@@ -586,11 +716,14 @@ class ProtocolParams:
     Parameters
     ----------
     key_length : int
-        ``L``, the number of key elements drawn per message bit -- equivalently
-        the number of qubits teleported to *each* recipient per message bit.
-        Must be positive. Only the *matched* positions carry information, so the
-        statistically useful length is ``key_length / len(bases)``; see
-        :attr:`expected_matched`.
+        ``L``, the number of *rounds* per recipient per message bit --
+        equivalently the number of entanglement resources the run consumes on
+        each link, and the number of key elements Alice draws. Must be positive.
+        With ``check_fraction > 0`` some of those rounds are spent on parameter
+        estimation instead of on key, so the key that survives is
+        :attr:`signing_length`, not ``L``. Only the *matched* positions of what
+        survives carry information, so the statistically useful length is
+        ``signing_length / len(bases)``; see :attr:`expected_matched`.
     s_a : float, optional
         Bob's acceptance threshold. Defaults to :data:`DEFAULT_S_A`.
     s_v : float, optional
@@ -609,18 +742,34 @@ class ProtocolParams:
         sweep now looks different from a mistyped config, and the flag is part
         of the parameter set's identity and serialisation, so a transcript
         records that the run was known to be forgeable.
+    check_fraction : float, optional
+        The share of the run's positions diverted from the key to *sampled
+        parameter estimation* -- check rounds
+        (:mod:`sih141.protocol.checkrounds`). Defaults to ``0.0``, which is the
+        historical behaviour exactly: no estimation, and every derived quantity
+        below unchanged. With a positive fraction,
+        ``check_count = floor(check_fraction * key_length)`` positions are spent
+        on measuring the channel and are **excluded from the key**, so the key
+        that gets signed and verified has :attr:`signing_length` elements and
+        *every* derived security quantity -- :attr:`expected_matched`, both
+        matched-count floors, the enforced repudiation bound -- is computed from
+        that, never from ``L``. Verification runs under :meth:`sifted`.
 
     Raises
     ------
     TypeError
         If a threshold is a boolean or a non-real, ``bases`` is not a sequence
-        of bases, or ``allow_forgeable`` is not a bool.
+        of bases, ``allow_forgeable`` is not a bool, or ``check_fraction`` is a
+        boolean or a non-real.
     ValueError
         If ``key_length`` is not a positive integer; if ``bases`` is empty,
         holds duplicates, or holds fewer than two bases; if a threshold is
-        negative or non-finite; if ``s_a >= s_v``; if ``s_v >= 0.5``; or if
-        ``s_v >= forger_floor`` without ``allow_forgeable=True``. Every message
-        names the security property that the rejected value would destroy.
+        negative or non-finite; if ``s_a >= s_v``; if ``s_v >= 0.5``; if
+        ``s_v >= forger_floor`` without ``allow_forgeable=True``; if
+        ``check_fraction`` is negative, non-finite or at least ``1``; or if a
+        positive ``check_fraction`` rounds to no check rounds at all. Every
+        message names the security property that the rejected value would
+        destroy.
 
     Attributes
     ----------
@@ -629,10 +778,12 @@ class ProtocolParams:
     s_v : float
     bases : tuple of PauliBasis
     allow_forgeable : bool
+    check_fraction : float
 
     See Also
     --------
     DEFAULT_PARAMS : The documented security-grade parameter set.
+    CHECKED_PARAMS : The same, with check rounds and the bound preserved.
     DEMO_PARAMS : A short set for interactive runs, with no security claim.
 
     Examples
@@ -653,6 +804,17 @@ class ProtocolParams:
     ValueError: s_v must be strictly below the forger floor, ...
     >>> ProtocolParams(key_length=600, s_a=0.02, s_v=0.2, allow_forgeable=True).s_v
     0.2
+
+    Spending an eighth of the run on estimation shortens the key, and every
+    derived quantity follows the key rather than the nominal length:
+
+    >>> checked = ProtocolParams(key_length=115200, check_fraction=0.125)
+    >>> checked.check_count, checked.signing_length
+    (14400, 100800)
+    >>> checked.expected_matched
+    33600.0
+    >>> checked.sifted().key_length, checked.sifted().check_fraction
+    (100800, 0.0)
     """
 
     key_length: int
@@ -660,6 +822,7 @@ class ProtocolParams:
     s_v: float = DEFAULT_S_V
     bases: tuple[PauliBasis, ...] = DEFAULT_BASES
     allow_forgeable: bool = False
+    check_fraction: float = 0.0
 
     def __post_init__(self) -> None:
         """Coerce the fields and reject every parameter set that is not secure.
@@ -680,6 +843,27 @@ class ProtocolParams:
                 f"allow_forgeable must be a bool, got "
                 f"{type(self.allow_forgeable).__name__}. It is an explicit "
                 f"opt-in to an insecure parameter set, not a tuning knob."
+            )
+        object.__setattr__(
+            self, "check_fraction", _as_check_fraction(self.check_fraction)
+        )
+        if self.check_fraction > 0.0 and self.check_count < 1:
+            raise ValueError(
+                f"check_fraction={self.check_fraction!r} designates "
+                f"floor({self.check_fraction!r} * {self.key_length}) = 0 check "
+                f"rounds, so nothing would be estimated while the parameter "
+                f"set claims estimation is happening -- the worst of both. "
+                f"Either raise the fraction to at least "
+                f"{1.0 / self.key_length!r}, lengthen the key, or set "
+                f"check_fraction=0.0 to say plainly that this run publishes no "
+                f"channel statistics."
+            )
+        if self.check_count >= self.key_length:
+            raise ValueError(
+                f"check_fraction={self.check_fraction!r} designates all "
+                f"{self.check_count} of {self.key_length} positions as check "
+                f"rounds, leaving signing_length=0. Check positions are "
+                f"excluded from the key, so there would be nothing to sign."
             )
 
         if self.s_a >= self.s_v:
@@ -742,14 +926,63 @@ class ProtocolParams:
         return 1.0 / len(self.bases)
 
     @property
+    def check_count(self) -> int:
+        """int: How many of the ``L`` positions are spent on check rounds.
+
+        ``floor(check_fraction * key_length)``, and ``0`` for a parameter set
+        with no estimation. Floor rather than nearest, so the realised fraction
+        never exceeds the requested one and a config file cannot buy a longer
+        sample than it asked for.
+        """
+        return int(math.floor(self.check_fraction * self.key_length))
+
+    @property
+    def signing_length(self) -> int:
+        """int: The key length that survives estimation, ``L - check_count``.
+
+        **The effective key length**, and the one every security quantity in the
+        scheme is computed from. Equal to :attr:`key_length` exactly when
+        ``check_fraction`` is ``0``, which is why turning check rounds off
+        leaves every published number untouched.
+
+        The distinction is load-bearing rather than cosmetic. Check positions
+        are spent on measuring the channel, so they carry no key and are
+        excluded before anything is signed; a floor or a bound computed from
+        ``L`` instead would be claiming evidence the run does not have. See
+        :attr:`expected_matched` and :meth:`sifted`.
+        """
+        return self.key_length - self.check_count
+
+    @property
+    def has_check_rounds(self) -> bool:
+        """bool: Whether this parameter set runs sampled parameter estimation."""
+        return self.check_count > 0
+
+    @property
     def expected_matched(self) -> float:
-        """float: Expected number of matched positions, ``L / |B|``.
+        """float: Expected number of matched positions, ``signing_length / |B|``.
 
         The statistically useful length of a key. Every security bound in the
         scheme is exponential in this, not in :attr:`key_length`, because
-        unmatched positions carry no information and are discarded.
+        unmatched positions carry no information and are discarded --
+        and, since the ``check_fraction`` of positions spent on estimation carry
+        no key either, it is computed from :attr:`signing_length` rather than
+        from ``L``. With ``check_fraction = 0`` the two coincide and this is the
+        familiar ``L / |B|``.
+
+        Both matched-count floors
+        (:func:`sih141.protocol.verify.minimum_matched_count`,
+        :func:`sih141.protocol.verify.minimum_pooled_matched_count`) and hence
+        :func:`sih141.protocol.verify.enforced_repudiation_bound` read this
+        property and nothing else, so the shortening propagates to them without
+        any of those functions having to know check rounds exist. That is the
+        whole mechanism, and what stops a future edit quietly pointing it back
+        at ``L`` is
+        ``test_every_derived_quantity_follows_the_signing_length`` in
+        ``tests/test_protocol_checkrounds.py``, which asserts that a checked set
+        and a plain set of its signing length agree term for term.
         """
-        return self.key_length * self.match_probability
+        return self.signing_length * self.match_probability
 
     @property
     def gap(self) -> float:
@@ -887,6 +1120,100 @@ class ProtocolParams:
         """
         return replace(self, **changes)
 
+    def with_check_fraction(self, check_fraction: float) -> ProtocolParams:
+        """Return the same parameter set with a different check fraction.
+
+        A named spelling of ``with_changes(check_fraction=...)``, because
+        turning sampled estimation on is a security-relevant decision -- it
+        shortens the key and therefore every bound -- and deserves to be
+        greppable.
+
+        Parameters
+        ----------
+        check_fraction : float
+            The new fraction, in ``[0, 1)``. See
+            :data:`DEFAULT_CHECK_FRACTION`, and
+            :func:`sih141.protocol.checkrounds.required_check_rounds` for the
+            fraction *this* ``L`` actually needs.
+
+        Returns
+        -------
+        ProtocolParams
+            A new, validated instance.
+
+        Examples
+        --------
+        >>> from sih141.protocol.params import DEFAULT_CHECK_FRACTION, DEMO_PARAMS
+        >>> checked = DEMO_PARAMS.with_check_fraction(DEFAULT_CHECK_FRACTION)
+        >>> checked.check_count, checked.signing_length
+        (24, 168)
+        >>> checked.with_check_fraction(0.0) == DEMO_PARAMS
+        True
+        """
+        return replace(self, check_fraction=check_fraction)
+
+    def sifted(self) -> ProtocolParams:
+        """Return the parameter set the *retained* key is verified under.
+
+        Identical in every threshold, with ``key_length`` cut to
+        :attr:`signing_length` and ``check_fraction`` cleared -- the run's check
+        rounds have already happened and are not to be spent twice.
+
+        This is the object to hand to :func:`sih141.protocol.verify.verify`,
+        :meth:`sih141.protocol.keys.PrivateKey.check_against` and
+        :meth:`sih141.protocol.records.RecipientRecord.check_against` after a
+        checked distribution, because those all require the key and the record
+        to be exactly ``key_length`` long and a sifted pair is
+        ``signing_length`` long. Every derived quantity is unchanged by the
+        substitution -- ``self.expected_matched == self.sifted().expected_matched``
+        by construction -- so verifying under the sifted set applies the same
+        floors and the same bound the checked set advertises.
+
+        **And it is mandatory before anything in**
+        :mod:`sih141.protocol.analysis`. That module counts Bernoulli trials
+        against ``key_length`` *directly* -- ``Binomial(L, 1/|B|)``,
+        ``Binomial(2L, 1/|B|)`` -- rather than through
+        :attr:`expected_matched`, because when it was written a run had no
+        rounds that were not key positions. Handed a set with check rounds it
+        would therefore count the diverted positions as key and return a bound
+        that is too good, which is exactly the silent weakening this whole
+        feature exists to avoid. The two floors and
+        :func:`sih141.protocol.verify.enforced_repudiation_bound` are safe
+        either way -- they read only :attr:`expected_matched` -- but
+        :func:`~sih141.protocol.analysis.forgery_bound`,
+        :func:`~sih141.protocol.analysis.recipient_forgery_bound`,
+        :func:`~sih141.protocol.analysis.averaged_repudiation_bound`,
+        :func:`~sih141.protocol.analysis.matched_statistics` and their
+        neighbours are not. Call them as ``forgery_bound(params.sifted())``.
+        ``test_the_analytic_bounds_must_be_given_the_sifted_parameters`` in
+        ``tests/test_protocol_checkrounds.py`` pins the discrepancy, and its
+        direction, so it stays visible rather than becoming folklore.
+
+        Returns
+        -------
+        ProtocolParams
+            A validated instance; ``self`` unchanged when there are no check
+            rounds.
+
+        Examples
+        --------
+        >>> from sih141.protocol.params import DEFAULT_PARAMS, ProtocolParams
+        >>> checked = ProtocolParams(key_length=115200, check_fraction=0.125)
+        >>> checked.sifted().key_length
+        100800
+        >>> checked.sifted().expected_matched == checked.expected_matched
+        True
+        >>> checked.sifted().sifted() == checked.sifted()
+        True
+        >>> DEFAULT_PARAMS.sifted() == DEFAULT_PARAMS
+        True
+        """
+        if not self.has_check_rounds:
+            return replace(self, check_fraction=0.0)
+        return replace(
+            self, key_length=self.signing_length, check_fraction=0.0
+        )
+
     # -- serialisation ------------------------------------------------------ #
 
     def to_dict(self) -> dict[str, Any]:
@@ -895,8 +1222,9 @@ class ProtocolParams:
         Returns
         -------
         dict
-            Keys ``"key_length"``, ``"s_a"``, ``"s_v"``, ``"bases"``. The bases
-            are :class:`PauliBasis` members, which are strings, so the result
+            Keys ``"key_length"``, ``"s_a"``, ``"s_v"``, ``"bases"``,
+            ``"allow_forgeable"`` and ``"check_fraction"``. The bases are
+            :class:`PauliBasis` members, which are strings, so the result
             passes straight to :func:`json.dumps`.
 
         Examples
@@ -905,6 +1233,8 @@ class ProtocolParams:
         >>> from sih141.protocol.params import ProtocolParams
         >>> json.loads(json.dumps(ProtocolParams(key_length=9).to_dict()))["bases"]
         ['X', 'Y', 'Z']
+        >>> ProtocolParams(key_length=9).to_dict()["check_fraction"]
+        0.0
         """
         return {
             "key_length": self.key_length,
@@ -912,6 +1242,7 @@ class ProtocolParams:
             "s_v": self.s_v,
             "bases": list(self.bases),
             "allow_forgeable": self.allow_forgeable,
+            "check_fraction": self.check_fraction,
         }
 
     @classmethod
@@ -942,7 +1273,14 @@ class ProtocolParams:
         >>> ProtocolParams.from_dict({"key_length": 12, "bases": ["z", "x"]}).bases
         (<PauliBasis.Z: 'Z'>, <PauliBasis.X: 'X'>)
         """
-        known = {"key_length", "s_a", "s_v", "bases", "allow_forgeable"}
+        known = {
+            "key_length",
+            "s_a",
+            "s_v",
+            "bases",
+            "allow_forgeable",
+            "check_fraction",
+        }
         unknown = sorted(set(data) - known)
         if unknown:
             raise ValueError(
@@ -963,6 +1301,7 @@ class ProtocolParams:
             s_v=data.get("s_v", DEFAULT_S_V),
             bases=data.get("bases", DEFAULT_BASES),
             allow_forgeable=data.get("allow_forgeable", False),
+            check_fraction=data.get("check_fraction", 0.0),
         )
 
 
@@ -1202,4 +1541,66 @@ demonstrated is *the same* decision rule; only ``L`` is cut, from 115200 to 192.
 across the pair the repudiation bound is ``exp(-0.035) = 0.97`` -- order one,
 i.e. no bound worth the name. Use it to watch the protocol run and to keep the
 test suite fast; never to report a security number.
+"""
+
+CHECKED_PARAMS: Final[ProtocolParams] = ProtocolParams(
+    key_length=_CHECKED_KEY_LENGTH,
+    s_a=DEFAULT_S_A,
+    s_v=DEFAULT_S_V,
+    bases=DEFAULT_BASES,
+    check_fraction=DEFAULT_CHECK_FRACTION,
+)
+"""The security-grade set **with** sampled parameter estimation: ``L = 131664``, ``f = 1/8``.
+
+:data:`DEFAULT_PARAMS` has no legitimate source for a channel statistic: the
+distribution phase measures nothing it publishes, so any QBER or CHSH number
+quoted beside it would have been invented. This set fixes that and pays for it
+in the only currency that keeps the security claim intact -- key length.
+
+``check_fraction = 1/8``
+    :data:`DEFAULT_CHECK_FRACTION`, derived in
+    :mod:`sih141.protocol.checkrounds` from two sample-size requirements rather
+    than chosen. ``16458`` of the ``131664`` rounds are spent on estimation,
+    split evenly between the QBER and CHSH arms, and each arm's ``8229`` rounds
+    clears its requirement (``6688`` and ``6795``).
+``L = 131664``
+    ``115200 * 8/7`` rounded up to a multiple of ``24``, so that
+    :attr:`~ProtocolParams.signing_length` ``= 115206`` is at least
+    :data:`DEFAULT_PARAMS`'s whole key length and stays divisible by ``3``.
+    Every floor and every bound is computed from that signing length, so the
+    enforced repudiation bound is ``1.4124e-09`` -- *no weaker* than the
+    ``1.4139e-09`` of the unchecked set.
+
+**The alternative that must not be shipped by accident** is spending the
+fraction out of ``L = 115200`` itself: that leaves ``100800`` signing positions,
+``33600`` expected matched, and an enforced bound of ``1.8853e-08`` -- thirteen
+times weaker, with nothing to show for it but a shorter run. Both figures are
+doctests in :mod:`sih141.protocol.checkrounds`, printed side by side, so the
+cheap one cannot be mistaken for this one.
+
+Cost, stated plainly: ``2 recipients * 2 message bits * 131664 = 526656``
+entanglement resources per full setup, against ``460800`` unchecked. Parameter
+estimation costs 14% more quantum communication and buys the right to say
+anything at all about the channel.
+"""
+
+DEMO_CHECKED_PARAMS: Final[ProtocolParams] = ProtocolParams(
+    key_length=_DEMO_KEY_LENGTH,
+    s_a=DEFAULT_S_A,
+    s_v=DEFAULT_S_V,
+    bases=DEFAULT_BASES,
+    check_fraction=DEFAULT_CHECK_FRACTION,
+)
+"""A short set with check rounds, for interactive runs and the test suite.
+
+:data:`DEMO_PARAMS` plus :data:`DEFAULT_CHECK_FRACTION`: ``L = 192``, of which
+``24`` are check rounds and ``168`` carry key.
+
+**No security claim attaches to this set, and no statistical one either.** Its
+``24`` check rounds are three orders of magnitude below what
+:func:`sih141.protocol.checkrounds.required_check_rounds` asks for, so the
+intervals it produces are honest but far too wide to decide anything -- which is
+itself worth demonstrating, since an interval that says "somewhere between 0 and
+0.4" is exactly what a too-small sample should say. Use it to watch the
+mechanism; never to report a channel number.
 """
