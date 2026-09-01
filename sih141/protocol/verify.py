@@ -430,13 +430,56 @@ identically seeded experiments as a replay of the first.
 verdict is actually reached; a refusal spends nothing, so no floor failure and
 no provenance failure can burn a round. An adversary therefore cannot poison a
 verifier's ledger from outside: the only way to add an entry is to make that
-verifier reach the verdict he was entitled to reach. Under the standing
-authentication assumption (see
-:mod:`sih141.protocol.signature`) the one party who can spend a round on a
-declaration that will be *rejected* is the signer herself, and a signer who
-wants to deny service can simply decline to sign. Storage is one 32-character
-identifier per round per verifier, roughly ``10**2`` bytes; a ledger is
-prunable by round because that is exactly what it is keyed on.
+verifier reach the verdict he was entitled to reach -- measured ``0/400`` over
+three routes in Phase 3, with ``50`` wrong-round presentations leaving the
+ledger empty. Storage is one 32-character identifier per round per verifier,
+roughly ``10**2`` bytes; a ledger is prunable by round because that is exactly
+what it is keyed on.
+
+.. _ledger-denial:
+
+*And the denial of service that sentence used to price at zero.* This section
+previously inferred from "the only way to add an entry is to make that verifier
+reach the verdict he was entitled to reach" that the one party able to spend a
+round on a declaration that will be *rejected* is the signer herself, who could
+anyway decline to sign. **The inference is wrong, and Phase 3 measured it
+wrong: 300/300 at L = 24 and 100/100 at L = 96.** Making a verifier reach a
+verdict is not the same as being the signer. Phase B reveals the round's opening
+*on the declaration*, and the identifier deliberately does not cover the declared
+key (:ref:`sih141.protocol.signature <session-binding>`, and see the paragraph
+below on why that is right). So anyone downstream of that reveal can mint a
+*different* declaration naming the *same* round. The Bob-to-Charlie hop is
+exactly where the threat model puts an adversary, and it is not covered by the
+classical-authentication assumption. He hands Charlie a forged-but-correctly-named
+declaration, Charlie scores it, Charlie rejects it -- and a rejection is a
+verdict, so the round is spent. Alice's genuine declaration is then refused as
+:attr:`AbortReason.RECORD_ALREADY_VERIFIED` for ever.
+
+What actually closes it is not this ledger and not the round binding. It is the
+provenance half of the count exchange, and only under one ordering: when Phase C'
+runs *before* the hop, Charlie's own count was taken against the declaration
+Alice signed while he is looking at the one the hop delivered, so he refuses on
+:attr:`AbortReason.COUNTS_FROM_TWO_DECLARATIONS` -- a refusal, which spends
+nothing. That is
+:data:`~sih141.protocol.session.COUNTS_BEFORE_FORWARDING`, the shipped default.
+Under
+:data:`~sih141.protocol.session.COUNTS_AFTER_FORWARDING` -- the deployment
+reading, and the only one available when the hop and the count exchange share a
+link -- the adversary announces his count against the declaration he is passing
+on, provenance agrees, and the round burns. Measured across all three
+configurations: ``no_count_exchange`` 300/300 denied, after-forwarding 300/300,
+before-forwarding 0/300.
+
+The honest pricing is therefore: **the residual denial-of-service surface is one
+burned round per verifier per presentation channel the adversary controls, and
+it is closed only when every channel that can present a declaration to a
+verifier is authenticated, or the count exchange runs ahead of the hop.** The
+obvious repairs are both worse. Spending only on an *acceptance* would give an
+adaptive adversary unlimited tries at one round -- he presents, sees the
+rejection, edits one position and presents again -- which converts a bounded
+forgery probability into a search. Keying the ledger on the declaration as well
+as the round does the same thing more directly. One shot per round is the
+property worth keeping; where the shot is taken is what authentication buys.
 
 *And what it does not claim.* An adversary holding the Bob-to-Charlie hop can
 rewrite a declaration's opening as freely as he can rewrite its key -- the

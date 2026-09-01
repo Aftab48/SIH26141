@@ -249,6 +249,10 @@ def test_a_declaration_avoiding_both_raw_logs_never_escapes_run() -> None:
         session = QDSSession(
             params,
             signer=_both_log_avoiding,
+            # Both raw logs, which is the whole point of this attack and more
+            # than any adversary in the threat model holds, so the seam offers
+            # them only on request (:ref:`two-log-signer`).
+            signer_sees_recipient_logs=True,
             rng=np.random.default_rng(seed),
         )
         # The assertion is the absence of an exception; pytest reports one as a
@@ -278,6 +282,7 @@ def test_an_aborted_run_is_neither_accepted_nor_rejected() -> None:
     transcript = QDSSession(
         ProtocolParams(key_length=600),
         signer=_both_log_avoiding,
+        signer_sees_recipient_logs=True,
         rng=np.random.default_rng(SEED),
     ).run(1)
 
@@ -303,6 +308,7 @@ def test_an_aborted_run_says_so_in_its_summary() -> None:
     transcript = QDSSession(
         ProtocolParams(key_length=600),
         signer=_both_log_avoiding,
+        signer_sees_recipient_logs=True,
         rng=np.random.default_rng(SEED + 1),
     ).run(0)
     lines = transcript.summary().splitlines()
@@ -319,6 +325,7 @@ def test_an_aborted_run_round_trips_through_json() -> None:
     transcript = QDSSession(
         ProtocolParams(key_length=600),
         signer=_both_log_avoiding,
+        signer_sees_recipient_logs=True,
         rng=np.random.default_rng(SEED + 2),
     ).run(0)
 
@@ -354,7 +361,10 @@ def test_the_session_records_the_refusal_before_it_propagates() -> None:
     """
     params = ProtocolParams(key_length=600)
     session = QDSSession(
-        params, signer=_both_log_avoiding, rng=np.random.default_rng(SEED + 3)
+        params,
+        signer=_both_log_avoiding,
+        signer_sees_recipient_logs=True,
+        rng=np.random.default_rng(SEED + 3),
     )
     session.distribute()
     session.sign(0)

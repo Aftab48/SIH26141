@@ -36,12 +36,14 @@ inequalities. That yields a *provable* false-acceptance bound rather than an obs
 
 ## Threat model
 
-| Attack | What the adversary does | Detection signal |
-| --- | --- | --- |
-| **Forgery** | Produces a signature without the signer's private key | Basis-mismatch count exceeds threshold; success probability decays exponentially in key length |
-| **Impersonation** | Poses as the signer during key distribution or signing | Authentication-round statistics deviate from honest distribution |
-| **Replay** | Re-sends a previously valid (message, signature) pair | Consumed-session ledger; one-time key states |
-| **Channel manipulation** | Tampers with entanglement distribution (intercept-resend, entanglement swapping, injected noise) | QBER rises; CHSH value falls from 2√2 toward the classical bound of 2 |
+| Attack | What the adversary does | Detection signal | Measured (Phase 3) |
+| --- | --- | --- | --- |
+| **Forgery**, outside | Produces a signature without the signer's private key | Basis-mismatch count exceeds threshold; success decays exponentially in key length | mismatch `0.4956`/`0.5018` on a predicted `1/2`; acceptance `5/800` vs `0.0042` |
+| **Forgery**, forging recipient | Forwards his own measured log as the signature | Mismatch hits the `1/12` symmetrisation floor, *and* the matched count doubles to `2L/3` | acceptance `96/300 = 0.320` vs a predicted `0.3456` |
+| **Impersonation** | Poses as the signer during key distribution or signing | Mismatch rate — and *only* the mismatch rate; the matched counts do not move at all | `0/40` accepted at QBER ≈ `1/2` for either seam alone; `200/200` accepted for **both** seams, which assumption (AUTH) excludes and nothing detects |
+| **Replay** | Re-sends a previously valid (message, signature) pair | Consumed-records ledger; round identifier on every declaration | `100/100` → `0/100` with the defence; cross-session `0.115` → `0/100` |
+| **Channel manipulation** | Tampers with entanglement distribution (intercept-resend, kept share, injected noise) | Per-link QBER rises; CHSH falls from 2√2 — and the *per-link* form is what names the compromised party | QBER `0.0994`/`0.3306`/`0.3335` on predictions `p/2`, `1/3`, `1/3` |
+| **Count starvation** | A recipient understates his own matched count and denies the other a verdict | The declared count as a z-score: any successful starvation sits below `−11.54` honest standard deviations, at every key length | denial `20/20`, deterministic and free — one integer |
 
 ## Security claims, stated honestly
 
@@ -63,9 +65,13 @@ bound quoted without its hypothesis is not a bound. Numbers are at `DEFAULT_PARA
 An earlier version of this project published `6.9e−10` as a non-repudiation guarantee
 holding "for every Alice strategy, with no model of Alice". **It does not.** That figure
 averages over the matched count `M ~ Binomial(2L, 1/|B|)`, which is the law of `M` only
-while the signer cannot see which bases the recipients logged — and the `Signer` seam hands
+while the signer cannot see which bases the recipients logged — and the `Signer` seam handed
 her both raw logs. A signer who reads them pins `M = 13` at *any* key length and repudiates
 with probability `1/2`. Key length does not help, because the failure is not statistical.
+(Phase 3 restricted the seam: the logs are now withheld by default and shown only to a
+session built with `signer_sees_recipient_logs=True`, which the transcript records. That
+narrows who can break the assumption; it does not make the averaged figure quotable for a
+run, which is why the per-run bound below is the one to read.)
 
 The mathematics was never wrong; the advertising was. Three things replaced it:
 
@@ -113,6 +119,61 @@ Full derivations, the reproduction of both attacks, and every measurement are in
 bounds is pinned by `tests/test_protocol_reconciliation.py`, and the pooled law and floor by
 `tests/test_protocol_tally.py`.
 
+## What Phase 3 found
+
+Five adversaries, each mounted on the protocol's own seams. **Not one of them needed a
+protocol change to be mounted**, which is what those seams were for. Mounting an adversary
+and *measuring* it are not the same thing, though, and the first result below is the gap that
+turned up between them. Full account in [`docs/PHASE3.md`](docs/PHASE3.md); three results are
+worth stating here.
+
+**A guarantee that could not be measured, now can be — and it holds.** The shipped session
+ran the Phase C′ count exchange *before* the Bob-to-Charlie hop, so a forging recipient's
+declaration was refused on provenance and the second verifier never scored it. That is a
+denial of transfer, not a detection, and it made the recipient-forgery rate of the shipped
+scheme unmeasurable: every published figure came from the pre-pooled variant. Which
+declaration each recipient counts is now a named parameter, `count_exchange_timing`. Under
+the deployment ordering the forger is scored and accepted `96/300 = 0.320` against
+`recipient_forgery_probability(L=60) = 0.345566` — agreement at `z = −0.93`, and the first
+measurement of the real thing.
+
+**Symmetrisation is worth a factor of four, measured rather than argued.** Same adversary,
+same code path, one seam swapped: mismatch rate `0.0863` on the `1/12` floor with Phase A′,
+`0.3378` on the `1/3` floor without. The two 95% intervals, `[0.0814, 0.0915]` and
+`[0.3191, 0.3570]`, do not come close to touching. That gap is what the key length pays for.
+
+**A denial-of-service surface priced at zero is not zero.** `verify.py` reasoned that since
+a round is spent only on a verdict, the only party who can burn one on a declaration that
+will be rejected is the signer herself — who could equally decline to sign. The inference is
+false: Phase B publishes the round's opening *on the declaration*, so anyone downstream can
+mint a different declaration naming the same round, and the Bob-to-Charlie hop is exactly
+where the threat model puts an adversary. Measured `300/300` at `L = 24`. What closes it is
+the *ordering* of Phase C′ — not the ledger and not the round binding — and the honest price
+is now written down. Both obvious repairs are worse: spending only on acceptance would give
+an adaptive adversary unlimited tries at one round.
+
+### The rule that makes the numbers mean anything
+
+Convention **D6**: every adversary takes its own `numpy.random.Generator` and never derives
+randomness from the seed the harness gives the session. This is not fastidiousness. An
+attack written the natural way — one seed, so the experiment reproduces — rebuilds the whole
+run from that integer and predicts **every private symmetrisation coin**, `120/120` on both
+message bits, in about ten lines of public API. The mathematics is untouched; the
+*experiment* becomes fiction, and it looks entirely legitimate: same seams, same transcript,
+same printed bound.
+
+`sih141/attacks/isolation.py` makes that a behavioural check — hold the attack's generator
+fixed and vary the session seed, and its decisions must not move; hold the seed fixed and
+vary its generator, and they must. All **14** adversary-and-seam pairs pass it in
+`tests/test_phase3_isolation_suite.py`, both deliberately-defective controls are still
+caught, and adding a sixth adversary is one row in a table.
+
+Three mutation checks confirm the defences are actually tested: disabling the replay ledger,
+the declaration binding, or check (a) of the isolation check each turns the relevant tests
+red, and only those tests.
+
+Full suite: **2098 passed in 12 min 39 s**, up from 1421 at the end of Phase 2.
+
 ## Roadmap
 
 | Phase | Scope | Status |
@@ -120,7 +181,7 @@ bounds is pinned by `tests/test_protocol_reconciliation.py`, and the pooled law 
 | 0 | Project scaffold, dependencies | ✅ Complete |
 | 1 | Quantum core — Pauli algebra, Bell states, projective measurement, teleportation | ✅ Complete |
 | 2 | QDS protocol — key distribution, signing, verification, transferability | ✅ Complete |
-| 3 | Attack suite — the four adversaries above, plus realistic channel noise | ⬜ |
+| 3 | Attack suite — the four adversaries above, plus count starvation and realistic channel noise | ✅ Complete |
 | 4 | Detection engine — QBER, CHSH, mismatch statistics, Hoeffding-derived thresholds | ⬜ |
 | 5 | Evaluation — forgery probability vs. key length, ROC, FAR/FRR, benchmarks | ⬜ |
 | 6 | Web dashboard — live attack/detection demo | ⬜ |
@@ -167,8 +228,21 @@ sih141/protocol/   the QDS protocol (Phase 2)
                    each way, and the pooled floor it makes checkable
   verify.py        Phase C — the matched/unmatched split, the accept rule, and the
                    three matched-count floors that make an unconditional bound possible
-  session.py       orchestration, and the six seams Phase 3 attacks attach to
+  checkrounds.py   sampled channel estimation — QBER and CHSH on positions spent
+                   on measurement instead of on key
+  session.py       orchestration, and the seams Phase 3 attacks attach to
   analysis.py      closed forms only, no simulation: forgery, repudiation, robustness
+sih141/attacks/    the adversaries (Phase 3)
+  isolation.py     convention D6 as a behavioural check — the one every published
+                   attack rate depends on
+  statistics.py    one Wilson interval and one agreement test for the whole suite,
+                   with the band computed from the sampling standard error
+  forgery.py       the outside forger and the forging recipient
+  impersonation.py Mallory on either of Alice's two seams, and on both
+  replay.py        four replay flavours against the binding and the ledger
+  channel.py       depolarising twirl, intercept-resend, kept share — on both the
+                   entanglement line and the payload line, targetable per party
+  starvation.py    a recipient who understates his own matched count
 tests/             pytest suite
 docs/              engineering notes per phase
 ```
@@ -193,3 +267,12 @@ docs/              engineering notes per phase
    adversary-controllable quantity carry a mandatory argument naming the assumption, so the
    convenient number cannot be obtained by accident. See
    [Security claims](#security-claims-stated-honestly).
+6. **Adversaries own their randomness** (Phase 3, convention D6). Every attack takes its own
+   injected generator and may never derive one from the seed the harness gave the session.
+   An attack that reuses the harness seed predicts every private symmetrisation coin while
+   looking entirely legitimate, so this is enforced by a behavioural check applied to all
+   five adversaries rather than by a comment.
+7. **Tolerances are computed, never guessed.** Every measurement-versus-prediction assertion
+   in the attack suite compares against a band of four sampling standard errors at the
+   *predicted* rate. A tolerance chosen by eye either passes a broken attack or fails a
+   correct one on an ordinary draw, and both failures are silent.

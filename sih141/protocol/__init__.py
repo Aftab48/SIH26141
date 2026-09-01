@@ -148,10 +148,13 @@ from sih141.protocol.analysis import (
     symmetric_repudiation_bound,
 )
 from sih141.protocol.distribute import (
+    PayloadMap,
     ResourceContext,
     ResourceFactory,
     distribute_public_key,
     distribute_to_recipient,
+    accepts_context,
+    identity_payload,
     ideal_resource,
 )
 from sih141.protocol.keys import (
@@ -182,11 +185,19 @@ from sih141.protocol.records import (
 )
 from sih141.protocol.session import (
     MESSAGE_BITS,
+    NO_RECIPIENT_LOGS,
+    ChannelMonitor,
+    ChannelSample,
     Distributor,
     Forwarder,
     QDSSession,
     SessionTranscript,
     Signer,
+    WithheldRecords,
+    COUNT_EXCHANGE_TIMINGS,
+    COUNTS_AFTER_FORWARDING,
+    COUNTS_BEFORE_FORWARDING,
+    forwarder_wants_view,
     honest_forwarder,
     honest_signer,
 )
@@ -206,6 +217,7 @@ from sih141.protocol.tally import (
     CountExchange,
     MatchedCountMessage,
     PooledMatchedCounts,
+    counterpart_count,
     exchange_matched_counts,
     matched_count_message,
     no_count_exchange,
@@ -255,7 +267,10 @@ __all__ = [
     # -- Phase A: distribution ----------------------------------------------- #
     "ResourceContext",
     "ResourceFactory",
+    "PayloadMap",
+    "accepts_context",
     "ideal_resource",
+    "identity_payload",
     "distribute_to_recipient",
     "distribute_public_key",
     # -- Phase A': the recipients' private exchange --------------------------- #
@@ -279,6 +294,7 @@ __all__ = [
     "MatchedCountMessage",
     "PooledMatchedCounts",
     "matched_count_message",
+    "counterpart_count",
     "exchange_matched_counts",
     "no_count_exchange",
     # -- Phase C: the matched-count floors, and refusing to score below them --- #
@@ -298,7 +314,15 @@ __all__ = [
     "Distributor",
     "Signer",
     "Forwarder",
+    "ChannelMonitor",
+    "ChannelSample",
+    "WithheldRecords",
+    "NO_RECIPIENT_LOGS",
     "honest_signer",
+    "COUNTS_AFTER_FORWARDING",
+    "COUNTS_BEFORE_FORWARDING",
+    "COUNT_EXCHANGE_TIMINGS",
+    "forwarder_wants_view",
     "honest_forwarder",
     "SessionTranscript",
     "QDSSession",

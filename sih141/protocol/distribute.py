@@ -110,6 +110,47 @@ A factory that returns ``None`` is rejected rather than forwarded. ``None`` is
 forwarding it would turn a mis-wired attack into a perfect channel and let a
 Phase 3 test pass vacuously.
 
+.. _payload-seam:
+
+The ``payload_map`` seam
+------------------------
+The resource seam owns the *channel*; this one owns the **payload line** -- the
+qubit Alice prepares, between her preparation and her Bell measurement.
+:func:`distribute_to_recipient` takes a ``payload_map``: a callable invoked once
+per **key round** with the eigenstate about to be teleported and the same
+:class:`ResourceContext` the resource factory saw, returning the state that is
+actually sent. It defaults to ``None``, which calls nothing at all, so the
+honest path is unchanged down to the last variate.
+
+It exists because the alternative is worse. Without it, an attack on what Alice
+sends has to be mounted from the ``distributor`` seam, which means
+reimplementing this loop -- the basis draw, the teleportation, the measurement,
+the three-variate budget and the check-round branch -- inside the attack. That
+copy drifts the first time this file changes, and its bugs are invisible,
+because the honest path never executes it. A seam that substitutes one state for
+another is one line of attack code and cannot drift.
+
+Two properties of the seam are worth stating because they are consequences
+rather than decisions:
+
+* **It is never called on a check round.** A check round prepares no payload; it
+  spends its pair on measuring the channel. So a payload attack cannot be
+  aimed at, or hidden from, the watched positions -- it simply does not touch
+  them, and neither the QBER nor the CHSH estimate will move because of one.
+  What moves is the verification rate, which is where a payload substitution
+  belongs: it is a statement about the *key*, not about the link. The mirror
+  image of :ref:`check-round-lockstep`, where the resource seam cannot tell the
+  two branches apart at all.
+* **It consumes no randomness**, like the resource seam: a map that wants some
+  closes over its own generator (D6). The variate budget is three per position
+  on every branch either way.
+
+The payload may be pure or mixed: :func:`~sih141.core.teleport.teleport` accepts
+both, and measures its reported fidelity against whatever it was given, so a map
+returning a :class:`~qiskit.quantum_info.DensityMatrix` is a legitimate
+noisy-preparation attack rather than a type error. Returning ``None`` is refused
+for the same reason a ``resource_factory`` returning ``None`` is.
+
 .. _check-round-lockstep:
 
 Check rounds, and the variate budget that hides them
@@ -224,11 +265,14 @@ __all__ = [
     "RecipientDistribution",
     "ResourceContext",
     "ResourceFactory",
+    "PayloadMap",
     "ideal_resource",
+    "identity_payload",
     "distribute_to_recipient",
     "distribute_to_recipient_with_checks",
     "distribute_public_key",
     "distribute_public_key_with_checks",
+    "accepts_context",
 ]
 
 
@@ -301,6 +345,23 @@ context-aware factory.
 """
 
 
+PayloadMap: TypeAlias = Callable[[StateLike, ResourceContext], StateLike]
+"""A callable standing on the payload line, between preparation and Bell measurement.
+
+Called once per **key round** as ``payload_map(state, context)``, with the
+eigenstate :meth:`~sih141.protocol.keys.KeyElement.state` produced for that
+position and the same :class:`ResourceContext` the ``resource_factory`` was given
+for the same hop. Whatever it returns is what is teleported. Both arguments are
+positional, and unlike :data:`ResourceFactory` there is only one accepted shape:
+this seam is new, so there is no historical arity to keep working, and a single
+shape means no inspection and no way to be called wrongly.
+
+It must return a one-qubit state -- pure or mixed, since
+:func:`~sih141.core.teleport.teleport` accepts both -- and never ``None``. See
+:ref:`payload-seam` for what it is for and what it deliberately cannot reach.
+"""
+
+
 def ideal_resource() -> Statevector:
     """Return a fresh, clean :math:`|\\Phi^{+}\\rangle` pair.
 
@@ -320,6 +381,99 @@ def ideal_resource() -> Statevector:
     array([0.707107+0.j, 0.      +0.j, 0.      +0.j, 0.707107+0.j])
     """
     return bell_state(BellState.PHI_PLUS)
+
+
+def identity_payload(payload: StateLike, context: ResourceContext) -> StateLike:
+    """Send exactly the eigenstate Alice prepared. The honest payload line.
+
+    Semantically the default, though the default is spelled ``None`` so that an
+    unattacked run calls nothing at all. It exists as a named function for the
+    same two reasons :func:`ideal_resource` does: an attack can wrap it
+    (``lambda state, ctx: damp(identity_payload(state, ctx))``), and a test can
+    assert that the honest path really is the identity.
+
+    Parameters
+    ----------
+    payload : StateLike
+        The state about to be teleported.
+    context : ResourceContext
+        Which hop this is. **Ignored** -- an honest preparation does not depend
+        on who is receiving it or where in the key it sits, and that is the
+        whole content of "honest" here.
+
+    Returns
+    -------
+    StateLike
+        ``payload`` itself, identical by object identity.
+
+    Examples
+    --------
+    >>> from sih141.protocol.distribute import ResourceContext, identity_payload
+    >>> from sih141.protocol.keys import KeyElement
+    >>> from sih141.protocol.params import Party
+    >>> state = KeyElement("X", 1).state()
+    >>> context = ResourceContext(party=Party.BOB, message_bit=0, position=3)
+    >>> identity_payload(state, context) is state
+    True
+    """
+    del context  # An honest preparation is the same wherever it is sent.
+    return payload
+
+
+def _map_payload(
+    payload_map: PayloadMap | None,
+    payload: StateLike,
+    context: ResourceContext,
+) -> StateLike:
+    """Put one key round's payload through the seam, if there is one.
+
+    Parameters
+    ----------
+    payload_map : callable or None
+        The seam described at :ref:`payload-seam`. ``None`` skips the call
+        entirely rather than routing through :func:`identity_payload`, so an
+        unattacked run does not depend on the seam existing at all.
+    payload : StateLike
+        The eigenstate Alice prepared for this position.
+    context : ResourceContext
+        The hop being prepared for, quoted in the error message.
+
+    Returns
+    -------
+    StateLike
+        What will actually be teleported.
+
+    Raises
+    ------
+    TypeError
+        If ``payload_map`` is not callable.
+    ValueError
+        If it returned ``None``. ``teleport`` would raise on ``None`` anyway,
+        but from inside the payload validator and without saying which position
+        or which recipient produced it; a seam is worth naming when it
+        misfires, because the alternative is an attack author reading a
+        traceback about state coercion.
+    """
+    if payload_map is None:
+        return payload
+    if not callable(payload_map):
+        raise TypeError(
+            f"payload_map must be a callable payload_map(state, context) "
+            f"returning a one-qubit state, got "
+            f"{type(payload_map).__name__}. Leave it None for the honest "
+            f"payload line, or pass identity_payload to say so explicitly."
+        )
+    mapped = payload_map(payload, context)
+    if mapped is None:
+        raise ValueError(
+            f"payload_map returned None for {context.party.value} at key "
+            f"position {context.position} of message bit "
+            f"{context.message_bit}; it must return the one-qubit state to "
+            f"teleport. Return the payload it was given -- or "
+            f"identity_payload(state, context) -- to send the eigenstate "
+            f"unaltered."
+        )
+    return mapped
 
 
 def _resolve_factory(
@@ -365,11 +519,17 @@ def _resolve_factory(
             f"position so that the resource may vary along the run; to use one "
             f"fixed pair, wrap it: resource_factory=lambda: my_pair."
         )
-    return resource_factory, _accepts_context(resource_factory)
+    return resource_factory, accepts_context(resource_factory)
 
 
-def _accepts_context(resource_factory: ResourceFactory) -> bool:
+def accepts_context(resource_factory: ResourceFactory) -> bool:
     """Return ``True`` when ``resource_factory`` *requires* a positional argument.
+
+    Public for the same reason
+    :func:`sih141.protocol.session.forwarder_wants_view` is: which of the two
+    shapes a seam has is part of the seam's contract, and a Phase 3 attack that
+    mounts a bound method on ``resource_factory`` needs to be able to assert that
+    the session will hand it the context.
 
     The test is "can it be called with no arguments at all?", not "can it accept
     one?". The difference matters: ``lambda pair=pair: pair`` is a common way to
@@ -425,6 +585,13 @@ def _accepts_context(resource_factory: ResourceFactory) -> bool:
             f"arguments at all."
         ) from None
     return True
+
+
+_accepts_context = accepts_context
+"""Deprecated private alias of :func:`accepts_context`.
+
+Kept because it was imported by name before the public spelling existed.
+"""
 
 
 def _draw_resource(
@@ -657,6 +824,7 @@ def distribute_to_recipient(
     resource_factory: ResourceFactory | None = None,
     rng: np.random.Generator | None = None,
     check_plan: CheckRoundPlan | None = None,
+    payload_map: PayloadMap | None = None,
 ) -> RecipientRecord:
     """Teleport one copy of the quantum public key and measure it on arrival.
 
@@ -707,6 +875,13 @@ def distribute_to_recipient(
         diagnostics are discarded -- use
         :func:`distribute_to_recipient_with_checks` to keep them, which is the
         only reason to pass a plan here at all.
+    payload_map : callable or None, optional
+        Keyword-only. The payload-line seam (:ref:`payload-seam`), called
+        ``payload_map(state, context)`` once per **key round** -- never on a
+        check round, which prepares no payload -- with the eigenstate about to
+        be teleported. ``None``, the default, calls nothing and sends the
+        eigenstate itself. It draws no randomness; an attack that wants some
+        closes over its own generator (D6).
 
     Returns
     -------
@@ -775,6 +950,7 @@ def distribute_to_recipient(
         resource_factory=resource_factory,
         rng=rng,
         check_plan=check_plan,
+        payload_map=payload_map,
     ).record
 
 
@@ -786,6 +962,7 @@ def distribute_to_recipient_with_checks(
     resource_factory: ResourceFactory | None = None,
     rng: np.random.Generator | None = None,
     check_plan: CheckRoundPlan | None = None,
+    payload_map: PayloadMap | None = None,
 ) -> RecipientDistribution:
     """Run Phase A for one recipient, keeping the check-round diagnostics.
 
@@ -824,6 +1001,13 @@ def distribute_to_recipient_with_checks(
         Keyword-only. The plan, shared by both recipients of a message bit.
         ``None`` runs the historical all-key distribution and returns an empty
         log.
+    payload_map : callable or None, optional
+        Keyword-only. The payload-line seam (:ref:`payload-seam`), called
+        ``payload_map(state, context)`` once per **key round** -- never on a
+        check round, which prepares no payload -- with the eigenstate about to
+        be teleported. ``None``, the default, calls nothing and sends the
+        eigenstate itself. It draws no randomness; an attack that wants some
+        closes over its own generator (D6).
 
     Returns
     -------
@@ -857,6 +1041,24 @@ def distribute_to_recipient_with_checks(
     (400, 400)
     >>> estimate_chsh(outcome.log.chsh).violates_classical_bound
     True
+
+    The payload seam sees every key round and no check round at all:
+
+    >>> small = ProtocolParams(key_length=40, check_fraction=0.25)
+    >>> small_plan = draw_check_plan(small, rng=np.random.default_rng(1))
+    >>> small_key = generate_private_key(small, 0, rng=np.random.default_rng(2))
+    >>> seen = []
+    >>> def watch(state, context):
+    ...     seen.append(context.position)
+    ...     return state
+    >>> watched = distribute_to_recipient_with_checks(
+    ...     small_key, small, party=Party.BOB, check_plan=small_plan,
+    ...     payload_map=watch, rng=np.random.default_rng(3),
+    ... )
+    >>> sorted(seen) == list(small_plan.signing_positions)
+    True
+    >>> set(seen) & set(small_plan.positions)
+    set()
     """
     if not isinstance(key, PrivateKey):
         raise TypeError(
@@ -894,15 +1096,12 @@ def distribute_to_recipient_with_checks(
         #    An adversary who could tell a watched round from an unwatched one
         #    would behave on the watched ones and every estimate here would be
         #    fiction, so the call is deliberately identical on both.
-        resource = _draw_resource(
-            factory,
-            wants_context,
-            ResourceContext(
-                party=recipient,
-                message_bit=key.message_bit,
-                position=index,
-            ),
+        context = ResourceContext(
+            party=recipient,
+            message_bit=key.message_bit,
+            position=index,
         )
+        resource = _draw_resource(factory, wants_context, context)
 
         scheduled = planned.get(index)
         if scheduled is None:
@@ -912,7 +1111,16 @@ def distribute_to_recipient_with_checks(
             #     teleport()'s exact fidelity path for a pure payload; the
             #     received state is a one-qubit density matrix, so the measured
             #     index is 0 (D2).
-            hop = teleport(element.state(), resource=resource, rng=generator)
+            #
+            #     The payload seam stands here and nowhere else: on this
+            #     branch only, because a check round prepares no payload
+            #     (:ref:`payload-seam`), and after the resource has been drawn,
+            #     so that the two seams see the same hop in the same order.
+            hop = teleport(
+                _map_payload(payload_map, element.state(), context),
+                resource=resource,
+                rng=generator,
+            )
             outcome = projective_measure(hop.received, 0, basis, rng=generator)
             chosen_bases.append(basis)
             eigenvalues.append(outcome.eigenvalue)
@@ -964,6 +1172,7 @@ def distribute_public_key(
     resource_factory: ResourceFactory | None = None,
     rng: np.random.Generator | None = None,
     check_plan: CheckRoundPlan | None = None,
+    payload_map: PayloadMap | None = None,
 ) -> dict[Party, RecipientRecord]:
     """Distribute one copy of the public key to each recipient.
 
@@ -1005,6 +1214,13 @@ def distribute_public_key(
         :class:`~sih141.protocol.checkrounds.CheckRoundPlan` explains the
         reasoning in full. The diagnostics are discarded here; use
         :func:`distribute_public_key_with_checks` to keep them.
+    payload_map : callable or None, optional
+        Keyword-only. The payload-line seam (:ref:`payload-seam`), called
+        ``payload_map(state, context)`` once per **key round** -- never on a
+        check round, which prepares no payload -- with the eigenstate about to
+        be teleported. ``None``, the default, calls nothing and sends the
+        eigenstate itself. It draws no randomness; an attack that wants some
+        closes over its own generator (D6).
 
     Returns
     -------
@@ -1048,6 +1264,7 @@ def distribute_public_key(
             resource_factory=resource_factory,
             rng=rng,
             check_plan=check_plan,
+            payload_map=payload_map,
         ).items()
     }
 
@@ -1060,6 +1277,7 @@ def distribute_public_key_with_checks(
     resource_factory: ResourceFactory | None = None,
     rng: np.random.Generator | None = None,
     check_plan: CheckRoundPlan | None = None,
+    payload_map: PayloadMap | None = None,
 ) -> dict[Party, RecipientDistribution]:
     """Distribute to each recipient, keeping every check-round diagnostic.
 
@@ -1091,6 +1309,13 @@ def distribute_public_key_with_checks(
     check_plan : CheckRoundPlan or None, optional
         Keyword-only. Shared by every party; see
         :func:`distribute_public_key`.
+    payload_map : callable or None, optional
+        Keyword-only. The payload-line seam (:ref:`payload-seam`), called
+        ``payload_map(state, context)`` once per **key round** -- never on a
+        check round, which prepares no payload -- with the eigenstate about to
+        be teleported. ``None``, the default, calls nothing and sends the
+        eigenstate itself. It draws no randomness; an attack that wants some
+        closes over its own generator (D6).
 
     Returns
     -------
@@ -1154,6 +1379,7 @@ def distribute_public_key_with_checks(
             resource_factory=resource_factory,
             rng=generator,
             check_plan=check_plan,
+            payload_map=payload_map,
         )
         for party in resolved
     }

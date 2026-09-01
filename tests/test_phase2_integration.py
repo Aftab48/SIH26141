@@ -605,6 +605,13 @@ def test_a_recipient_forgery_lands_near_the_forger_floor_and_is_rejected() -> No
         transcript = QDSSession(
             params,
             signer=_recipient_forger(Party.BOB),
+            # The seam is shown both raw logs only on request now; this attack
+            # reads one of them, and the opt-in is what makes the seam offer
+            # it. The faithful route for a recipient forger is the FORWARDER
+            # seam (sih141.protocol.session, :ref:`forger-route`), which needs
+            # no flag; this test measures Charlie's rate alone, which is the
+            # same number either way.
+            signer_sees_recipient_logs=True,
             rng=np.random.default_rng(5200 + seed),
         ).run(0)
         rates.append(transcript.charlie.rate)
@@ -646,6 +653,7 @@ def test_the_forger_floor_is_four_times_lower_than_without_the_exchange() -> Non
             QDSSession(
                 params,
                 signer=_recipient_forger(Party.BOB),
+                signer_sees_recipient_logs=True,
                 rng=np.random.default_rng(5300 + seed),
             )
             .run(0)
@@ -655,6 +663,7 @@ def test_the_forger_floor_is_four_times_lower_than_without_the_exchange() -> Non
             QDSSession(
                 params,
                 signer=_recipient_forger(Party.BOB),
+                signer_sees_recipient_logs=True,
                 symmetriser=no_symmetrisation,
                 rng=np.random.default_rng(5300 + seed),
             )

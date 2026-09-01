@@ -1126,7 +1126,12 @@ def test_a_basis_avoiding_signer_cannot_empty_the_matched_set() -> None:
         )
 
     transcript = QDSSession(
-        params, signer=basis_avoiding, rng=np.random.default_rng(SEED)
+        params,
+        signer=basis_avoiding,
+        # This attack reads a recipient's raw log, which the seam now offers
+        # only on request (:ref:`two-log-signer`).
+        signer_sees_recipient_logs=True,
+        rng=np.random.default_rng(SEED),
     ).run(0)
 
     assert transcript.is_complete

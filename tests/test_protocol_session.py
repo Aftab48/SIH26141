@@ -20,12 +20,25 @@ tested here is everything that only exists once the phases are composed:
    must survive :func:`json.dumps` unchanged and come back equal -- every leaf
    an ``int``, ``float``, ``bool`` or ``str``, with no quantum state anywhere.
 4. **The Phase 3 seams.** The whole attack suite hangs off ``resource_factory``,
-   ``distributor`` and ``signer``, so each is exercised here from the session's
-   own API: a degraded channel must drive both verifiers to reject (which also
-   re-proves the teleportation is genuinely in the data path when driven from
-   this module), a forging signer must be rejected, and a mis-wired seam must
-   fail loudly rather than quietly produce a clean-looking run.
-5. **Phase order and single use.** Every out-of-order call is refused with a
+   ``payload_map``, ``distributor``, ``signer`` and ``forwarder``, so each is
+   exercised here from the session's own API: a degraded channel must drive both
+   verifiers to reject (which also re-proves the teleportation is genuinely in
+   the data path when driven from this module), a forging signer must be
+   rejected, and a mis-wired seam must fail loudly rather than quietly produce a
+   clean-looking run.
+
+   Two of them are about *what a seam is shown*, and those tests are the ones to
+   read first. The ``signer`` seam no longer receives the recipients' logs
+   unless the session is built to hand them over, because no single adversary in
+   the threat model holds both; and the ``forwarder`` seam -- where a forging
+   recipient actually stands -- receives one ``RecipientView``, which is a type
+   that cannot hold the counterpart's evidence.
+5. **The channel monitor.** A checked run publishes what happened on the sampled
+   positions and nothing about the others. That single property is asserted from
+   three directions: what the monitor is called on, what the transcript carries,
+   and what a hand-edited transcript claiming a key position does when it is
+   read back.
+6. **Phase order and single use.** Every out-of-order call is refused with a
    message naming the call that would fix it, and a session distributes once and
    signs once.
 
@@ -55,7 +68,7 @@ from typing import Any
 
 import numpy as np
 import pytest
-from qiskit.quantum_info import DensityMatrix, Statevector
+from qiskit.quantum_info import DensityMatrix, Kraus, Statevector
 
 from sih141.core.states import BellState, bell_state
 from sih141.protocol import (
@@ -78,16 +91,36 @@ from sih141.protocol import (
     honest_forwarder,
     honest_signer,
     ideal_resource,
+    no_count_exchange,
     no_symmetrisation,
     sign,
     symmetrise_records,
     verify_or_abort,
 )
+from sih141.protocol.checkrounds import (
+    CheckRole,
+    draw_check_plan,
+    estimate_chsh,
+    estimate_qber,
+)
+from sih141.protocol.distribute import (
+    RecipientDistribution,
+    ResourceContext,
+    distribute_public_key_with_checks,
+    identity_payload,
+)
+from sih141.protocol.keys import key_from_record
+from sih141.protocol.params import CHECKED_PARAMS, DEMO_CHECKED_PARAMS
+from sih141.protocol.records import RecipientView
 from sih141.protocol.session import (
     _ALICE_STREAM_LABEL,
     _RECIPIENT_STREAM_LABEL,
     _STREAM_MATERIAL_BYTES,
+    NO_RECIPIENT_LOGS,
+    ChannelSample,
+    WithheldRecords,
     _derive_stream,
+    _forwarder_wants_view,
 )
 
 SEED = 20260141
@@ -144,10 +177,41 @@ def _flip_all(key: PrivateKey) -> PrivateKey:
     )
 
 
+def _reading_signer() -> Any:
+    """Return a signer that reaches for a recipient's log, as attacks do."""
+
+    def signer(
+        message_bit: int, keys: Any, params: Any, *, records: Any
+    ) -> Signature:
+        record = records[message_bit][Party.BOB]
+        return Signature(message_bit, key_from_record(record))
+
+    return signer
+
+
+def _checked(length: int = 120, fraction: float = 0.25) -> ProtocolParams:
+    """Build a parameter set that reserves check rounds.
+
+    ``L = 120`` with a quarter checked leaves ``90`` signing positions, which is
+    small enough to run in a test and large enough that the two floors, the two
+    thresholds and the CHSH estimate are all computed from a number that is
+    genuinely not ``L``. That is the property every check-round test here is
+    really about: the shortening has to reach every derived quantity, and a
+    parameter set where the two coincide could not tell.
+    """
+    return ProtocolParams(key_length=length, check_fraction=fraction)
+
+
 @pytest.fixture(scope="module")
 def honest_run() -> SessionTranscript:
     """One clean, seeded, completed run. Shared, because it costs 96 hops."""
     return _session(_params(24)).run(0)
+
+
+@pytest.fixture(scope="module")
+def checked_run() -> SessionTranscript:
+    """One clean, seeded, completed run *with* check rounds. 480 hops."""
+    return _session(_checked(), seed=SEED + 101).run(0)
 
 
 # ==========================================================================
@@ -935,8 +999,18 @@ def test_the_honest_signer_ignores_the_recipients_records() -> None:
     assert with_records.declared_key is session.keys[0]
 
 
-def test_the_signer_seam_receives_everything_an_adversary_could_hold() -> None:
-    """Message bit, both keys, the parameters and both recipients' logs."""
+def test_the_signer_seam_receives_exactly_what_a_repudiating_alice_holds() -> None:
+    """The message bit, both keys, the parameters -- and **no** recipient log.
+
+    The default changed here, and this is the test that says so. A repudiating
+    Alice holds her own key pair and nothing of Bob's or Charlie's evidence; the
+    seam used to be handed both raw logs, which is strictly more than any single
+    adversary in the threat model holds and was the root of the whole
+    repudiation attack family the Phase 2 audit found. What arrives now is the
+    singleton ``NO_RECIPIENT_LOGS``, asserted by *identity* rather than by
+    emptiness, because "the session passed this exact object" cannot be
+    satisfied by accident.
+    """
     params = _params(16)
     captured: dict[str, Any] = {}
 
@@ -958,8 +1032,85 @@ def test_the_signer_seam_receives_everything_an_adversary_could_hold() -> None:
     assert captured["message_bit"] == 1
     assert [key.message_bit for key in captured["keys"]] == list(MESSAGE_BITS)
     assert captured["params"] is params
+    assert captured["records"] is NO_RECIPIENT_LOGS
+    assert len(captured["records"]) == 0
+    assert list(captured["records"]) == []
+    # And an empty mapping that a defensive signer probes still behaves.
+    assert captured["records"].get(1, {}) == {}
+
+
+def test_a_signer_reaching_for_a_withheld_log_is_told_why_it_is_missing() -> None:
+    """``KeyError: 0`` would send a Phase 3 author hunting a harness bug.
+
+    The whole reason the default is a type rather than a bare ``{}``. "The seam
+    was deliberately starved" and "the attack is mis-wired" are indistinguishable
+    from a bare KeyError, and only one of them is worth debugging.
+    """
+    session = _session(_params(16), signer=_reading_signer())
+    session.distribute()
+    with pytest.raises(KeyError, match="signer_sees_recipient_logs=True"):
+        session.sign(0)
+
+
+def test_the_over_powered_signer_is_opt_in_and_the_transcript_says_so() -> None:
+    """The old behaviour is still reachable, and never mistakable for the new.
+
+    Phase 3 must be able to run the two-log signer -- it is the attack the
+    pooled matched-count floor was built against, and an insecure arm nobody can
+    run is an insecure arm nobody can compare against. What it must not be able
+    to do is produce a transcript that looks like a secure-arm one, so the flag
+    is carried, survives JSON, and is named out loud in the summary.
+    """
+    captured: dict[str, Any] = {}
+
+    def watching(
+        message_bit: int, keys: Any, protocol_params: Any, *, records: Any
+    ) -> Signature:
+        captured["records"] = records
+        return sign(message_bit, keys, protocol_params)
+
+    session = _session(
+        _params(24), signer=watching, signer_sees_recipient_logs=True
+    )
+    transcript = session.run(0)
+
     assert sorted(captured["records"]) == list(MESSAGE_BITS)
     assert sorted(captured["records"][1]) == sorted(VERIFIERS)
+    assert transcript.signer_saw_recipient_logs is True
+    assert "OVER-POWERED SIGNER" in transcript.summary()
+    assert (
+        SessionTranscript.from_json(transcript.to_json()).signer_saw_recipient_logs
+        is True
+    )
+    # The honest arm carries the flag as False, so the two are never confused.
+    assert _session(_params(24)).run(0).signer_saw_recipient_logs is False
+
+
+def test_the_signer_opt_in_changes_nothing_but_what_the_seam_is_shown() -> None:
+    """An honest run made with the flag is the honest run, byte for byte.
+
+    The flag must be a *capability*, not a mode: if turning it on moved the
+    generator or the records, an insecure-arm measurement and its control would
+    differ in two things and neither could be attributed.
+    """
+    withheld = _session(_params(24), seed=SEED + 21).run(1)
+    shown = _session(
+        _params(24), seed=SEED + 21, signer_sees_recipient_logs=True
+    ).run(1)
+    assert shown.records == withheld.records
+    assert shown.signature == withheld.signature
+    assert dataclasses.replace(
+        shown, signer_saw_recipient_logs=False
+    ) == withheld
+
+
+def test_a_non_bool_signer_opt_in_is_refused() -> None:
+    """It is a deliberate yes or no, not a value to be inferred."""
+    with pytest.raises(TypeError, match="signer_sees_recipient_logs"):
+        QDSSession(
+            _params(16),
+            signer_sees_recipient_logs="yes",  # type: ignore[arg-type]
+        )
 
 
 def test_a_forged_declaration_is_rejected_by_both_verifiers() -> None:
@@ -1361,13 +1512,15 @@ def test_the_symmetriser_seam_can_be_replaced_and_the_transcript_says_so() -> No
     assert secure.signature == transcript.signature
 
 
-def test_the_signer_seam_receives_the_raw_records() -> None:
-    """What the pen-holder is shown: the pre-exchange logs, and only those.
+def test_the_over_powered_signer_is_shown_the_raw_records() -> None:
+    """When the opt-in is set, the logs shown are the pre-exchange ones.
 
-    A forging Bob needs his own raw record -- after the exchange, half of
-    Charlie's evidence *is* that record -- and a repudiating Alice must not
-    learn the exchange's outcome. Both follow from handing the seam the raw
-    logs, and this pins that the seam gets those and not the post-exchange ones.
+    Which half of the evidence matters, and the choice is the same in both
+    directions. It is what a two-log attack needs -- after the exchange, half of
+    Charlie's evidence *is* Bob's raw record -- and it is what a repudiating
+    Alice must never have, since the exchange is private to the recipients and
+    its outcome is the only randomness the non-repudiation bound uses. So even
+    the over-powered variant stops at the raw logs, and this pins that.
     """
     captured: dict[str, Any] = {}
 
@@ -1379,7 +1532,9 @@ def test_the_signer_seam_receives_the_raw_records() -> None:
             message_bit, keys, protocol_params, records=records
         )
 
-    session = _session(_params(48), signer=watching)
+    session = _session(
+        _params(48), signer=watching, signer_sees_recipient_logs=True
+    )
     session.distribute()
     session.sign(0)
 
@@ -1387,6 +1542,10 @@ def test_the_signer_seam_receives_the_raw_records() -> None:
         for party in VERIFIERS:
             assert captured["records"][bit][party] is session.raw_records[bit][party]
             assert not captured["records"][bit][party].symmetrised
+    # And never the post-exchange ones the verifiers are actually scored on.
+    assert all(
+        record.symmetrised for record in session.records[0].values()
+    )
 
 
 def test_the_forwarder_seam_alters_only_what_charlie_scores() -> None:
@@ -1870,3 +2029,1011 @@ def test_the_stream_derivation_is_pinned() -> None:
     assert recipients.bit_generator.seed_seq.entropy == int(
         "9591cb2e13d60046355cb65eb48a5c2e9628c3e4e9db4697da8591d805b88f3c", 16
     )
+
+
+# ==========================================================================
+# Seam: payload_map -- the state Alice actually sends
+# ==========================================================================
+#
+# The channel seam owns the pair; this one owns the qubit. Before it existed,
+# an attack on what Alice prepares had to be mounted from ``distributor``, i.e.
+# by reimplementing the distribution loop -- basis draw, teleportation,
+# measurement, variate budget, check-round branch -- inside the attack, where
+# it would drift the first time distribute.py changed and where its bugs would
+# never be exercised by an honest run.
+
+
+def _orthogonal(state: Statevector) -> Statevector:
+    """Return the state orthogonal to a one-qubit pure state.
+
+    ``|psi> = (a, b)`` maps to ``(-conj(b), conj(a))``, whose overlap with the
+    original is ``-b a + a b = 0`` for every ``a, b``. Substituting it is the
+    maximally wrong preparation: on a matched position the recipient measures
+    the observable Alice declared and gets the *opposite* eigenvalue with
+    certainty, so the mismatch rate is exactly ``1.0`` rather than merely high.
+    """
+    a, b = state.data
+    return Statevector(np.array([-np.conj(b), np.conj(a)]))
+
+
+def test_the_payload_seam_is_the_state_alice_actually_sends() -> None:
+    """Send every eigenstate's orthogonal partner: both rates are exactly 1.0.
+
+    Exactly, not approximately, which is what makes this a test of the data path
+    rather than of a statistic: teleportation over a clean pair is exact, so a
+    matched position reproduces whatever was *sent*. If the seam were being
+    ignored -- or applied to a copy, or applied after the hop -- the rate would
+    be 0.0.
+    """
+    transcript = _session(
+        _params(48), payload_map=lambda state, context: _orthogonal(state)
+    ).run(0)
+    assert transcript.bob.rate == 1.0
+    assert transcript.charlie.rate == 1.0
+    assert not transcript.bob.accepted
+    assert not transcript.charlie.accepted
+
+
+def test_the_payload_seam_can_target_one_recipients_link() -> None:
+    """The context names the hop, so a one-sided preparation attack is one line.
+
+    And the run says something the seam's author would not guess: aiming the
+    attack at *Charlie's* link raises **Bob's** rate too, because Phase A' then
+    re-assigns half of the corrupted entries to Bob. A one-sided attack on the
+    channel is not a one-sided attack on the evidence, which is worth knowing
+    before a Phase 4 detector is built on the assumption that it is.
+
+    The unsymmetrised arm is where the aim is visible, and it is exact: Bob's
+    rate is ``0.0`` and Charlie's is ``1.0``, on the same seed.
+    """
+
+    def only_charlie(state: Statevector, context: ResourceContext) -> Any:
+        if context.party is Party.CHARLIE:
+            return _orthogonal(state)
+        return identity_payload(state, context)
+
+    aimed = _session(
+        _params(48), payload_map=only_charlie, symmetriser=no_symmetrisation
+    ).run(0)
+    assert aimed.bob.rate == 0.0
+    assert aimed.bob.accepted
+    assert aimed.charlie.rate == 1.0
+    assert not aimed.charlie.accepted
+    # Bob accepted a declaration Charlie rejected, on one key that both of them
+    # scored: a repudiation event by the transcript's definition, on a run whose
+    # recipients did not symmetrise and which therefore carries no claim at all.
+    assert aimed.repudiated
+    assert not aimed.symmetrised
+
+    # With the exchange in place the same attack reaches both verifiers.
+    spread = _session(_params(600), seed=SEED + 34, payload_map=only_charlie).run(0)
+    assert spread.bob.rate > spread.params.s_v
+    assert spread.charlie.rate > spread.params.s_v
+    assert not spread.transferable
+
+
+def test_a_mixed_payload_passes_through_the_seam() -> None:
+    """``teleport`` takes a DensityMatrix, so a noisy preparation is expressible.
+
+    A maximally mixed payload carries nothing at all, so every matched position
+    is a fair coin and both verifiers reject. The claim under test is not the
+    rate -- it is that a mixed state survives the seam instead of raising, which
+    is what makes "Alice's source is imperfect" a one-line attack rather than a
+    reimplementation of the loop.
+    """
+    noise = DensityMatrix(np.eye(2) / 2.0)
+    transcript = _session(
+        _params(600), seed=SEED + 31, payload_map=lambda state, context: noise
+    ).run(0)
+    assert transcript.bob.rate > transcript.params.s_v
+    assert transcript.charlie.rate > transcript.params.s_v
+    assert not transcript.transferable
+
+
+def test_the_default_payload_line_sends_the_eigenstate_unaltered() -> None:
+    """An explicit identity map reproduces the default run exactly."""
+    default = _session(_params(24), seed=SEED + 32).run(0)
+    explicit = _session(
+        _params(24), seed=SEED + 32, payload_map=identity_payload
+    ).run(0)
+    assert explicit == default
+
+
+def test_the_payload_seam_sees_every_key_round_and_no_check_round() -> None:
+    """A check round prepares no payload, so the seam cannot reach one.
+
+    The mirror image of the channel monitor, which sees check rounds and no key
+    round. Together they say that neither seam can be used to do the other's
+    job -- and in particular that a payload attack will not move the QBER or the
+    CHSH estimate, because it never touches the rounds those are computed from.
+    What it moves is the verification rate.
+    """
+    seen: list[tuple[Party, int, int]] = []
+
+    def watching(state: Statevector, context: ResourceContext) -> Any:
+        seen.append((context.party, context.message_bit, context.position))
+        return state
+
+    params = _checked()
+    session = _session(params, seed=SEED + 33, payload_map=watching)
+    session.run(0)
+
+    for bit in MESSAGE_BITS:
+        plan = session.check_plans[bit]
+        for party in VERIFIERS:
+            touched = {
+                position
+                for seen_party, seen_bit, position in seen
+                if seen_party is party and seen_bit == bit
+            }
+            assert touched == set(plan.signing_positions)
+            assert not touched & set(plan.positions)
+    assert len(seen) == len(MESSAGE_BITS) * len(VERIFIERS) * params.signing_length
+
+
+def test_a_non_callable_payload_map_is_refused_at_construction() -> None:
+    """Fail before a key is teleported, as every other seam does."""
+    with pytest.raises(TypeError, match="payload_map"):
+        QDSSession(_params(24), payload_map=Statevector([1, 0]))  # type: ignore[arg-type]
+
+
+def test_a_payload_map_returning_none_is_refused_by_name() -> None:
+    """``None`` reaching ``teleport`` would be a confusing coercion failure."""
+    session = _session(_params(16), payload_map=lambda state, context: None)
+    with pytest.raises(ValueError, match="payload_map returned None"):
+        session.distribute()
+
+
+# ==========================================================================
+# The forwarder, widened: the faithful recipient-forgery route
+# ==========================================================================
+#
+# session.py used to send a Phase 3 author to mount a forging Bob on the SIGNER
+# seam. That models the wrong adversary: the signer's declaration goes to both
+# verifiers, so Bob is handed his own forgery and rejects it, both matched
+# counts inflate to 2L/3, and a successful forgery is recorded as a
+# non-transferable, non-repudiated run. The two tests below are the correction
+# and the evidence for it, run on the same seed so the contrast is not a
+# sampling artefact.
+
+
+def _forging_bob(
+    signature: Signature, params: Any, *, view: RecipientView
+) -> Signature:
+    """Declare Bob's own raw log to Charlie. The compliant recipient forgery.
+
+    Takes a **required** keyword-only ``view``, which is how a forwarder asks
+    the session for the forger's own holdings; everything it needs is in there,
+    and nothing of Charlie's can be.
+    """
+    return Signature(signature.message_bit, key_from_record(view.raw_record))
+
+
+def test_the_forwarder_is_handed_the_forgers_own_view_and_nothing_else() -> None:
+    """Bob's two logs and Bob's matched count -- with no route to Charlie's.
+
+    The dance this replaces: construct the forger, pass it to the session, then
+    back-patch the session onto it and reach into ``raw_records``, which hands
+    the attack *both* recipients' logs and leaves staying inside the threat
+    model a discipline the author has to remember.
+    """
+    captured: dict[str, Any] = {}
+
+    def watching(
+        signature: Signature, params: Any, *, view: RecipientView
+    ) -> Signature:
+        captured["view"] = view
+        return signature
+
+    session = _session(_params(48), seed=SEED + 41, forwarder=watching)
+    transcript = session.run(0)
+
+    view = captured["view"]
+    assert isinstance(view, RecipientView)
+    assert view.party is Party.BOB
+    assert view.message_bit == transcript.message_bit
+    assert view.raw_record is session.raw_records[0][Party.BOB]
+    assert view.record is session.records[0][Party.BOB]
+    assert not view.raw_record.symmetrised
+    assert view.symmetrised
+    # What Bob actually knows when he forwards: his own verdict's count.
+    assert view.matched_count == transcript.bob.matched_count
+    # And nothing anywhere in it is Charlie's.
+    charlie_logs = {
+        id(session.raw_records[0][Party.CHARLIE]),
+        id(session.records[0][Party.CHARLIE]),
+    }
+    assert id(view.raw_record) not in charlie_logs
+    assert id(view.record) not in charlie_logs
+
+
+def test_the_honest_forwarder_does_not_ask_for_a_view() -> None:
+    """A defaulted ``view`` declines it, exactly as a defaulted context does.
+
+    ``honest_forwarder`` carries ``view=None`` so that the default has the full
+    seam shape, and the session must read that as "does not want one" -- both so
+    that no view is built on an honest run, and so that every forwarder written
+    before the parameter existed keeps being called with two arguments.
+    """
+    assert not _forwarder_wants_view(honest_forwarder)
+    assert not _forwarder_wants_view(lambda signature, params: signature)
+    assert not _forwarder_wants_view(lambda *args, **kwargs: None)
+    assert _forwarder_wants_view(_forging_bob)
+
+    def optional(signature: Signature, params: Any, *, view: Any = None) -> Any:
+        return signature
+
+    assert not _forwarder_wants_view(optional)
+    # A callable that fits neither shape fails at construction, not mid-run.
+    with pytest.raises(TypeError, match="forwarder must be callable"):
+        QDSSession(_params(16), forwarder=lambda signature: signature)
+
+
+def test_the_pooled_rule_refuses_to_score_a_substituted_declaration() -> None:
+    """Under the shipped rule the forwarder route ends in a no-verdict at Charlie.
+
+    Phase C' happens before either verdict, so the counts Charlie holds were
+    computed against the declaration Alice sent; when the hop then delivers a
+    different one, ``m_C(forwarded) + m_B(original)`` is nobody's pooled count
+    and there is nothing for the pooled floor to be applied to. Charlie refuses
+    (:attr:`AbortReason.COUNTS_FROM_TWO_DECLARATIONS`, and see
+    ``sih141.protocol.verify``'s ``one-declaration`` section).
+
+    Read it for what it is. The forgery does not succeed -- Charlie accepts
+    nothing -- but he has not detected one either: he learned that two numbers
+    disagree about their provenance, which this harness guarantees whenever the
+    hop substitutes, because the forwarder seam has no way to supply a matching
+    count. A forging Bob who could also report his own count against his own
+    declaration would not trip this, so the refusal must not be read as evidence
+    that recipient forgery is caught.
+    """
+    transcript = _session(_params(600), seed=SEED + 43, forwarder=_forging_bob).run(0)
+
+    assert transcript.bob is not None and transcript.bob.accepted
+    assert transcript.charlie is None
+    assert transcript.aborted
+    assert (
+        transcript.aborts_by_party[Party.CHARLIE].reason
+        is AbortReason.COUNTS_FROM_TWO_DECLARATIONS
+    )
+    assert not transcript.transferable
+    assert not transcript.repudiated
+    assert "NO VERDICT" in transcript.summary()
+
+
+def test_the_recipient_forgery_route_is_the_forwarding_hop() -> None:
+    """The faithful route: Bob's own evidence stays honest and Charlie is attacked.
+
+    Everything the signer route got wrong is right here. Bob scores Alice's real
+    declaration, so his rate is exactly zero and his matched count is the honest
+    ``L/3``; Charlie scores the forgery and lands near the ``1/12`` forger floor,
+    which is above his ``1/16`` cut. And the run is **not** recorded as a
+    repudiation, because Alice declared one key and Bob substituted another.
+
+    Run pre-pooled, with ``no_count_exchange``, which is the same arm Phase 3
+    already uses for the split-coin route. Under the shipped pooled rule Charlie
+    reaches no verdict at all against a substituted declaration and there is no
+    rate to measure -- the test above pins that, and says why it is a denial of
+    transfer rather than a detection.
+    """
+    params = _params(600)
+    transcript = _session(
+        params,
+        seed=SEED + 42,
+        forwarder=_forging_bob,
+        count_exchange=no_count_exchange,
+    ).run(0)
+
+    assert transcript.bob.rate == 0.0
+    assert transcript.bob.accepted
+    assert transcript.bob.matched_count == pytest.approx(
+        params.expected_matched, rel=0.25
+    )
+    assert transcript.charlie.rate == pytest.approx(params.forger_floor, abs=0.03)
+    assert transcript.charlie.rate > params.s_v
+    assert not transcript.charlie.accepted
+
+    assert transcript.forwarding_altered_signature
+    assert not transcript.transferable
+    assert not transcript.repudiated, (
+        "a forgery Bob himself forwarded is not Alice repudiating"
+    )
+    assert transcript.pooled_matched_count is None
+    assert "NOT TRANSFERRED" in transcript.summary()
+    assert "REPUDIATION" not in transcript.summary()
+    assert SessionTranscript.from_json(transcript.to_json()) == transcript
+
+
+def test_the_signer_route_records_a_successful_forgery_as_a_rejection() -> None:
+    """Why the documented route was changed, measured on the same seed.
+
+    Mounted on the signer seam the same forgery reaches *both* verifiers, so Bob
+    scores his own forgery against his own log: his rate leaves zero and lands
+    at the forger floor with everyone else's, and both matched counts inflate
+    from ``L/3`` to ``2L/3`` because the declaration was built from a
+    recipient's log instead of drawn independently of it. A Phase 5 table built
+    on this route would read a working forgery as a run in which nothing
+    happened.
+    """
+    params = _params(600)
+    faithful = _session(
+        params,
+        seed=SEED + 42,
+        forwarder=_forging_bob,
+        count_exchange=no_count_exchange,
+    ).run(0)
+    wrong = _session(
+        params,
+        seed=SEED + 42,
+        signer=_reading_signer(),
+        signer_sees_recipient_logs=True,
+        count_exchange=no_count_exchange,
+    ).run(0)
+
+    assert not wrong.bob.accepted
+    assert wrong.bob.rate == pytest.approx(params.forger_floor, abs=0.03)
+    assert wrong.bob.matched_count > 1.8 * faithful.bob.matched_count
+
+    # And the sharpest way to put it: Charlie's half of the experiment is the
+    # *same* on both routes -- same record, same forged declaration, same
+    # verdict object -- so the signer route buys nothing at Charlie and costs
+    # Bob his own honest verdict. That is the whole of the correction.
+    assert wrong.charlie == faithful.charlie
+    assert faithful.bob.accepted and not wrong.bob.accepted
+    assert not wrong.transferable
+    assert not wrong.repudiated
+    # The flag is what keeps the two arms apart in a results table.
+    assert wrong.signer_saw_recipient_logs
+    assert not faithful.signer_saw_recipient_logs
+
+
+# ==========================================================================
+# Check rounds and the channel-monitor seam
+# ==========================================================================
+#
+# What Phase 4 reads. A checked run diverts a sampled subset of positions to
+# measuring the channel; the outcomes are published as CheckLogs and the pairs
+# themselves are summarised as ChannelSamples. The single security property of
+# the whole feature is that only *check* positions appear -- a per-position
+# statement about a key position would make the sample not a sample -- and it is
+# asserted here from three directions: what the monitor is called on, what the
+# transcript carries, and what a transcript claiming otherwise does when it is
+# read back.
+
+
+def test_a_checked_run_is_scored_under_the_sifted_parameters(
+    checked_run: SessionTranscript,
+) -> None:
+    """The key that was signed is the one that survived, and so are the floors."""
+    params = checked_run.params
+    assert (params.key_length, params.check_count, params.signing_length) == (
+        120,
+        30,
+        90,
+    )
+    # The transcript keeps the unsifted set -- it still records that a check
+    # fraction was reserved -- and every verdict in it was reached at L = 90.
+    for record in checked_run.records:
+        assert len(record) == 90
+    for result in checked_run.results:
+        assert result.key_length == 90
+    assert len(checked_run.signature.declared_key) == 90
+    assert checked_run.bob.rate == 0.0
+    assert checked_run.charlie.rate == 0.0
+    assert checked_run.transferable
+    assert SessionTranscript.from_json(checked_run.to_json()) == checked_run
+
+
+def test_alice_draws_a_full_key_and_declares_the_sifted_one() -> None:
+    """She does not know the check set when she draws, and cannot declare it.
+
+    Both halves matter. A full-length draw is what keeps the retained key
+    unbiased -- the subset is chosen by the recipients' stream, independently of
+    the key's contents -- and a sifted declaration is all a verifier can score,
+    because the check positions' pairs were spent on measurement and their
+    elements were never prepared.
+    """
+    params = _checked()
+    session = _session(params, seed=SEED + 50)
+    session.distribute()
+
+    for bit in MESSAGE_BITS:
+        assert len(session.keys[bit]) == params.key_length
+        assert len(session.signing_keys[bit]) == params.signing_length
+        retained = session.check_plans[bit].signing_positions
+        assert [element for element in session.signing_keys[bit].elements] == [
+            session.keys[bit].elements[position] for position in retained
+        ]
+    assert session.sign(0).declared_key is session.signing_keys[0]
+    # On a run with no check rounds the two are the same object, so every
+    # existing claim of the form "the declared key is the drawn key" holds.
+    plain = _session(_params(16))
+    plain.distribute()
+    assert plain.signing_keys is plain.keys
+
+
+def test_the_shipped_checked_parameter_set_runs_end_to_end() -> None:
+    """``DEMO_CHECKED_PARAMS`` is a configuration, not a fixture of this file.
+
+    Every other check-round test here builds its own parameter set, which proves
+    the machinery and not the shipping default. This one runs the set a
+    deployment would actually be handed, so that the session and
+    :mod:`sih141.protocol.params` cannot come to disagree about what
+    ``check_fraction`` means -- and so that the security-grade set's *shape* is
+    exercised rather than only its arithmetic.
+    """
+    transcript = QDSSession(
+        DEMO_CHECKED_PARAMS, rng=np.random.default_rng(SEED + 60)
+    ).run(0)
+
+    assert transcript.transferable
+    assert transcript.bob.key_length == DEMO_CHECKED_PARAMS.signing_length
+    assert len(transcript.channel) == (
+        len(MESSAGE_BITS) * len(VERIFIERS) * DEMO_CHECKED_PARAMS.check_count
+    )
+    assert SessionTranscript.from_json(transcript.to_json()) == transcript
+    # The security-grade set is far too large to run here; what is checked is
+    # that its signing length still clears the length DEFAULT_PARAMS ships,
+    # which is the whole reason it is 131664 and not 115200.
+    assert CHECKED_PARAMS.signing_length >= DEMO_PARAMS.with_changes(
+        key_length=115200
+    ).key_length
+
+
+def test_the_check_plan_is_drawn_from_the_recipients_stream() -> None:
+    """Never Alice's: the estimated party must not choose the sample.
+
+    The same boundary the symmetrisation coins sit behind, and the same test
+    shape: rebuild the recipients' stream from the seed material and draw the
+    plans out of it. If the plan were coming from the Alice-side stream this
+    would not reproduce, and a distributor seam could steer which positions were
+    watched.
+    """
+    params = _checked()
+    session = _session(params, seed=SEED + 51)
+    session.distribute()
+
+    material = np.random.default_rng(SEED + 51).bytes(_STREAM_MATERIAL_BYTES)
+    shadow = _derive_stream(material, _RECIPIENT_STREAM_LABEL)
+    for bit in MESSAGE_BITS:
+        assert session.check_plans[bit] == draw_check_plan(params, rng=shadow)
+        # ...then that bit's symmetrisation coins, out of the same stream and
+        # in that order: the plan is drawn before the distribution it plans.
+        # One coin per position of the *sifted* record, not per position of the
+        # run -- the recipients exchange the log they will be scored on, and the
+        # check positions are not in it.
+        shadow.integers(0, 2, size=params.signing_length)
+
+
+def test_the_channel_samples_are_exactly_the_check_positions(
+    checked_run: SessionTranscript,
+) -> None:
+    """One sample per check round per link, and never a key position.
+
+    The property the whole seam exists to have. Asserted against the published
+    log, which is what a Phase 4 detector will join the samples to.
+    """
+    assert checked_run.channel_monitored
+    assert len(checked_run.channel) == (
+        len(MESSAGE_BITS) * len(VERIFIERS) * checked_run.params.check_count
+    )
+    for bit in MESSAGE_BITS:
+        for party in VERIFIERS:
+            log = checked_run.check_log_for(party, bit)
+            samples = checked_run.channel_for(party, bit)
+            assert tuple(sample.position for sample in samples) == log.positions
+            assert log.round_count == checked_run.params.check_count
+            qber = {entry.position for entry in log.qber}
+            for sample in samples:
+                assert (sample.role is CheckRole.QBER) == (
+                    sample.position in qber
+                )
+
+
+def test_an_ideal_channel_summarises_as_an_ideal_pair(
+    checked_run: SessionTranscript,
+) -> None:
+    """Fidelity, purity and concurrence all ``1`` on the honest resource."""
+    assert all(sample.is_ideal for sample in checked_run.channel)
+    assert all(sample.extra == {} for sample in checked_run.channel)
+    # Each half of a maximally entangled pair is maximally mixed on its own.
+    assert all(sample.wings_agree for sample in checked_run.channel)
+    assert all(
+        sample.alice_purity == pytest.approx(0.5)
+        for sample in checked_run.channel
+    )
+    for bit in MESSAGE_BITS:
+        for party in VERIFIERS:
+            log = checked_run.check_log_for(party, bit)
+            # The QBER arm is exact on a clean channel -- both wings measure
+            # the same observable on |Phi+> -- so zero errors is a statement
+            # about this run and not about a sample size.
+            assert estimate_qber(log.qber).errors == 0
+            assert estimate_qber(log.qber).estimate == 0.0
+            # Both arms are plumbed through and land where the plan put them.
+            assert log.qber and log.chsh
+            assert abs(estimate_chsh(log.chsh).statistic) <= 4.0
+    # Whether the CHSH interval clears the classical bound is a question about
+    # the sample size, and 15 rounds per link cannot answer it; that claim
+    # belongs to tests/test_protocol_checkrounds.py, which runs hundreds.
+
+
+def test_a_degraded_channel_shows_up_in_the_samples_and_in_the_estimate() -> None:
+    """The seam and the statistics have to be looking at the same channel.
+
+    A Werner pair is less pure, less entangled and further from ``|Phi+>``; the
+    QBER arm sees errors on the same rounds. Asserting both from one run is what
+    stops the two halves of the feature drifting apart -- a sample recorded from
+    a pair that was not the one measured would be a diagnostic about nothing.
+    """
+    transcript = _session(
+        _checked(), seed=SEED + 52, resource_factory=lambda: _werner(0.4)
+    ).run(0)
+
+    for sample in transcript.channel:
+        assert sample.fidelity < 0.8
+        assert sample.purity < 1.0
+        assert sample.concurrence < 1.0
+        assert not sample.is_ideal
+    assert estimate_qber(transcript.check_log_for(Party.BOB, 0).qber).estimate > 0.0
+    assert not transcript.transferable
+
+
+def _damped(gamma: float, qubit: int) -> DensityMatrix:
+    """Return ``|Phi+>`` with amplitude damping applied to one leg only.
+
+    An eavesdropper acts on the half that travels, not on the half Alice keeps,
+    so a faithful model of one has to be able to say *which* qubit it touched.
+    """
+    kraus = Kraus(
+        [
+            np.array([[1.0, 0.0], [0.0, np.sqrt(1.0 - gamma)]]),
+            np.array([[0.0, np.sqrt(gamma)], [0.0, 0.0]]),
+        ]
+    )
+    return DensityMatrix(bell_state(BellState.PHI_PLUS)).evolve(
+        kraus, qargs=[qubit]
+    )
+
+
+def test_the_two_wings_say_which_end_of_the_pair_was_disturbed() -> None:
+    """D2, pinned by an asymmetric resource, and the reason for two numbers.
+
+    Damping *one* leg leaves the global summaries unable to say which: fidelity,
+    purity and concurrence are all invariant under swapping the two qubits, so
+    an attack on the leg in flight and an equally strong fault in Alice's own
+    apparatus produce identical triples. The marginals separate them, and
+    reading the pair the wrong way round would attribute an attack to the wrong
+    party with nothing failing -- which is exactly why the qubit indices come
+    from :mod:`sih141.protocol.checkrounds` rather than from a literal.
+
+    A Werner pair is the control: it mixes both halves equally, so the wings
+    agree and the disturbance is real but not one-sided.
+    """
+    plan = draw_check_plan(_checked(40, 0.25), rng=np.random.default_rng(0))
+    scheduled = plan.qber_rounds[0]
+    context = ResourceContext(
+        party=Party.BOB, message_bit=0, position=scheduled.position
+    )
+
+    travelling = ChannelSample.of(_damped(0.5, 1), context, scheduled)
+    assert travelling.recipient_purity > travelling.alice_purity
+    assert travelling.alice_purity == pytest.approx(0.5)
+    assert not travelling.wings_agree
+
+    at_alice = ChannelSample.of(_damped(0.5, 0), context, scheduled)
+    assert at_alice.alice_purity > at_alice.recipient_purity
+    assert not at_alice.wings_agree
+    # The global summaries cannot tell the two apart. That is the point.
+    assert at_alice.fidelity == pytest.approx(travelling.fidelity)
+    assert at_alice.purity == pytest.approx(travelling.purity)
+    assert at_alice.concurrence == pytest.approx(travelling.concurrence)
+
+    symmetric = ChannelSample.of(_werner(0.5), context, scheduled)
+    assert symmetric.wings_agree
+    assert symmetric.alice_purity == pytest.approx(0.5)
+    assert not symmetric.is_ideal
+
+
+def test_a_one_sided_channel_attack_lands_on_one_link_only() -> None:
+    """Charlie's samples degrade and Bob's do not, which is why they stay apart.
+
+    Pooling the two links' check rounds into one rate would report the average
+    of two channels and detect neither; this is the run that would hide in the
+    average.
+    """
+
+    def only_charlie(context: ResourceContext) -> Any:
+        if context.party is Party.CHARLIE:
+            return _werner(0.6)
+        return ideal_resource()
+
+    transcript = _session(
+        _checked(), seed=SEED + 53, resource_factory=only_charlie
+    ).run(0)
+
+    assert all(sample.is_ideal for sample in transcript.channel_for(Party.BOB, 0))
+    assert all(
+        not sample.is_ideal for sample in transcript.channel_for(Party.CHARLIE, 0)
+    )
+    assert estimate_qber(transcript.check_log_for(Party.BOB, 0).qber).errors == 0
+    assert estimate_qber(transcript.check_log_for(Party.CHARLIE, 0).qber).errors > 0
+
+
+def test_the_channel_seam_is_still_called_on_every_position() -> None:
+    """The tap must not be visible from the factory it wraps.
+
+    An adversary who could tell a watched round from an unwatched one would
+    behave on the watched ones, and every number the check rounds produce would
+    be a fiction. The session's tap therefore calls the factory identically at
+    all ``L`` positions -- not at the ``signing_length`` of them that carry key
+    -- and only records afterwards.
+    """
+    params = _checked()
+    contexts: list[ResourceContext] = []
+
+    def counting(context: ResourceContext) -> Any:
+        contexts.append(context)
+        return ideal_resource()
+
+    session = _session(params, seed=SEED + 54, resource_factory=counting)
+    session.run(0)
+
+    assert len(contexts) == len(MESSAGE_BITS) * len(VERIFIERS) * params.key_length
+    for bit in MESSAGE_BITS:
+        for party in VERIFIERS:
+            positions = [
+                context.position
+                for context in contexts
+                if context.party is party and context.message_bit == bit
+            ]
+            assert positions == list(range(params.key_length))
+    # A zero-argument factory keeps working through the tap, unchanged.
+    plain = _session(params, seed=SEED + 54, resource_factory=ideal_resource)
+    assert plain.run(0) == session.transcript()
+
+
+def test_the_channel_monitor_is_called_on_check_rounds_only() -> None:
+    """And is handed the resource that was delivered, not a copy of the ideal."""
+    params = _checked()
+    seen: list[tuple[Party, int, int]] = []
+
+    def monitor(resource: Any, context: ResourceContext) -> dict[str, Any]:
+        seen.append((context.party, context.message_bit, context.position))
+        return {"trace": float(np.real(np.trace(DensityMatrix(resource).data)))}
+
+    session = _session(params, seed=SEED + 55, channel_monitor=monitor)
+    transcript = session.run(1)
+
+    for bit in MESSAGE_BITS:
+        plan = session.check_plans[bit]
+        for party in VERIFIERS:
+            positions = sorted(
+                position
+                for seen_party, seen_bit, position in seen
+                if seen_party is party and seen_bit == bit
+            )
+            assert tuple(positions) == plan.positions
+            assert not set(positions) & set(plan.signing_positions)
+    assert all(
+        sample.extra["trace"] == pytest.approx(1.0)
+        for sample in transcript.channel
+    )
+    assert json.loads(transcript.to_json())["channel"][0]["extra"][
+        "trace"
+    ] == pytest.approx(1.0)
+
+
+def test_a_monitor_that_edits_the_pair_changes_nothing() -> None:
+    """An observer must not be able to become a channel attack by writing to it.
+
+    A qiskit state hands out its array, so a monitor given the object itself
+    could edit the pair between the factory that produced it and the
+    measurement that consumes it -- a channel attack under an observer's name,
+    and one the transcript would not record as a channel attack at all, because
+    the ``resource_factory`` it would be attributed to did nothing. The seam is
+    therefore handed a copy, and this is the assertion that says so: the same
+    seed with and without a vandalising monitor produces the same records and
+    the same ideal samples.
+    """
+
+    def vandal(resource: Any, context: ResourceContext) -> dict[str, Any]:
+        resource.data[0, 0] = 0.0
+        return {"seen": float(np.real(resource.data[3, 3]))}
+
+    params = _checked(40, 0.25)
+    clean = _session(params, seed=SEED + 61).run(0)
+    watched = _session(params, seed=SEED + 61, channel_monitor=vandal).run(0)
+
+    assert watched.records == clean.records
+    assert all(sample.is_ideal for sample in watched.channel)
+    # The monitor really ran, and really saw the pair it was given.
+    assert watched.channel[0].extra["seen"] == pytest.approx(0.5)
+
+
+def test_the_channel_monitor_is_never_called_without_check_rounds() -> None:
+    """No plan, no legitimate round to call it on, so it is not called at all."""
+    calls = 0
+
+    def monitor(resource: Any, context: ResourceContext) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return {}
+
+    transcript = _session(_params(24), channel_monitor=monitor).run(0)
+    assert calls == 0
+    assert transcript.channel == ()
+    assert transcript.check_logs == ()
+    assert not transcript.channel_monitored
+    # And an unchecked run is unchanged by the monitor being there at all.
+    assert transcript == _session(_params(24)).run(0)
+
+
+def test_monitor_output_is_coerced_to_json_leaves() -> None:
+    """NumPy comes out of any real computation; the transcript must survive it."""
+
+    def monitor(resource: Any, context: ResourceContext) -> dict[str, Any]:
+        eigenvalues = np.linalg.eigvalsh(DensityMatrix(resource).data)
+        return {
+            "eigenvalues": eigenvalues,
+            "rank": np.int64(int(np.sum(eigenvalues > 1e-9))),
+            "pure": np.bool_(True),
+            "nested": {"depth": [np.float64(0.5), None, "text"]},
+        }
+
+    transcript = _session(
+        _checked(40, 0.25), seed=SEED + 56, channel_monitor=monitor
+    ).run(0)
+    extra = transcript.channel[0].extra
+    assert isinstance(extra["eigenvalues"], list)
+    assert all(isinstance(value, float) for value in extra["eigenvalues"])
+    assert extra["rank"] == 1 and isinstance(extra["rank"], int)
+    assert extra["pure"] is True
+    assert extra["nested"] == {"depth": [0.5, None, "text"]}
+    assert SessionTranscript.from_json(transcript.to_json()) == transcript
+
+
+def test_a_monitor_returning_something_unserialisable_is_refused() -> None:
+    """Loudly, at the round that produced it -- not at ``json.dumps`` time."""
+    session = _session(
+        _checked(40, 0.25),
+        seed=SEED + 57,
+        channel_monitor=lambda resource, context: {"state": resource},
+    )
+    with pytest.raises(TypeError, match="no JSON representation"):
+        session.distribute()
+
+    session = _session(
+        _checked(40, 0.25),
+        seed=SEED + 57,
+        channel_monitor=lambda resource, context: {"nan": float("nan")},
+    )
+    with pytest.raises(ValueError, match="non-finite"):
+        session.distribute()
+
+    session = _session(
+        _checked(40, 0.25),
+        seed=SEED + 57,
+        channel_monitor=lambda resource, context: [1.0],
+    )
+    with pytest.raises(TypeError, match="must return a mapping"):
+        session.distribute()
+
+    # The likely one: a detector publishing an amplitude straight out of a
+    # density matrix. There is no JSON convention for a complex number and
+    # inventing one here would make every reader guess, so it is named instead.
+    session = _session(
+        _checked(40, 0.25),
+        seed=SEED + 57,
+        channel_monitor=lambda resource, context: {
+            "amplitude": DensityMatrix(resource).data[0, 0]
+        },
+    )
+    with pytest.raises(TypeError, match="complex number"):
+        session.distribute()
+
+
+def test_a_non_callable_channel_monitor_is_refused_at_construction() -> None:
+    """As every other seam is."""
+    with pytest.raises(TypeError, match="channel_monitor"):
+        QDSSession(_checked(), channel_monitor={"fidelity": 1.0})  # type: ignore[arg-type]
+
+
+def test_the_transcript_refuses_a_channel_sample_at_a_key_position(
+    checked_run: SessionTranscript,
+) -> None:
+    """The load-bearing refusal: only sampled positions may be published.
+
+    A per-position statement about a *key* position is a statement about the
+    rounds the signature is made of, and the estimate stops being a sample of
+    anything. The live path cannot produce one; a file can say whatever it was
+    written to say, so the persistence boundary checks it.
+    """
+    blob = json.loads(checked_run.to_json())
+    signing = set(range(checked_run.params.key_length)) - set(
+        checked_run.check_log_for(Party.BOB, 0).positions
+    )
+    blob["channel"][0]["position"] = min(signing)
+    with pytest.raises(ValueError, match="not a check round of this run"):
+        SessionTranscript.from_json(json.dumps(blob))
+
+    blob = json.loads(checked_run.to_json())
+    blob["channel"][0]["position"] = checked_run.params.key_length + 1
+    with pytest.raises(ValueError, match="positions"):
+        SessionTranscript.from_json(json.dumps(blob))
+
+    blob = json.loads(checked_run.to_json())
+    first = checked_run.channel[0]
+    other = CheckRole.CHSH if first.role is CheckRole.QBER else CheckRole.QBER
+    blob["channel"][0]["role"] = other.value
+    with pytest.raises(ValueError, match="arm"):
+        SessionTranscript.from_json(json.dumps(blob))
+
+
+def test_the_transcript_refuses_two_check_logs_for_one_link(
+    checked_run: SessionTranscript,
+) -> None:
+    """A duplicate would double the sample behind every interval computed."""
+    with pytest.raises(ValueError, match="two logs"):
+        dataclasses.replace(
+            checked_run,
+            check_logs=checked_run.check_logs + (checked_run.check_logs[0],),
+        )
+
+
+def test_check_round_accessors_refuse_alice(
+    checked_run: SessionTranscript,
+) -> None:
+    """A check round measures one link and she is the far end of both."""
+    with pytest.raises(ValueError, match="Alice holds no check log"):
+        checked_run.check_log_for(Party.ALICE, 0)
+    with pytest.raises(ValueError, match="Alice holds no channel samples"):
+        checked_run.channel_for(Party.ALICE, 0)
+    assert checked_run.check_log_for(Party.BOB, 1) is not None
+    assert _session(_params(16)).run(0).check_log_for(Party.BOB, 0) is None
+
+
+def test_the_transcript_still_holds_no_quantum_state_on_a_checked_run(
+    checked_run: SessionTranscript,
+) -> None:
+    """Every leaf a JSON primitive, check-round diagnostics included."""
+    blob = checked_run.to_dict()
+
+    def walk(value: Any, path: str) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                assert isinstance(key, str), path
+                walk(item, f"{path}.{key}")
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                walk(item, f"{path}[{index}]")
+        else:
+            assert isinstance(value, (int, float, bool, str, type(None))), (
+                f"{path} is {type(value).__name__}"
+            )
+
+    walk(blob, "transcript")
+    assert json.loads(json.dumps(blob))["channel"][0]["fidelity"] == 1.0
+
+
+def test_the_summary_names_a_checked_run_as_one(
+    checked_run: SessionTranscript,
+) -> None:
+    """The reader is told the key was shortened before being shown its rates."""
+    line = next(
+        text
+        for text in checked_run.summary().splitlines()
+        if text.startswith("CHECK ROUNDS:")
+    )
+    assert "30 of 120" in line
+    assert "L=90" in line
+    assert "CHECK ROUNDS" not in _session(_params(24)).run(0).summary()
+
+
+def test_a_distributor_returning_unsifted_records_is_still_refused() -> None:
+    """Silently accepting one would score 120 positions against 90's floors.
+
+    The exact failure the sifted parameter set exists to prevent, and the reason
+    the record check happens against ``scored_params`` rather than ``params``.
+    """
+
+    def unsifted(key: PrivateKey, protocol_params: Any, **kwargs: Any) -> Any:
+        kwargs.pop("check_plan", None)
+        return distribute_public_key_with_checks(
+            key, protocol_params.with_check_fraction(0.0), **kwargs
+        )
+
+    session = _session(_checked(), seed=SEED + 58, distributor=unsifted)
+    with pytest.raises(ValueError, match="entries"):
+        session.distribute()
+
+
+def test_a_distributor_that_swaps_the_two_links_check_logs_is_refused() -> None:
+    """A check log is a statement about one link, and about which one.
+
+    Filing Charlie's under Bob would attribute Charlie's channel to Bob, which
+    is precisely the attribution a one-sided attack turns on -- and it would do
+    it silently, because both logs are well formed and the records are
+    untouched. The seam's output is checked for shape, so it fails loudly here.
+    """
+
+    def swapping(key: PrivateKey, protocol_params: Any, **kwargs: Any) -> Any:
+        outcomes = distribute_public_key_with_checks(
+            key, protocol_params, **kwargs
+        )
+        bob, charlie = outcomes[Party.BOB], outcomes[Party.CHARLIE]
+        return {
+            Party.BOB: RecipientDistribution(bob.record, charlie.log, bob.plan),
+            Party.CHARLIE: charlie,
+        }
+
+    session = _session(_checked(40, 0.25), seed=SEED + 59, distributor=swapping)
+    with pytest.raises(ValueError, match="filed a check log for"):
+        session.distribute()
+
+
+def test_the_distributor_may_still_return_bare_records(
+    checked_run: SessionTranscript,
+) -> None:
+    """The historical shape keeps working, and simply publishes no statistics."""
+
+    def bare(key: PrivateKey, protocol_params: Any, **kwargs: Any) -> Any:
+        return {
+            party: outcome.record
+            for party, outcome in distribute_public_key_with_checks(
+                key, protocol_params, **kwargs
+            ).items()
+        }
+
+    transcript = _session(_checked(), seed=SEED + 101, distributor=bare).run(0)
+    assert transcript.check_logs == ()
+    # The records are the ones the default distributor produced, so the only
+    # thing lost is what was published about the channel -- and the samples,
+    # which come from the tap rather than from the seam, are still there.
+    assert transcript.records == checked_run.records
+    assert len(transcript.channel) == len(checked_run.channel)
+
+
+def test_a_channel_sample_is_a_summary_and_not_a_state() -> None:
+    """Built from the pair, carrying numbers, and refusing anything else."""
+    context = ResourceContext(party=Party.BOB, message_bit=1, position=7)
+    scheduled = draw_check_plan(
+        _checked(40, 0.25), rng=np.random.default_rng(0)
+    ).qber_rounds[0]
+    at = ResourceContext(
+        party=Party.BOB, message_bit=1, position=scheduled.position
+    )
+
+    sample = ChannelSample.of(bell_state(BellState.PHI_PLUS), at, scheduled)
+    assert sample.is_ideal
+    assert ChannelSample.from_dict(sample.to_dict()) == sample
+
+    # A one-qubit "resource" is a mis-wired factory, named as one.
+    with pytest.raises(ValueError, match="two-qubit state"):
+        ChannelSample.of(Statevector([1, 0]), at, scheduled)
+    # A round from another position would file this pair under other outcomes.
+    with pytest.raises(ValueError, match="hop being summarised"):
+        ChannelSample.of(bell_state(BellState.PHI_PLUS), context, scheduled)
+    # Alice is at the far end of both links and tags nothing.
+    with pytest.raises(ValueError, match="describes one link"):
+        dataclasses.replace(sample, party=Party.ALICE)
+    # And the fields are numbers, including when they arrive from a file.
+    with pytest.raises(TypeError, match="fidelity must be a real number"):
+        dataclasses.replace(sample, fidelity="high")
+    with pytest.raises(ValueError, match=r"finite number in \[0.0, 1.0\]"):
+        dataclasses.replace(sample, recipient_purity=1.5)
+
+
+def test_the_withheld_records_mapping_is_an_empty_mapping() -> None:
+    """It has to behave as ``{}`` for every signer that probes it defensively."""
+    withheld = WithheldRecords()
+    assert len(withheld) == 0
+    assert list(withheld) == []
+    assert dict(withheld) == {}
+    assert withheld.get(0) is None
+    assert repr(NO_RECIPIENT_LOGS) == "WithheldRecords()"
+    # And the one thing it adds: the reason, on the way out.
+    with pytest.raises(KeyError, match="no adversary in the threat model"):
+        withheld[0]
+    with pytest.raises(KeyError, match="forwarder seam"):
+        withheld[1]

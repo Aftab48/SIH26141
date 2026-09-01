@@ -637,7 +637,15 @@ def test_a_run_with_no_verdict_quotes_no_guarantee() -> None:
     """
     params = _attack_params()
     transcript = QDSSession(
-        params, rng=np.random.default_rng(11), signer=starving_signer
+        params,
+        rng=np.random.default_rng(11),
+        signer=starving_signer,
+        # Reading BOTH recipients' raw logs is exactly what this attack does
+        # and exactly what the threat model does not allow, so the seam offers
+        # them only on request. The flag is carried into the transcript, which
+        # is what keeps an insecure-arm number from being quoted as a
+        # secure-arm one -- see :ref:`two-log-signer`.
+        signer_sees_recipient_logs=True,
     ).run(0)
     assert transcript.aborted
     assert transcript.pooled_matched_count is None
@@ -692,7 +700,10 @@ def test_the_adaptive_declaration_attack_is_prevented_by_the_floor() -> None:
     outcomes: Counter[str] = Counter()
     for seed in range(TRIALS):
         transcript = QDSSession(
-            params, rng=np.random.default_rng(seed), signer=starving_signer
+            params,
+            rng=np.random.default_rng(seed),
+            signer=starving_signer,
+            signer_sees_recipient_logs=True,
         ).run(0)
         outcomes[_classify(transcript)] += 1
 
@@ -735,7 +746,10 @@ def test_the_attack_is_bounded_where_both_floors_are_inert_and_no_claim_is_made(
     successes = 0
     for seed in range(TRIALS):
         transcript = QDSSession(
-            params, rng=np.random.default_rng(seed), signer=starving_signer
+            params,
+            rng=np.random.default_rng(seed),
+            signer=starving_signer,
+            signer_sees_recipient_logs=True,
         ).run(0)
         assert transcript.pooled_matched_count == 13
         assert transcript.repudiation_guarantee == pytest.approx(
@@ -768,7 +782,10 @@ def test_the_pooled_floor_protects_a_key_length_the_local_one_cannot() -> None:
 
     for seed in range(TRIALS):
         transcript = QDSSession(
-            DEMO_PARAMS, rng=np.random.default_rng(seed), signer=starving_signer
+            DEMO_PARAMS,
+            rng=np.random.default_rng(seed),
+            signer=starving_signer,
+            signer_sees_recipient_logs=True,
         ).run(0)
         assert not transcript.repudiated
         assert transcript.aborted
@@ -803,6 +820,7 @@ def test_the_split_coin_route_is_open_without_the_count_exchange() -> None:
             params,
             rng=np.random.default_rng(200 + seed),
             signer=aiming_signer,
+            signer_sees_recipient_logs=True,
             count_exchange=no_count_exchange,
         ).run(0)
         outcomes[_classify(transcript)] += 1
@@ -848,7 +866,10 @@ def test_the_split_coin_route_is_closed_by_the_pooled_floor() -> None:
     reasons: Counter[AbortReason] = Counter()
     for seed in range(TRIALS):
         transcript = QDSSession(
-            params, rng=np.random.default_rng(200 + seed), signer=aiming_signer
+            params,
+            rng=np.random.default_rng(200 + seed),
+            signer=aiming_signer,
+            signer_sees_recipient_logs=True,
         ).run(0)
         outcomes[_classify(transcript)] += 1
         assert transcript.counts_exchanged
@@ -903,6 +924,7 @@ def test_a_verifier_refuses_when_his_counterpart_is_starved() -> None:
             params,
             rng=np.random.default_rng(700 + seed),
             signer=aiming_at_the_pooled_floor,
+            signer_sees_recipient_logs=True,
             symmetriser=_never_swap,
             count_exchange=no_count_exchange,
         ).run(0)
@@ -915,6 +937,7 @@ def test_a_verifier_refuses_when_his_counterpart_is_starved() -> None:
             params,
             rng=np.random.default_rng(700 + seed),
             signer=aiming_at_the_pooled_floor,
+            signer_sees_recipient_logs=True,
             symmetriser=_never_swap,
         ).run(0)
         assert withit.bob is None, "Bob must not accept what Charlie cannot score"

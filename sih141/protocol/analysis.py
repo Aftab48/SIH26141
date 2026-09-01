@@ -78,8 +78,10 @@ no binding to one. An adversary who controls **both** seams -- distributing her
 own key states in Phase A *and* signing her own key in Phase B -- is therefore
 not forging in the sense sections 3 and 3b bound. She is running the protocol as
 the signer, correctly, and every number in this file is on her side: measured
-through the shipped seams, ``60/60`` accepted by Bob and ``60/60`` by Charlie,
-``QBER = 0.0000`` exactly, ``transferable=True``. No counting rule over the
+through the shipped seams at ``L = 192``, ``200/200`` accepted by Bob and
+``200/200`` by Charlie, ``QBER = 0.0000`` exactly, ``transferable=True`` --
+identical to the honest control in every transcript number, which is the
+result. No counting rule over the
 recipients' own logs can do anything about that, because there is nothing in
 those logs to disagree with.
 
@@ -92,13 +94,43 @@ down here because it is a *precondition of the demonstration* in exactly the way
 **Partial impersonation is a different matter and is caught cold.** An adversary
 who seizes only the signing seam -- Alice distributed, Mallory declares -- is
 the external forger of section 3, and an adversary who seizes only the
-distribution seam is caught by the same arithmetic. Measured: ``0/60`` accepted,
-at ``QBER = 0.4987`` (Bob) and ``0.4806`` (Charlie), against the ``1/2`` a
-declaration uncorrelated with the recipients' states produces. Note what did
-*not* move in those runs: **the matched counts are unchanged**, because the
-matched set depends only on the declared bases and the recipients' own uniform
-draws (section 1) and no adversary in the channel touches either. The mismatch
-rate is the only signal there is. That is also why the floors of sections 4b-iii
+distribution seam is caught by the same arithmetic. Measured through the shipped
+seams by :mod:`sih141.attacks.impersonation`, at ``L = 192`` over ``n = 200``
+sessions per arm, with the mismatch rate **pooled over scored positions**
+(``sum e_R / sum |M_R|``, roughly ``1.3e+04`` positions per arm per verifier)
+rather than averaged over per-run rates:
+
+.. code-block:: text
+
+    scope           accepted    r_Bob     r_Charlie
+    none (control)   200/200    0.0000    0.0000
+    full             200/200    0.0000    0.0000     <- out of model, (AUTH)
+    signing            0/200    0.4988    0.5038
+    distribution       0/200    0.5031    0.4997
+
+against the ``1/2`` a declaration uncorrelated with the recipients' states
+produces; all four Wilson 95% intervals cover it. The table is
+:data:`sih141.attacks.impersonation.MEASURED`, whose rows carry their own counts
+and re-check their own arithmetic at import, and
+:func:`sih141.attacks.impersonation.shipped_summary` prints it.
+
+This paragraph used to read ``0/60`` accepted at ``QBER = 0.4987`` (Bob) and
+``0.4806`` (Charlie). The acceptance count reproduces; ``0.4806`` does not, and
+it could not have: with no key length, no ``n``, and no statement of which of
+the two estimators it was, there was nothing to reproduce. At any plausible
+``L`` the pooled standard deviation over 60 runs is at most ``0.0144``, which
+puts ``0.4806`` about ``1.3`` sd low while quoting it to four figures. It is
+replaced rather than corrected, because the defect was the missing conditions
+and not the digits.
+
+Note what did *not* move in those runs: **the matched counts are unchanged**,
+because the matched set depends only on the declared bases and the recipients'
+own uniform draws (section 1) and no adversary in the channel touches either.
+Under the distribution scope this was checked in its sharpest form -- the matched
+sets are identical *position for position* to the control at the same session
+seed, 200/200 trials -- with the signing scope as the control that stops the
+claim being vacuous (0/200 identical there, the counts still Binomial(L, 1/3)).
+The mismatch rate is the only signal there is. That is also why the floors of sections 4b-iii
 and 4b-iv are an evidence-liveness control rather than an impersonation
 detector, and why an end-to-end adversary -- who produces ``r_R = 0`` by
 construction, like any honest signer -- is invisible to every rate computed

@@ -9,8 +9,11 @@ order, and Section 6b carries both derivations.
 
 1. The `6.9e−10` this document once published as holding "for every Alice strategy" holds
    only while the signer cannot see the recipients' logged bases, and the shipped `Signer`
-   seam hands her both raw logs. It was replaced by a per-run conditional bound and a
+   seam handed her both raw logs. It was replaced by a per-run conditional bound and a
    per-verifier matched-count floor. The mathematics was never wrong; the advertising was.
+   (Phase 3 then made the two-log seam an opt-in — see the note under the seam table in
+   §9 — which narrows who can break the assumption without making the averaged number
+   safe to quote per run.)
 2. That floor left one route open and said so: a signer who aims the *pooled* matched count
    at `2·m_min` and lets the symmetrisation coins split it leaves Bob accepting a signature
    Charlie cannot score, about half the time, at every key length — measured `78/200` at
@@ -23,7 +26,7 @@ order, and Section 6b carries both derivations.
 | --- | --- | --- | --- |
 | A run that completed | `SessionTranscript.repudiation_guarantee` — `repudiation_bound` at the observed `M = m_B + m_C` | `6.9e−10` on a healthy run | **nothing** |
 | Before any run | `verify.enforced_repudiation_bound` — the bound the shipped floors force | `1.4e−09` | **nothing** |
-| Never publish | `analysis.averaged_repudiation_bound` | `6.9e−10` | assumption (IND), which the `Signer` seam breaks |
+| Never publish | `analysis.averaged_repudiation_bound` | `6.9e−10` | assumption (IND), which the `Signer` seam can be opened up to break |
 
 Both honest numbers are **implemented and enforced**, not hypothetical. A verdict requires
 all three of
@@ -52,12 +55,12 @@ per-verifier floor could refuse nothing.
 | `params.py` | Parameters, parties, thresholds, and the validation that refuses insecure sets | `Party`, `VERIFIERS`, `ProtocolParams`, `COMPLIANT_FORGER_RATE_THREE_BASIS`, `UNSYMMETRISED_FORGER_RATE_THREE_BASIS`, `DEFAULT_S_A`, `DEFAULT_S_V`, `DEFAULT_BASES`, `DEFAULT_PARAMS`, `DEMO_PARAMS` |
 | `keys.py` | Alice's private keys and the quantum public key | `KeyElement`, `PrivateKey`, `generate_private_key`, `generate_key_pair`, `public_key_states` |
 | `records.py` | The recipients' immutable classical logs | `RecordEntry`, `RecipientRecord` |
-| `distribute.py` | Phase A: teleportation and immediate measurement | `ResourceContext`, `ResourceFactory`, `ideal_resource`, `distribute_to_recipient`, `distribute_public_key` |
+| `distribute.py` | Phase A: teleportation and immediate measurement | `ResourceContext`, `ResourceFactory`, `ideal_resource`, `distribute_to_recipient`, `distribute_public_key` — plus, in Phase 3, `PayloadMap`, `identity_payload`, and the check-round pair `RecipientDistribution`, `distribute_*_with_checks` |
 | `symmetrise.py` | Phase A′: the recipients' private exchange | `Symmetriser`, `symmetrise_records`, `no_symmetrisation` |
 | `signature.py` | Phase B: the declaration | `Signature`, `sign` |
 | `tally.py` | Phase C′: the recipients' matched-count exchange, and the pooled floor it makes checkable | `CountExchange`, `MatchedCountMessage`, `PooledMatchedCounts`, `matched_count_message`, `exchange_matched_counts`, `no_count_exchange` |
 | `verify.py` | Phase C: the matched/unmatched split, the accept rule, the three matched-count floors and the declaration-provenance check | `VerificationResult`, `matched_positions`, `mismatch_positions`, `verify`, `verify_all`, `verify_or_abort`, `HONEST_ABORT_BUDGET`, `AbortReason`, `VerificationAbort`, `MatchedSetTooSmall`, `minimum_matched_count`, `minimum_pooled_matched_count`, `guaranteed_pooled_matched_count`, `enforced_repudiation_bound` |
-| `session.py` | Orchestration and the attack seams | `MESSAGE_BITS`, `Distributor`, `Symmetriser`, `Signer`, `Forwarder`, `honest_signer`, `honest_forwarder`, `SessionTranscript`, `QDSSession` |
+| `session.py` | Orchestration and the attack seams | `MESSAGE_BITS`, `Distributor`, `Symmetriser`, `Signer`, `Forwarder`, `honest_signer`, `honest_forwarder`, `SessionTranscript`, `QDSSession` — plus, in Phase 3, `ChannelMonitor`, `ChannelSample`, `WithheldRecords`, `NO_RECIPIENT_LOGS` |
 | `analysis.py` | Closed forms only; no simulation | `matched_statistics`, `honest_statistics`, `forgery_probability`/`_bound`, `recipient_forgery_probability`/`_bound`, `repudiation_probability`, `repudiation_bound`, `averaged_repudiation_bound`, `repudiation_bound_with_abort`, `symmetric_repudiation_bound`, `honest_abort_probability`/`_bound`, `binary_kl_divergence`, `hoeffding_exponent`, `max_accepted_mismatches`, `depolarising_error_rate`, `matched_count_distribution`, `matched_shortfall_probability`, `FORGER_MATCHED_MISMATCH_PROBABILITY`, `BoundMethod` |
 
 Dependencies run one way: `params` → `keys` → `records` → `distribute` → `symmetrise` →
@@ -873,6 +876,18 @@ attacked run and a clean run comparable rather than two different programs.
 | `forwarder` | `(Signature, ProtocolParams) -> Signature` | The Bob→Charlie classical hop. An attack *between* the two verifications. |
 | `run_id` | `str \| None` | Carried verbatim into the transcript for a replay ledger to key on. |
 
+> **Changed in Phase 3, and this table is the Phase 2 record.** Three of these rows have
+> moved. The `signer` seam is **no longer shown the recipients' logs by default** — it gets
+> `NO_RECIPIENT_LOGS`, and the two-log version is the loud opt-in
+> `QDSSession(..., signer_sees_recipient_logs=True)`, flagged in the transcript so an
+> insecure-arm number can never be read as a secure-arm one. The `forwarder` takes an
+> optional keyword-only `view`, one recipient's `RecipientView`, because **that** is where a
+> forging recipient stands — mounting one on `signer` models the wrong adversary, since the
+> signer's declaration reaches both verifiers and Bob then rejects his own forgery. And two
+> seams were added: `payload_map`, on the state Alice sends, and `channel_monitor`, on the
+> resource of a check round. See `sih141.protocol.session`'s `threat-model`, `forger-route`
+> and `two-log-signer` sections.
+
 Three contracts worth knowing:
 
 **`ResourceContext`, not call counting.** A factory taking one *required* positional
@@ -882,7 +897,8 @@ order is documented but is not a contract, and a counter-based factory would sil
 a re-ordering to the wrong target. A callable invocable with no arguments is called with
 none, so `lambda pair=pair: pair` keeps working.
 
-**Raw records for the signer.** The `Signer` seam gets the pre-exchange logs. That is what a
+**Raw records for the signer.** The `Signer` seam gets the pre-exchange logs *when it is
+given any* — see the Phase 3 note above; in Phase 2 it always was. That is what a
 forging Bob needs — after Phase A′ half of Charlie's evidence *is* Bob's raw record, while
 Bob's post-exchange record is precisely the half Charlie does not hold.
 `QDSSession.raw_records` and `QDSSession.records` expose both to an experiment.

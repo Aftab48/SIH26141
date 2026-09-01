@@ -8,7 +8,7 @@
 > on the maintainer's explicit instruction. The permanent record is
 > `docs/METRICS.md` and the `docs/PHASE*.md` notes.
 
-**58 entries** — 22 issue · 16 decision · 11 finding · 5 fix · 3 note · 1 deadend
+**86 entries** — 25 finding · 24 decision · 22 issue · 7 fix · 7 note · 1 deadend
 
 
 ## Phase 0 — Scaffold
@@ -1389,3 +1389,1357 @@ and a classically correlated pair sitting below it -- and made no claim about
 those two. Phase 4 owns them; if they disagree with this module's settings, the
 settings are in CHSH_ALICE_ANGLES / CHSH_RECIPIENT_ANGLES and the prediction is
 depolarising_chsh().
+
+### `[D]` The signer seam no longer sees the recipients' logs by default
+
+*decision · attack-surface agent · 2026-08-31T19:40:02Z*
+
+The signer seam used to be handed BOTH recipients' raw logs on every run. That
+is strictly more than any single adversary in the threat model holds -- a
+repudiating Alice holds neither log, a forging recipient holds one -- and it is
+where the whole Phase 2 repudiation attack family started. The default now
+passes NO_RECIPIENT_LOGS and the old behaviour is
+QDSSession(..., signer_sees_recipient_logs=True).
+
+Three decisions inside that, each easy to undo by accident:
+
+1. It is a CAPABILITY flag, not a "this run cheated" flag. What the transcript
+   records is "the seam was shown both logs", not "the signer read both logs" --
+   nothing can check the second. The summary line says exactly that, and the
+   wording matters: "Any bound quoted for this run holds only if the signer in
+   fact read no more than its adversary is entitled to, and nothing here checks
+   that." An attack that legitimately reads only its own log (a recipient
+   forger mounted on the signer seam) still trips the flag, because the flag is
+   about the harness, not the attack.
+
+2. The default is a WithheldRecords instance, not {}. A signer reaching for
+   records[b][Party.BOB] against a plain {} gets `KeyError: 0`, which is
+   indistinguishable from a mis-wired attack; against this it gets a KeyError
+   naming the constructor flag and pointing a recipient forger at the forwarder
+   seam. It is otherwise an exact empty Mapping, so `.get(b, {})` and len() and
+   iteration behave, and honest_signer is unaffected.
+
+3. The opt-in still hands over the RAW logs, never the post-exchange ones. That
+   was already the rule and it stays: the raw log is what a forging recipient
+   needs (half of the counterpart's evidence IS his raw record after Phase A'),
+   and the post-exchange logs would hand a repudiating Alice the coins'
+   outcome, which is the only randomness the non-repudiation bound uses.
+
+Six existing attack call sites in four test files had to add the flag
+(test_phase2_integration, test_protocol_reconciliation, test_protocol_verify,
+test_protocol_verify_abort). Every one of them reads a recipient log, so every
+one of them was already outside the model in the harness's sense; they now say
+so. tests/test_attack_isolation.py needed nothing -- signer_probe calls the seam
+directly and never goes through QDSSession.sign.
+
+### `[*]` The recipient forger belongs on the forwarder seam, and what that route actually returns
+
+*finding · attack-surface agent · 2026-08-31T19:40:03Z*
+
+session.py used to send a Phase 3 author to mount a forging Bob on the SIGNER
+seam. That is the wrong adversary: the signer's declaration goes to BOTH
+verifiers, so Bob is handed his own forgery and rejects it. Measured at L=600
+on one seed, and now asserted in tests/test_protocol_session.py
+(test_the_signer_route_records_a_successful_forgery_as_a_rejection):
+
+  * signer route: Bob's rate leaves 0.0 and lands at the 1/12 forger floor with
+    Charlie's, and Bob's matched count inflates from ~L/3 to ~2L/3 because the
+    declaration was built from a recipient's log rather than drawn independently
+    of it. transferable=False, repudiated=False -- a working forgery recorded as
+    a run in which nothing happened.
+  * forwarder route: Charlie's VerificationResult is IDENTICAL (same record,
+    same forged key, same verdict object) and Bob keeps his honest verdict.
+
+So the forwarder route buys nothing at Charlie and costs nothing but Bob's
+corruption. It is now the documented route, and Forwarder.__call__ takes an
+optional keyword-only `view` so the attack can be written against Bob's own
+RecipientView with no back-patching and no access to Charlie's log.
+
+TWO THINGS THE NEXT AGENT MUST KNOW.
+
+(1) Under the SHIPPED (pooled) rule the forwarder route does not produce a
+rejection at Charlie -- it produces a NO VERDICT,
+AbortReason.COUNTS_FROM_TWO_DECLARATIONS. Phase C' runs before either verdict,
+so the counts Charlie holds were computed against Alice's declaration while he
+is scoring Bob's, and m_C(forwarded) + m_B(original) is no run's pooled count.
+verify.py's `one-declaration` section already reasons this through and is
+right. The consequence for Phase 3/5: to measure the forger's RATE against s_v
+(the 1/12 floor) the run must be pre-pooled, count_exchange=no_count_exchange,
+which is the same arm the split-coin experiments already use.
+
+(2) That refusal is NOT evidence that recipient forgery is caught. It is
+guaranteed by this harness's ordering: the forwarder seam has no way to supply a
+matching matched-count message, so a substituted declaration always arrives with
+a stale digest. A real forging Bob announces his own count against his own
+declaration and does not trip it. Closing that would mean letting the forwarding
+party re-run Phase C' -- a change to tally.py's message flow, which is audited
+and which I did not touch. Flagged here so it is a known gap rather than a
+result.
+
+`view` is detected the same way the resource factory's context is: a forwarder
+that CAN be called with two arguments IS called with two, so only `*, view` with
+no default receives one. honest_forwarder declares `view=None` precisely in
+order to decline it, which keeps the honest path from building a RecipientView
+at all.
+
+### `[+]` repudiated is gated on the forwarding hop, and summary() had two false closing lines
+
+*fix · attack-surface agent · 2026-08-31T19:40:03Z*
+
+SessionTranscript.repudiated is now
+
+    bob.accepted and not charlie.accepted
+    and not forwarding_altered_signature      <-- new
+    and session_coherent
+
+Repudiation is Alice disavowing ONE declaration, so it needs both verifiers to
+have scored one. When Bob himself supplied Charlie's -- which is now the
+documented recipient-forgery route -- "Bob accepted and Charlie rejected" is the
+expected outcome of a FORGERY experiment, and counting it would add one to a
+Phase 5 repudiation rate for every forgery attempt. Same argument the property
+next door already makes: pooled_matched_count returns None on an altered run
+because it is two experiments and not one.
+
+This is a BREAKING SEMANTIC CHANGE for anything that classifies runs. Nothing in
+the repository relied on it -- every other .repudiated call site runs an honest
+forwarding hop -- but a Phase 4/5 table that switches on outcomes needs the new
+cases.
+
+summary()'s closing line had the same hole and is fixed with it. It used to fall
+through to "REJECTED: Bob did not accept the signature" whenever transferable
+and repudiated were both False, which was a FALSE STATEMENT on exactly two kinds
+of run: one where the hop altered the declaration and Bob accepted, and one
+where session_coherent was False. There are now five closing lines:
+
+    NO VERDICT / INCOMPLETE / TRANSFERABLE / REPUDIATION
+    REJECTED         -- only when Bob genuinely did not accept
+    INCOHERENT       -- verdicts and declaration from different rounds
+    NOT TRANSFERRED  -- Bob accepted, Charlie scored a different declaration
+
+The order of the elif chain is load-bearing: REJECTED is now guarded by
+`not self.verdict_for(Party.BOB).accepted`, which is only safe because the
+aborted and not-is_complete branches come first and guarantee both verdicts
+exist.
+
+### `[D]` Making QDSSession check-aware: the plan's stream, two identity tricks, empty logs
+
+*decision · attack-surface agent · 2026-08-31T19:40:04Z*
+
+QDSSession accepts a params with check_fraction > 0 now. The checkrounds agent
+left the recipe and it was right; what follows is the part that is not obvious
+from the recipe.
+
+THE PLAN COMES FROM self._recipient_rng, one per message bit, drawn BEFORE that
+bit's distribution and therefore before that bit's symmetrisation coins. Never
+from the Alice stream: the whole value of a sampled estimate is that the
+estimated party cannot choose the sample, and a distributor seam holding Alice's
+generator must not be able to predict which positions are watched. Pinned by
+test_the_check_plan_is_drawn_from_the_recipients_stream, which rebuilds the
+stream from the seed material and draws the plans out of it.
+
+TWO IDENTITY TRICKS, both deliberate, both worth keeping:
+
+  * self._scored_params is `params.sifted() if params.has_check_rounds else
+    params` -- the params object ITSELF on the common branch, not an equal copy.
+    params.sifted() returns replace(self, check_fraction=0.0), which is equal
+    but not identical, and a seam handed it would stop receiving the very object
+    the caller passed. test_the_signer_seam_receives_exactly_what_a_repudiating
+    _alice_holds asserts `captured["params"] is params`.
+  * self._signing_keys is the SAME TUPLE as self._keys when no plan is in force,
+    so `signature.declared_key is session.keys[b]` stays true. With a plan it is
+    plan.sift_key(keys[b]) per bit, which shares the elements.
+
+The record stamp uses self._scored_params.key_length, not params.key_length,
+because Signature.session_id derives from len(declared_key) and the declared key
+is the sifted one. Getting that wrong makes every checked run abort as
+SESSION_MISMATCH.
+
+The transcript keeps the UNSIFTED params -- it still has to record that the run
+reserved a check fraction -- and _check_result_against / _check_abort_against /
+_check_pooled_against re-derive params.sifted() themselves. repudiation_guarantee
+likewise: analysis.py counts Bernoulli trials against key_length directly, so
+handing it a checked set would count the diverted positions as key and return a
+bound that is too good.
+
+EMPTY CHECK LOGS ARE DROPPED, not filed. The default distributor is now
+distribute_public_key_with_checks (identical records -- the other function is a
+wrapper over it -- plus the logs), and on an unchecked run it returns four
+CheckLogs with no rounds in them. Carrying those would put "this run published
+no statistics" into every honest transcript as four objects rather than as an
+absence, and would change the serialised form of every seeded run in the
+project. _check_distribution files a log only when round_count > 0.
+
+### `[D]` The channel monitor: a tap on the factory, check positions only, no Bell outcome
+
+*decision · attack-surface agent · 2026-08-31T19:40:04Z*
+
+Phase 4 needs per-check-round channel diagnostics in the transcript. Three
+design choices, in decreasing order of how easy they are to get wrong.
+
+1. THE MONITOR IS A TAP ON THE RESOURCE FACTORY, NOT A HOOK IN distribute.py.
+   QDSSession wraps whatever resource_factory it was given in a _ChannelTap that
+   calls it identically at every position and then, only at a position the plan
+   designates a check round, records a ChannelSample. Two reasons for the
+   wrapper over a hook. It keeps distribute.py's load-bearing invariant intact
+   by construction -- the factory is the whole of the adversary's access to the
+   loop, and the tap is strictly downstream of it, so
+   test_the_factory_cannot_tell_a_check_round_from_a_key_round is untouched and
+   still means what it says. And the session already knows the plan, so the
+   filter "check positions only" lives in the one object that can enforce it.
+
+2. NO BELL OUTCOME AND NO CORRECTION BITS, and this is not an oversight. The
+   brief asked for them. A check round runs NO teleportation -- it spends its
+   pair on measuring both wings -- so neither quantity exists on the rounds that
+   may be published. They exist only on key rounds, and publishing a key round's
+   channel per position is precisely what the sampling exists to prevent: an
+   estimate whose sample is every position is not a sample. What is published
+   instead is the pair itself, summarised: fidelity to |Phi+>, purity,
+   concurrence, and the two single-qubit marginal purities. A detector that
+   wants more writes a channel_monitor and gets it into ChannelSample.extra;
+   that is what the seam is for.
+
+3. THE TWO WING MARGINALS ARE WHY THE SUMMARY IS NOT THREE NUMBERS. Fidelity,
+   purity and concurrence are all invariant under swapping the two qubits, so
+   an attack on the leg in flight and an equally strong fault in Alice's own
+   apparatus produce IDENTICAL triples -- asserted in
+   test_the_two_wings_say_which_end_of_the_pair_was_disturbed. alice_purity and
+   recipient_purity separate them. The qubit indices are imported from
+   checkrounds (_ALICE_QUBIT, _RECIPIENT_QUBIT) rather than written as 0 and 1,
+   so the two modules cannot come to disagree about which half is whose; reading
+   the pair the wrong way round would attribute a one-sided attack to the wrong
+   party with nothing failing (D2).
+
+ENFORCED, NOT JUST INTENDED: SessionTranscript.__post_init__ checks every
+ChannelSample against the run's own published CheckLog and refuses one sitting
+at a position the log did not record, or tagged with the other arm. The live
+path cannot produce such a sample; a transcript is a file and can say anything.
+A run whose distributor returned bare records publishes no log, and then the
+sample is only range-checked -- the honest reading of "tapped but not
+published".
+
+SURPRISE WORTH KNOWING: a one-sided attack on the CHANNEL is not one-sided in
+the EVIDENCE. Aiming a payload substitution at Charlie's link raises BOB's
+mismatch rate too, because Phase A' then re-assigns half the corrupted entries
+to Bob (test_the_payload_seam_can_target_one_recipients_link measures both
+arms; with no_symmetrisation the aim is exact, 0.0 and 1.0). The check rounds
+are what localise it, because they happen per link and BEFORE the exchange --
+which is also why Bob's and Charlie's CheckLogs must never be pooled into one
+rate.
+
+### `[-]` Files touched outside the ownership list, and why each one had to be
+
+*note · attack-surface agent · 2026-08-31T19:58:37Z*
+
+The brief gave me sih141/protocol/session.py and tests/test_protocol_session.py.
+Seven other files had to change, and each one is here so the next reviewer does
+not have to reconstruct why.
+
+sih141/protocol/distribute.py -- the payload_map seam LIVES here; there is
+nowhere else to apply a map to the state between preparation and teleport().
+Additive only: a new PayloadMap alias, identity_payload, _map_payload, one
+keyword on the four public functions defaulting to None, and one call site
+inside the key-round branch. With payload_map=None nothing is called and the
+variate stream is untouched, so every seeded run in the project is unmoved.
+
+sih141/protocol/__init__.py -- exports for the new public names (PayloadMap,
+identity_payload, ChannelMonitor, ChannelSample, WithheldRecords,
+NO_RECIPIENT_LOGS). The checkrounds agent left a note that whoever owns this
+file should add theirs; I did not add theirs, only mine, so that note still
+stands.
+
+tests/test_phase2_integration.py, tests/test_protocol_reconciliation.py,
+tests/test_protocol_verify.py, tests/test_protocol_verify_abort.py -- six
+QDSSession constructions whose signer reads a recipient log. They now pass
+signer_sees_recipient_logs=True. Nothing else about them changed: same seeds,
+same assertions, same numbers, because the flag is a capability and not a mode.
+
+docs/PHASE2.md -- the seam table said the signer seam receives both raw logs
+and that the forwarder takes two arguments. Both are now false. I did not
+rewrite the Phase 2 narrative -- it is a record of Phase 2 and should stay one
+-- and added a "Changed in Phase 3" block under the table instead, pointing at
+the three session.py sections that carry the current story. A stale claim in a
+doc is the failure mode this project has already had three times.
+
+Not touched, deliberately: tally.py and verify.py. The forwarder route's
+COUNTS_FROM_TWO_DECLARATIONS behaviour is theirs to change if anyone decides it
+should change, and the reasoning in verify.py's one-declaration section is
+sound as written. See the finding entry for the gap.
+
+### `[*]` Impersonation measured: full accepted 200/200, partial 0/200 at QBER 1/2; shipped 0.4806 unreproducible
+
+*finding · attack-impersonation · 2026-08-31T21:20:20Z*
+
+Phase 3 adversary: IMPERSONATION (sih141/attacks/impersonation.py).
+
+WHAT WAS MEASURED
+200 sessions per scope at L = 192, message bit 0, one shared seed sequence
+(900000..900199) across all four arms, Mallory's generator seeded 4242 and
+never the session's. Pooled over positions, not averaged over runs:
+
+  scope         accepted(both)   r_Bob     r_Charlie   matched sets vs control
+  none          200/200          0.0000    0.0000      identical (200/200)
+  full          200/200          0.0000    0.0000      moved (0/200)
+  signing         0/200          0.4988    0.5038      moved (0/200)
+  distribution    0/200          0.5031    0.4997      IDENTICAL (200/200)
+
+Wilson 95% on the partial rates covers 1/2 in all four cells. Acceptance
+intervals do not overlap: full [0.9812, 1.0], partial [0.0, 0.0188].
+
+THE SHIPPED (AUTH) FIGURES DO NOT STAND AS WRITTEN
+analysis.py lines 92-99 quote "0/60 accepted, at QBER = 0.4987 (Bob) and 0.4806
+(Charlie)" with no key length and no scope split. The 0/60 acceptance is
+correct and reproduces. 0.4987 is unremarkable. 0.4806 is the problem: at any
+plausible L the pooled matched count over 60 runs is >= 1200 positions, so the
+sd of a pooled rate is <= 0.0144 and 0.4806 is 1.3 sd low -- possible, but it
+is quoted to four figures with no n, no L and no statement of whether it is
+pooled over positions or averaged over runs, and those two estimators differ.
+I could not reproduce it either. RECOMMENDATION for whoever owns analysis.py
+(I did not edit it, per the rules): replace both numbers with the four-row
+table above, which records L, n and the counts behind every rate, and note
+that the two partial scopes are separate experiments rather than one.
+
+WHY 1/2 AND NOT SOMETHING ELSE, ON BOTH ROUTES
+Signing seam only: Mallory's declared eigenvalue is a fair coin independent of
+everything the recipient measured, so P(mismatch | scored) = 1/2 outright.
+Distribution seam only: Alice declares her true (a_i, u_i) and the recipient
+measured Mallory's eigenstate in a_i. With prob 1/n Mallory's basis matched and
+the outcome is her own independent fair coin; otherwise the Born rule makes it
+a fair coin. Either way 1/2. Both are per-POSITION statements and never mention
+L, which is the whole scaling argument: the L = 192 measurement carries to
+L = 115200 unchanged, and the thresholds (1/64, 1/16) only get further away.
+
+THE SURPRISE WORTH LOGGING
+Under the DISTRIBUTION scope the matched set is identical POSITION FOR POSITION
+to the control at the same session seed -- not merely the same in distribution.
+Reason: my distributor forwards the session's Alice-side rng to
+distribute_public_key_with_checks and consumes exactly the same number of
+variates (the key it sends is a different key, not a different length), so the
+recipients' measurement bases are bit-identical; and Alice still declares her
+own key, so {i : c_i == d_i} cannot move. matched_sets_identical() checks it
+and MATCHED_IDENTICAL_TRIALS records 200/200. This is the sharpest available
+statement that the evidence floors are an evidence-liveness control and not an
+impersonation detector.
+
+FOR PHASE 4
+Only ONE transcript statistic moves under partial impersonation:
+VerificationResult.rate. matched_count, pooled_matched_count and the check-round
+QBER are all unchanged, and all are reachable from the transcript. Under FULL
+impersonation NOTHING moves -- and the impersonating distributor teleports
+faithfully over an ideal resource, so the channel monitor reports a perfect
+channel while the key is somebody else's. A Phase 4 detector that keys off
+channel quality will see nothing here. detector_signals() ships this as data.
+
+DESIGN DECISION: ONE Impersonator OBJECT, TWO SEAMS
+The distributor and the signer are bound methods of the same object sharing one
+key cache keyed on (message_bit, key_length). Two independent adversaries, one
+per seam, would draw two different keys and FULL would silently degrade into a
+signing-only impersonation -- 0/200 accepted, presented as a security result.
+The check-round case is the trap: distribution happens at the full length and
+signing at the sifted one, so Impersonator.distribute sifts its key with the
+plan it is given and files the result under the sifted length. There is a test
+(test_full_impersonation_survives_check_rounds) whose only job is to fail if
+that line is deleted.
+
+D6
+Both seams pass assert_attack_isolated separately. The distribution seam needed
+its own probe: the honest probe shape would return the records, which ARE a
+function of the session's Alice-side stream by construction, so check (a) would
+fail for an entirely honest reason. distributor_probe() returns the KEY Mallory
+substituted instead, which is the decision D6 is actually about. Worth knowing
+before writing any other adversary that sits on the distribution seam.
+
+### `[*]` Count starvation is free but cannot hide: z = -11.54 at every L
+
+*finding · phase3-starvation-agent · 2026-08-31T21:20:46Z*
+
+Count starvation is free to mount and impossible to hide, and the second half of
+that is a theorem rather than a measurement.
+
+The attack: a recipient replaces his own MatchedCountMessage with a smaller
+count and delegates to the shipped exchange_matched_counts. Cost: one integer.
+No key material, no quantum resource, no computation. Denial is deterministic,
+not probabilistic - measured 40/40 at L=600 in every starving arm.
+
+What makes it interesting is the price in plausibility. Both floors are the same
+Chernoff tail at the same budget eps = 2^-64, so the largest count that still
+denies sits a FIXED number of honest standard deviations below the mean,
+independent of L:
+
+    mu - m_min = sqrt(2 mu ln(1/eps)),  sd = sqrt(2 mu/3)
+    z -> -sqrt(3 ln(1/eps)) = -11.5362
+
+Measured: -11.6047 at L=600, -11.5738 at L=1200, -11.5375 at DEFAULT_PARAMS.
+It converges from below, so the attack does not get quieter at deployment scale.
+A Phase 4 detector thresholding the declared count at m_min has a false-alarm
+rate of matched_shortfall_probability(params, minimum_matched=m_min) - 4.1e-37
+at L=600, 2.5e-31 at DEFAULT - and catches every successful starvation with
+certainty, because every successful starvation is by definition below m_min or
+below M_min - m_B. One z-score against a binomial whose parameters are L and
+|B|. No history, no ML (D4).
+
+The one route to a denying declaration ABOVE m_min is the pooled branch,
+c < M_min - m_B. It requires the VICTIM's own honest count to be below
+M_min - m_min, which is (sqrt2 - 1) * 11.5362 = 4.78 sd low and which the
+starver does not control: probability 8.3e-07 at DEFAULT_PARAMS. Even inside it
+the usable window is a few counts wide just above m_min.
+
+Second finding, and the one I did not expect: the naive starvation leaves a
+within-ONE-RUN contradiction. A starving Charlie still reaches his own verdict -
+his own count comes from his own record and only the counterpart's count comes
+from the exchange - so one transcript holds pooled.charlie_count = 0 beside
+results[Charlie].matched_count = 208. He cannot suppress it from inside the
+count_exchange seam. Measured accepted_by_starver = 40/40. The denial is
+strictly one-sided: he denies the other verifier and keeps his own acceptance,
+which is a transferability inversion worth naming even though it is not a
+forgery.
+
+Third: selectivity is free and is the worse variant. The seam sees the message
+bit and the declaration digest before it answers, so denying only bit 1, or only
+a chosen digest, costs nothing and leaves every untargeted run completing
+normally. No aggregate over OUTCOMES separates a selective starver from an
+honest pair on a noisy channel. The separation has to come from the declared
+counts, which is the z-score above - so the per-run signal is load-bearing, not
+a convenience.
+
+Not a break: every acceptance still needs the accepting verifier's own rate on
+his own log to clear his own threshold, and no message from the counterpart
+touches that. Under-reporting can only withhold an acceptance. tally.py already
+said this in prose; it is now an experiment.
+
+Files: sih141/attacks/starvation.py, tests/test_attack_starvation.py.
+
+### `[-]` count_exchange seam: last-mover advantage, and why an adversary must restrict itself
+
+*note · phase3-starvation-agent · 2026-08-31T21:21:06Z*
+
+Two seam observations from writing the count-starvation adversary. Neither is a
+defect and I changed nothing under sih141/protocol/, but both change what a
+measured number means and should be stated rather than discovered later.
+
+1. The count_exchange seam makes the starver a LAST MOVER.
+
+   CountExchange is called as (messages, params) with BOTH verifiers' messages
+   already computed. So an adversarial seam sees the victim's count m_B before
+   choosing what to declare, and can compute denial_headroom exactly rather than
+   guessing. Phase C' is described as an exchange, and a real deployment may run
+   it simultaneously, in which case the starver would have to commit blind.
+
+   I kept the advantage rather than modelling it away: it only ever helps the
+   adversary, so the measured attack is the conservative one. But it means the
+   pooled branch of the headroom (c < M_min - m_B) is exactly available in this
+   model and would be only guessable in a simultaneous one. If Phase 4 or a
+   reviewer wants the simultaneous variant, it is a different experiment and
+   should say so - not a parameter of this class.
+
+2. The seam is SHARED, and the threat model is not.
+
+   QDSSession builds one PooledMatchedCounts from the seam and hands it to both
+   verifiers, but a recipient controls only his own message. An unconstrained
+   seam could edit the counterpart's count, both floors and the declaration
+   digest; a recipient cannot. CountStarver therefore restricts itself in code -
+   it replaces its own message and delegates to exchange_matched_counts - and
+   the test suite pins that. Anyone writing another count_exchange adversary
+   should do the same, or they will publish a rate for a party that does not
+   exist.
+
+   Note this restriction is not costly. The floors are re-derived by
+   _check_pooled_against at the transcript boundary and by verify() at the
+   verdict, so editing them is inert and merely visible. A doctored digest is
+   refused as COUNTS_FROM_TWO_DECLARATIONS - which is also a denial, but a
+   two-sided and loud one, and it would deny the starver himself.
+
+   The consequence worth keeping: the ONLY channel from this seam into a verdict
+   is one integer plus its declaration binding, via
+   PooledMatchedCounts.counterpart_of. That is a genuinely narrow surface and it
+   is why the attack is a pure availability attack with no integrity component.
+
+3. What the transcript does not retain: history. SessionTranscript is one run.
+   A Phase 4 detector that wants "this verifier keeps starving the pair" has to
+   keep its own ledger keyed by party across transcripts; nothing in the package
+   accumulates one. Not a blocker, because the per-run z-score is already
+   decisive at a false-alarm rate of 2.5e-31, but the pattern-level detector is
+   Phase 4's own work and needs stating.
+
+### `[*]` One correlation tensor predicts both check-round statistics
+
+*finding · attack-agent:channel · 2026-08-31T21:29:37Z*
+
+Every resource the channel adversary produces is Bell-diagonal or a collapse of one, so
+its correlation tensor is diagonal and BOTH published statistics fall out of three numbers:
+
+    S    = sqrt(2) * (T_zz + T_xx)                (the shipped CHSH settings lie in x-z)
+    QBER = mean_b (1 - s_b T_bb) / 2,  s = (+1, -1, +1)
+
+WHY THIS IS WORTH KEEPING. It replaced a per-attack derivation with one identity, and it
+immediately explained two things that were otherwise going to be measured and shrugged at:
+
+1. T_yy cannot reach S at all. The CHSH settings are 0, pi/2 for Alice and +-pi/4 for the
+   recipient, all in the x-z plane, so a resource whose ONLY defect is on the y axis
+   passes the Bell test with a perfect 2.8284 and is caught only by the QBER arm. That is
+   a real blind spot in the check-round design, not a rounding of one, and Phase 4 must
+   not treat "S is at Tsirelson" as "the link is clean".
+2. Intercept-resend and a kept GHZ share have the SAME tensor when Eve draws her axis the
+   same way, so no correlator separates them at any sample size. They are separated only
+   by ChannelSample.purity (1.0 for a pure resent product, 0.5 for the rank-2 kept-share
+   marginal). The identity said so before any rounds were spent looking.
+
+It also fixed the auditor's reference value: a kept GHZ share has T = (0,0,1), so
+S = sqrt(2) = 1.4142, NOT 2.0000. 2.0000 is CLASSICAL_CHSH_BOUND and is also
+depolarising_chsh(1 - 1/sqrt(2)); the two are easy to transpose. Measured 1.3950
+[1.2951, 1.4949] at 8000 rounds, which excludes 2.0.
+
+### `[*]` Check logs are not symmetrised, so per-link attribution survives
+
+*finding · attack-agent:channel · 2026-08-31T21:29:54Z*
+
+THE QUESTION: symmetrisation smears a party-targeted attack across both post-exchange
+logs, so a one-link attack at strength q looks like a two-link attack at q/2. Do the
+check rounds recover per-link attribution?
+
+THEY DO, and the reason is structural rather than statistical: QDSSession builds one
+CheckLog per (party, message_bit) INSIDE distribute(), from the _ChannelTap wrapper, and
+then calls the symmetriser. The symmetriser's signature only ever sees RecipientRecords.
+No code path hands a CheckLog to Phase A'. So the smearing is confined to the records.
+
+MEASURED, depolarising p=0.14 aimed at Bob's link, L=960, check_fraction=0.5, pooled over
+both message bits (attribution_survives_symmetrisation() in sih141/attacks/channel.py):
+
+  post-exchange record rate   Bob 0.0204   Charlie 0.0292   <- smeared, not attributable
+  unsymmetrised companion     Bob 0.0567   Charlie 0.0000   <- what was smeared
+  check-log QBER              Bob 0.0708 [0.0462, 0.1072]
+                              Charlie 0.0000 [0.0000, 0.0136]   <- DISJOINT at 99%
+  check-log CHSH              Bob 2.4734 [2.1035, 2.8434]
+                              Charlie 3.0425 [2.7363, 3.3486]
+
+Bob's check QBER lands on the predicted p/2 = 0.07 and Charlie's is exactly zero. The
+QBER arm attributes cleanly; the CHSH arm at this sample size does NOT (the intervals
+overlap heavily, and Charlie's point estimate is 3.04, above Tsirelson, which is ordinary
+sampling noise on 480 CHSH rounds). At p = 0.14, dS = 0.4 while the CHSH half-width at
+DEFAULT check sizing is ~0.2, so CHSH attribution needs the full-scale sample; QBER
+attribution does not.
+
+CONSEQUENCE FOR PHASE 4: the detector must read per-party CheckLogs and must NOT pool
+Bob's and Charlie's logs into one channel estimate. estimate_qber's own docstring already
+warns that pooling two different links "reports the average of two things and detects
+neither" -- that warning is exactly the attribution loss, and pooling would voluntarily
+throw away the only signal that survives symmetrisation.
+
+### `[*]` Ledger DoS: the hop can burn Charlie's round, and only Phase C' ordering stops it
+
+*finding · phase3-replay-adversary · 2026-08-31T21:30:04Z*
+
+The replay defence holds against every replay I could mount. The thing that does
+NOT hold is a denial of service built out of the ledger, and what closes it is
+not the replay defence at all.
+
+Mechanism. Phase B reveals the round's opening ON the declaration. The
+identifier deliberately does not cover the declared key (so that a forgery is
+scored rather than refused). Therefore anyone who has seen the declaration can
+mint a different declaration naming the SAME round. The Bob-to-Charlie hop is
+exactly where the threat model puts an adversary and is not covered by the
+classical authentication assumption. He hands Charlie a forged-but-correctly-
+named declaration; Charlie scores it, REJECTS it, and a rejection is a verdict,
+so the round is SPENT. The genuine declaration, arriving afterwards by any
+route, is then refused as RECORD_ALREADY_VERIFIED. Charlie can never accept it.
+Without the ledger the same adversary gets a denial that the next presentation
+undoes.
+
+What saves it, and why that is uncomfortable. A Phase C' count names the
+declaration it counted. If Charlie's counterpart count names the declaration
+ALICE SIGNED while Charlie is looking at the forged one, he refuses on
+COUNTS_FROM_TWO_DECLARATIONS -- a refusal, so nothing is spent, so the genuine
+declaration still lands. That is what the shipped QDSSession does, because it
+runs exchange_counts() lazily inside verify(Party.BOB), i.e. BEFORE the
+forwarding hop. It is not what a deployment does: each recipient counts against
+the declaration he actually received, and the adversary holding the hop is also
+the recipient who computes one of the two counts, so he counts against what he
+forwards and the provenance check sees one consistent declaration.
+
+Measured at L=24, defended arm, 300 trials each ordering (successes = the honest
+declaration failed to be accepted):
+  counts="none"        300/300   (the pre-pooled variant, no_count_exchange)
+  counts="as-received" 300/300   (the deployment reading)
+  counts="as-signed"     0/300   (the shipped session's ordering)
+Undefended (no ledger, unstamped record): 0/300 in every ordering.
+
+So the ledger's denial-of-service surface is currently closed by an ORDERING
+ACCIDENT in a component built for something else entirely (the pooled floor's
+one-declaration rule), and it is wide open in the two configurations the package
+itself ships as legitimate. I did not change any protocol file -- that is a
+finding, not an edit -- but Phase 4/5 should not repeat the claim in
+sih141/protocol/verify.py's :ref:`replay` section that "an adversary therefore
+cannot poison a verifier's ledger from outside ... the residual denial-of-service
+surface prices out at zero". Poisoning from outside is indeed impossible (I
+measured 0/400 over three routes). Making the verifier spend a round he was
+entitled to spend, on a declaration the adversary chose, is not.
+
+### `[D]` Isolation probes: payload seam needs check_fraction 0, and D6 forces sampled noise
+
+*decision · attack-agent:channel · 2026-08-31T21:30:11Z*
+
+Two things an isolation probe over a channel attack has to get right, both learned the
+hard way while wiring sih141/attacks/channel.py to assert_attack_isolated.
+
+1. A PAYLOAD-SEAM PROBE MUST RUN WITH check_fraction = 0.
+   payload_map is called on key rounds only, and WHICH positions are key rounds is decided
+   by the recipients' check plan, drawn from the session's own generator. So the set of
+   contexts a payload attack is offered legitimately MOVES with the session seed even for a
+   perfectly isolated adversary. A probe that returns the attack's log including positions
+   therefore fails an honest attack -- check (a) fires, reads_the_session comes back True,
+   and the diagnosis points at the adversary instead of at the probe. With no check rounds
+   every position is a key round, the call set is fixed, and only Eve's own choices vary.
+   The resource seam has no such problem: it is called identically at every position on
+   both branches (check-round lockstep), so a resource probe can keep check rounds on.
+
+2. A DETERMINISTIC ADVERSARY CANNOT PASS, AND THAT SHAPED THE PHYSICS.
+   check_attack_isolation's half (b) requires the adversary's decisions to MOVE when its own
+   generator moves. A depolarising channel written the obvious way -- return the Werner
+   density matrix (1-p)|Phi+><Phi+| + p I/4 -- draws nothing and is caught as "does not use
+   its own generator", the same verdict as the DeafForger control. The fix is not to weaken
+   the check; it is to realise the channel as a per-round Pauli twirl on the travelling
+   wing, which is what a physical channel does, has exactly the Werner ensemble, and makes
+   the adversary's behaviour a function of its own stream.
+   The realisation is NOT observationally equivalent everywhere, and the difference is a
+   Phase 4 signal: a twirled Bell pair is still a Bell pair, so ChannelSample.purity and
+   .concurrence stay pinned at 1.0 every round and the wings stay symmetric; only .fidelity
+   moves, and it moves to 0.0 on engaged rounds rather than drifting to 1 - 3p/4. Returning
+   the averaged Werner state instead would put fidelity at a constant 1 - 3p/4 on every
+   round -- a far louder signal, and a fictional one.
+
+### `[D]` The seams cannot express a cross-round replay; _bind_to_round relabels it as fresh
+
+*decision · phase3-replay-adversary · 2026-08-31T21:30:19Z*
+
+Wrote sih141/attacks/replay.py as a REPLAYING FORWARDER (the Bob-to-Charlie hop)
+rather than as a replaying signer, and then measured the cross-round attacks
+OUTSIDE that seam. The reason is worth recording so the next agent does not
+spend an afternoon on it.
+
+QDSSession._bind_to_round() overwrites the session_opening of whatever the
+forwarder returns with the LIVE round's opening. A stale declaration pushed
+through the forwarder seam therefore arrives at Charlie carrying the live
+identifier: the replay binding cannot see it, and Charlie scores it as a
+forgery. That is deliberate and correct -- if the seam could leave the round
+unnamed, every forgery would abort as SESSION_MISMATCH and the whole Phase 3
+forgery table would empty into the no-verdict column -- but the consequence is
+that the forwarder seam CANNOT EXPRESS a cross-round replay at all. Nor can the
+signer seam, for the same reason.
+
+So a faithful cross-session experiment has to assemble the (signature, record)
+pair itself and call verify_or_abort directly. That is what
+measure_cross_session_pairing and friends do. It is not a shortcut: verify() is
+the whole of Phase C, and the pair handed to it is exactly the pair the
+adversary would present.
+
+Consequence for the integrator: do NOT try to measure replay by wiring
+ReplayingForwarder into QDSSession and reading the transcript. The adversary is
+written faithfully (it really does substitute and relabel) and is D6-isolated,
+but what the transcript will show is an altered forwarding, not a replay.
+tests/test_attack_replay.py::test_session_relabels_a_stale_declaration_as_fresh
+pins that so a change to the rebinding cannot silently turn these numbers into
+something else.
+
+### `[*]` The payload line is invisible to both check arms, measured
+
+*finding · attack-agent:channel · 2026-08-31T21:30:30Z*
+
+Measured, not asserted. sih141/attacks/channel.py mounts InterceptResend twice under
+identical seeds, once on resource_factory and once on payload_map, L=960, check_fraction=0.5
+(payload_line_is_unwatched()):
+
+                     key mismatch rate   published QBER   published CHSH
+  resource line            0.3535            0.3177           0.8813
+  payload line             0.3613            0.0000           2.7561
+
+Comparable destruction of the key. On the resource line both statistics collapse; on the
+payload line the QBER arm reports a PERFECT channel -- literally zero errors, not a small
+one -- and the Bell test still violates the classical bound at close to Tsirelson.
+
+This is a documented consequence of the seam design (sih141.protocol.distribute,
+:ref:`payload-seam`: "a check round prepares no payload ... neither the QBER nor the CHSH
+estimate will move because of one"), so the mechanism is not news. The SIZE of it is what
+Phase 4 needs and what had not been measured: there is no partial visibility to exploit and
+no residual signal to threshold on. The channel-statistics detector has exactly zero power
+against anything mounted on the payload line, and the ONLY reachable signal is
+VerificationResult.rate.
+
+That is not a hole in the protocol -- the payload seam is inside Alice's preparation, on
+her side of the Bell measurement, so an eavesdropper on the wire cannot reach it and an
+Alice who can reach it is the repudiating-signer threat model, not the channel threat
+model. But a Phase 4 detector that reports "channel clean" must say WHICH channel it
+means, or a reader will hear "key clean" and be wrong by a factor of infinity.
+
+### `[*]` wings_agree detects none of the channel attacks; fidelity and purity do
+
+*finding · attack-agent:channel · 2026-08-31T21:34:12Z*
+
+ChannelSample.wings_agree is documented as "the signature of something that acted on ONE
+leg, which is the shape of an eavesdropper on the wire rather than a noisy source". Every
+attack in sih141/attacks/channel.py acts on one leg -- the travelling qubit, resource
+qubit 1 -- and NONE of them moves wings_agree. All three leave
+alice_purity == recipient_purity on every check round.
+
+The reason is that the leg is one half of a MAXIMALLY ENTANGLED pair. Measuring the
+travelling half of |Phi+> collapses Alice's half too; dephasing it into Eve's ancilla mixes
+Alice's half by the same amount; a Pauli on it leaves both halves at 0.5 as before. There
+is no local operation on one half of a maximally entangled state that changes only that
+half's marginal purity, because both marginals are already maximally mixed and the reduced
+state of the untouched wing is invariant under any trace-preserving map on the other.
+
+So wings_agree is a detector for a channel that DAMPS or REPLACES the travelling qubit
+with something less than maximally mixed (the docstring's own worked example is a split
+product state, alice 0.5 / recipient 1.0), and it is not a detector for eavesdropping on a
+Bell-pair distribution link. Phase 4 should not lean on it for the channel-manipulation
+family.
+
+What does work, measured over one link's check rounds at L=256, check_fraction=0.25:
+
+  resource            fidelity   purity   concurrence
+  clean pair          1.00       1.00     1.00
+  depolarising p      1 - 3p/4   1.00     1.00
+  intercept-resend    0.50       1.00     0.00
+  kept share          0.50       0.50     0.00
+
+Fidelity alone ranks all four. Purity and concurrence are blind to the depolariser (a
+Pauli-twirled Bell pair is still a Bell pair) but are the ONLY thing separating
+intercept-resend from a kept share, which the two correlators cannot do at any sample size.
+
+### `[D]` The optimal recipient forger is deterministic, so D6 check (b) needs a knob
+
+*decision · phase3-forgery · 2026-08-31T21:34:22Z*
+
+The optimal recipient forger declares his own raw log and nothing else, and that
+declaration is a DETERMINISTIC function of his RecipientView. Checked position by
+position: on a swapped position Charlie holds Bob's own raw entry, so declaring it
+is right by construction; on a retained position, declaring his measured basis b_i
+gives P(match | scored) = 2/3, while declaring any other basis gives 1/2, and
+flipping the eigenvalue is strictly worse than not. So there is no randomised
+strategy that ties, let alone beats, the pure one - which matches the POVM argument
+in analysis.py section 3b and the earlier scratch exploration of the 1/3 bound.
+
+Consequence for the D6 machinery: check (b) of check_attack_isolation ("vary the
+attack's own rng, decisions must move") CANNOT pass for the adversary whose rate we
+actually want to publish. That is not a defect in him and not a defect in the check;
+isolation.py already says a deterministic-by-construction candidate needs a different
+argument. What I did rather than fake it:
+
+  * RecipientForger takes guess_probability (default 0.0). A positive value replaces
+    that fraction of positions with independent draws from his own generator. It is
+    strictly suboptimal - it walks the mismatch rate from 1/12 towards 1/2 - and it
+    exists only so the candidate is visible to check (b) through the same __call__.
+  * tests/test_attack_forgery.py runs assert_attack_isolated on
+    partial(RecipientForger, guess_probability=0.25), and separately asserts the
+    STRONGER property for the default forger: check_attack_isolation reports
+    reads_the_session False, offending_session_seeds (), distinct_decisions 1.
+
+The integrator must NOT wire the bare class through assert_attack_isolated - it will
+fail check (b), correctly and unhelpfully. Wire the partial, or give isolation.py a
+documented "deterministic candidate" mode that asserts (a) alone and requires the
+caller to state why (b) is inapplicable. I did not add that mode: isolation.py is
+another agent's file and the workaround is one functools.partial.
+
+### `[+]` Kept GHZ share CHSH is 1.4142, not 2.0000; other three references confirmed
+
+*fix · attack-agent:channel · 2026-08-31T21:34:40Z*
+
+The four CHSH figures a previous auditor recorded, checked at 8000 check rounds per arm
+with 99% intervals (measure_chsh in sih141/attacks/channel.py):
+
+  ideal                      2.8410 [2.7599, 2.9221]  pred 2.8284  CONFIRMED
+  depolarising p=0.3         1.9510 [1.8504, 2.0516]  pred 1.9799  CONFIRMED
+  intercept-resend (X/Y/Z)   0.9120 [0.7998, 1.0242]  pred 0.9428  CONFIRMED as noise
+                                                                   around 0.9428; the
+                                                                   auditor's 1.0020 also
+                                                                   sits inside this
+                                                                   interval, so it was a
+                                                                   fluctuation, not a
+                                                                   different quantity.
+  kept GHZ share (Z axis)    1.3950 [1.2951, 1.4949]  pred 1.4142  CORRECTED from 2.0000
+
+The kept-share correction. The marginal of (|000> + |111>)/sqrt(2) on Alice's and the
+recipient's qubits is (|00><00| + |11><11|)/2, whose only surviving correlator is T_zz = 1,
+so S = sqrt(2) * (T_zz + T_xx) = sqrt(2) = 1.4142. 2.0000 is CLASSICAL_CHSH_BOUND -- what a
+separable resource cannot EXCEED -- and is also exactly depolarising_chsh(1 - 1/sqrt(2)),
+so the two are easy to transpose. The measured interval excludes 2.0.
+
+This matters operationally, not just for tidiness. A Phase 4 detector thresholding at "does
+this link still violate the classical bound" has 0.59 of margin against a kept share, not
+0.00. Recording it as 2.0000 would have made the attack look like the single hardest case
+for the Bell arm when it is comfortably inside its reach.
+
+Also recorded: the QBER a kept GHZ share produces is 1/3, IDENTICAL to intercept-resend's,
+and identical whether Eve fixes her axis or draws it. Measured 0.33325 [0.31982, 0.34696]
+for the Z-only kept share and 0.33013 [0.31673, 0.34380] for the random-axis one.
+
+### `[*]` Recipient forgery doubles Charlie's matched count - the cheapest Phase 4 signal
+
+*finding · phase3-forgery · 2026-08-31T21:43:59Z*
+
+Measured, and this is the signal Phase 4 should build on first.
+
+A recipient forgery does not only raise Charlie's mismatch rate - it DOUBLES his
+matched count, and the matched count is cheaper, tighter and available without
+comparing two declarations.
+
+  arm                          |M_C|/L        r_C
+  honest                       1/3            ~0 (ideal channel)
+  outside forger (L=30, 2000)  0.33192        0.49676  CI [0.48982, 0.50371]
+  recipient forger (L=60, 800) 0.66779        0.08239  CI [0.07943, 0.08545]
+
+Why the inflation happens: the forger declares his own raw log, so on the ~half
+of positions the exchange swapped, the basis he declares is exactly the basis
+Charlie now holds - those positions are matched with certainty. Scored fraction
+goes 1/3 -> (n+1)/2n = 2/3, which is params.forger_scored_fraction, and it is
+per-position, so it holds at every L including 115200.
+
+Both quantities are reachable from SessionTranscript with no extra plumbing:
+VerificationResult carries matched_count and rate for each verifier. The matched
+count is the better detector because it separates a forgery from CHANNEL NOISE:
+a depolarising channel raises r_C but cannot move |M_C|, which depends only on
+the basis draws. A detector thresholding on r_C alone would confuse a forging
+recipient with a noisy link; one that also reads |M_C|/L would not.
+
+What is NOT cheaply reachable: "Bob forwarded something different" is visible in
+the transcript only because the harness holds BOTH declarations
+(forwarded_signature vs signature). In deployment no single party holds both, so
+that signal costs a dispute in which Bob's copy and Charlie's copy are compared.
+Do not build a Phase 4 detector on it and call it passive.
+
+Also measured: with the shipped Phase C' in force, the forwarded forgery produces
+no verdict at all (COUNTS_FROM_TWO_DECLARATIONS) on 50/50 runs. That is a denial
+of transfer, not a detection - Charlie learns two numbers disagree about their
+provenance and nothing about the signature - and measure_recipient_forgery
+reports it in no_verdict, never in the rejection count, for exactly that reason.
+
+### `[*]` Replay measurements: (a),(b),(d) hold; forgery_probability predicts the undefended cross-session rate
+
+*finding · phase3-replay-adversary · 2026-08-31T21:57:19Z*
+
+All four replay attacks measured, defence enabled and disabled. Numbers first,
+then the two that matter.
+
+(a) Straight re-verification, L=24, 400 trials per arm.
+    undefended 400/400 accepted a second time; defended 0/400, all 400 refused
+    as RECORD_ALREADY_VERIFIED. The defence is total, and the refusal is a
+    no-verdict rather than a rejection, which is the right shape.
+
+(b) Cross-session pairing (run A's declaration, run B's records).
+    defended: 0/400 at Bob and 0/400 at Charlie, every trial SESSION_MISMATCH,
+    refused before a single position is counted.
+    undefended: refused by nothing, decided by arithmetic alone, and the
+    arithmetic is EXACTLY the outside forger's -- an unrelated key agrees at 1/2
+    per matched position, so analysis.forgery_probability is the prediction:
+      L=12 Bob    1307/12000 = 0.1089   predicted 0.10445   z = +1.60
+      L=24 Bob      41/3000  = 0.01367  predicted 0.012520  CI [0.0101,0.0185]
+      L=24 Charlie  40/3000  = 0.01333  predicted 0.012520  CI [0.0098,0.0181]
+    Agreement at three points, two key lengths and both thresholds. The refusal
+    rate at L=12 was 0.7%, which is (2/3)^12 = 0.77%, i.e. P(|M|=0) -- an
+    independent check that the matched-count law is Bin(L,1/3) as assumed.
+    Scaling: the closed form carries to L=115200 where forgery_bound underflows
+    to 0.0, so the undefended acceptance is astronomically small there anyway --
+    but the DEFENDED result is a rule, not a rate, and 0/400 at L=24 is the same
+    0 at any L.
+
+    A caution for whoever writes this up: the first L=12 batch alone came in at
+    353/3000 = 0.1177, which is +2.4 sigma and OUTSIDE its own Wilson interval
+    relative to the prediction. Three further independent batches pooled to
+    z = +0.48. It was a high draw, not a disagreement. Do not publish a single
+    3000-trial batch at L=12 as evidence either way.
+
+(c) Ledger. Poisoning from outside is impossible: 0/400 over three routes
+    (declaration naming another round, counterpart count below the floor, and
+    the other verifier's record handed to this ledger), and a 50-presentation
+    stream of wrong-round declarations left len(ledger) == 0. Storage is bounded
+    by verdicts, so exhaustion is bounded by rounds the signer actually ran.
+    The DENIAL OF SERVICE is the finding and has its own journal entry.
+
+(d) Identifier. A signer reusing an opening gets two rounds under one
+    identifier; the migration she buys is worth exactly the outside forger's
+    rate (14/1000 = 0.0140 at L=24 against a prediction of 0.01252) and it costs
+    her the second round outright: 400/400 of the honest second declarations
+    were refused as RECORD_ALREADY_VERIFIED. Forging an identifier is a 128-bit
+    preimage; 0/500000 attempts, which bounds the per-attempt rate at 7.4e-6 by
+    Wilson against an analytic 2**-128 = 2.9e-39. The encoding resisted every
+    delimiter-shifting pair I could build (test_identifier_encoding_resists_
+    delimiter_shifting), which is what the length prefixes are for.
+
+Two things Phase 4 should know it CANNOT see. First, at the moment Charlie
+decides, nothing in his own holdings distinguishes "Alice forged" from "the hop
+forged": both give him a rejection at rate ~1/2. The distinguishing signal is
+the PAIR of rates -- Bob accepted at ~0 while Charlie rejected at ~1/2 -- and
+that needs the two verifiers to compare, which is a protocol step that does not
+exist. Second, a replay is invisible in a single transcript by construction: the
+ledger refuses it, so the transcript of the replayed presentation is a refusal
+with no record of what was presented. A Phase 4 detector wanting replay
+statistics has to read ConsumedRecords.spent_rounds() across rounds, not the
+transcript of one.
+
+### `[D]` Phase C' ordering is a parameter now, and the shipped forgery rate is measurable
+
+*decision · phase3-integrator · 2026-08-31T23:13:33Z*
+
+The shipped QDSSession ran exchange_counts() lazily inside verify(Party.BOB), so both
+matched counts were taken against the declaration Alice SIGNED, before the Bob-to-Charlie
+hop existed. Two agents hit the same wall from opposite directions and neither could get
+past it:
+
+- the forgery agent could not measure the recipient-forgery rate of the shipped protocol at
+  all. Charlie's own count named one declaration while he was scoring another, so he
+  aborted on COUNTS_FROM_TWO_DECLARATIONS instead of scoring: 50/50 runs, no verdict. Every
+  published recipient-forgery figure therefore came from the pre-pooled arm
+  (no_count_exchange), and the module said so honestly.
+- the replay agent found that the same ordering is the ONLY thing closing the ledger's
+  denial-of-service surface, and that it closes it by accident: a component built for the
+  pooled floor happens to run before the hop.
+
+WHY THAT IS AN API DEFECT AND NOT A PROTOCOL BUG. The seams could not express the
+deployment reading of Phase C' -- each recipient counting against the declaration he
+actually holds -- and the natural reading is the only one available when the hop and the
+count exchange are separated in time or share a link. So the package could measure one
+experiment and had no way to name, let alone measure, the other.
+
+FIX: count_exchange_timing, a keyword on QDSSession, values COUNTS_BEFORE_FORWARDING
+(default, shipped, unchanged) and COUNTS_AFTER_FORWARDING. Plus a public forward() that
+performs the hop without verifying at the far end -- transfer() now delegates to it and it
+is idempotent, because an adversary offered the forwarder seam twice would get two chances
+to substitute.
+
+THE MODELLING DECISION, which took three attempts to get right. Under after-forwarding BOTH
+recipients count against the declaration that reached Charlie, not one each against what
+each received. Reasoning: the provenance check is defeated exactly when the adversary
+controls both the declaration delivered to the victim and the count message delivered to
+the victim, and on the Bob-to-Charlie hop in a deployment those are one link. So the
+adversary announces a count against what he is passing on, provenance agrees, and Charlie
+scores the forgery on its merits.
+
+The asymmetry that produces is deliberate: Bob is then counting a declaration he is not
+scoring, so his own provenance check refuses. That is correct. A party cannot both announce
+a count against D' and reach a verdict on D, and a real forging Bob does not try -- he has
+nothing to gain from his own verdict and everything to gain from Charlie's. His refusal is
+recorded as a refusal, never as a rejection.
+
+Two earlier attempts, both rejected:
+1. Bob counts what he received, Charlie counts what he received. Models a third party on
+   the wire, not a forging Bob; digests differ, exchange_matched_counts raises, and the run
+   crashes instead of producing a refusal. I added split-count machinery to handle that and
+   then deleted it -- see below.
+2. Each verifier's counterpart count re-bound to the declaration HE scores. Makes the
+   provenance check unconditionally vacuous under that timing, which overstates the
+   adversary.
+
+DEAD END WORTH RECORDING: I built a _split_counts path on the session so that two
+recipients holding two declarations would each be handed the counterpart's message as sent
+and refuse it themselves rather than crashing. Once the modelling above settled, the
+session can never construct that state (both messages are built against one declaration),
+so the path was dead code and was removed. The public capability it needed survives as
+tally.counterpart_count(message), which is genuinely useful to anyone driving verify()
+directly -- the replay agent's harness needed exactly it -- and is documented as the way to
+turn "the recipients could not pool" from a ValueError into the verdict-free refusal the
+protocol specifies.
+
+MEASURED, and this is the point of the whole change. L=60, 300 sessions, RecipientForger on
+the forwarder seam, shipped pooled rule in force:
+  after-forwarding:  Charlie scores 300/300, accepts 105/300 = 0.350
+                     against recipient_forgery_probability(L=60) = 0.345566, z = +0.16
+                     mismatch 1008/12004 = 0.08397 against the 1/12 floor, z = +0.25
+                     scored fraction 0.6669 against 2/3
+  before-forwarding: Charlie scores 0/300. No verdict, every run.
+On an honest run the two orderings are identical position for position -- records,
+signature, verdicts, pooled count, spent rounds -- which is asserted, because an ordering
+that changed an honest run would be changing the protocol rather than naming an experiment.
+
+### `[D]` Deterministic adversaries: a written waiver, and the sibling row that makes it sound
+
+*decision · phase3-integrator · 2026-08-31T23:13:57Z*
+
+Three of the five attack agents hit the same wall: check (b) of the isolation contract --
+"vary the adversary's own generator and its decisions must move" -- cannot be satisfied by
+an adversary that is deterministic BY CONSTRUCTION.
+
+The cases, and they are not the same shape:
+- the optimal recipient forger declares his own raw log, which strictly dominates every
+  randomised alternative at every position (a swapped position matches with certainty; a
+  retained one gives P(match|scored) = 2/3 against 1/2 for anything else; flipping the
+  eigenvalue is worse). He has nothing to draw. This is the adversary whose rate we publish.
+- the obvious depolarising channel returns the Werner state and consumes no randomness.
+- a count starver whose declaration is a fixed function of the counterpart's count.
+
+check (b) is NOT optional -- without it, check (a) passes vacuously, because a constant is
+independent of everything. So the answer cannot be "skip it".
+
+DECISION: a documented three-response ladder in isolation.py (:ref:`deterministic-mode`),
+in order of preference.
+
+1. Realise the adversary as a SAMPLED PROCESS where the physics allows. A per-round Pauli
+   twirl has exactly the depolarising ensemble and is a function of the adversary's own
+   stream, so (b) applies unchanged. The channel agent had already found this independently
+   and it is now written down centrally. Worth knowing: the two realisations are NOT
+   observationally equivalent to a channel monitor -- the sampled twirl leaves purity and
+   concurrence pinned at 1.0 with fidelity flipping 1/0, where the averaged Werner state
+   would report a constant fidelity of 1-3p/4 on every round, which is a louder and
+   fictional signal.
+2. Check a RANDOMISED SIBLING sharing the call path: guess_probability on the forger,
+   jitter on the starver. Strictly suboptimal, so no published rate may be measured with
+   it, but it exercises the identical __call__ and therefore demonstrates that THAT code
+   draws from the generator it was handed.
+3. WAIVE (b) IN WRITING: deterministic="..." on check_attack_isolation and
+   assert_attack_isolated.
+
+WHY THE WAIVER IS A STRING AND NOT A BOOL, and why 40 characters. A bool would switch off
+half the check and leave no reason in the report. MIN_JUSTIFICATION = 40 is about one
+clause, and is deliberately not satisfiable by "n/a" or "deterministic": the caller has to
+write down why the adversary has no randomness, and that sentence is what the next reader
+audits, because it is the argument REPLACING the check. Passing True raises TypeError with
+"it is not a flag" in the message.
+
+WHAT THE WAIVER DOES NOT DO. Check (a) still runs and still raises. Both halves still run
+and both are still reported; the only thing that changes is that IsolationReport.isolated
+stops requiring (b). summary() prints "ISOLATED (check (b) waived)" plus the justification
+on its own line, so nobody can read the verdict without the caveat. Pinned by a test that
+feeds SessionSeedForger a waiver and asserts it is still caught.
+
+THE STRUCTURAL GUARD, which matters more than the mode itself. A waiver on its own says
+"this candidate made the same choice five times", which is EQUALLY CONSISTENT with a
+candidate that quietly derived that one choice from the session -- exactly the defect the
+check exists for. So the waiver is only sound alongside response 2, and
+tests/test_phase3_isolation_suite.py::test_every_waiver_has_a_randomised_sibling fails if a
+waived adversary has no randomised row in the table. That is enforcement, not documentation.
+
+Also added: the (b) failure message now names the escape hatch AND warns when it is not the
+right answer ("if the candidate HAS randomness and (b) fails, that is a broken probe"), so
+the next author does not reach for the waiver to paper over a probe bug.
+
+RESULT: 14 adversary-and-seam pairs, one waiver, and it is the one the theory says must be
+there. No adversary failed check (a), so no published rate changed on this account.
+
+### `[*]` The ledger's DoS surface is not zero, and the two obvious repairs are worse
+
+*finding · phase3-integrator · 2026-08-31T23:14:23Z*
+
+verify.py's :ref:`replay` section priced the ledger's residual denial-of-service surface at
+zero, by this reasoning:
+
+  "Entries are spent only when a verdict is actually reached; a refusal spends nothing, so
+   an adversary cannot poison a verifier's ledger from outside: the only way to add an entry
+   is to make that verifier reach the verdict he was entitled to reach. Under the standing
+   authentication assumption the one party who can spend a round on a declaration that will
+   be REJECTED is the signer herself, and a signer who wants to deny service can simply
+   decline to sign."
+
+The first sentence is true and the replay agent measured it: 0/400 poisoning attempts over
+three routes, and 50 wrong-round presentations left len(ledger) == 0.
+
+THE INFERENCE IS FALSE. Making a verifier reach a verdict is not the same as being the
+signer. Phase B reveals the round's opening ON the declaration, and the identifier
+deliberately does not cover the declared key (so that a forgery is scored rather than
+refused -- that part is right and must stay). So anyone downstream of that reveal can mint a
+DIFFERENT declaration naming the SAME round. The Bob-to-Charlie hop is exactly where the
+threat model puts an adversary and is not covered by the classical-authentication
+assumption. He hands Charlie a forged-but-correctly-named declaration; Charlie scores it,
+REJECTS it, and a rejection is a verdict, so the round is spent. Alice's genuine declaration
+is then refused as RECORD_ALREADY_VERIFIED, permanently. Measured 300/300 at L=24 and
+100/100 at L=96.
+
+WHAT ACTUALLY CLOSES IT is neither the ledger nor the round binding. It is the provenance
+half of the count exchange, and only under one ordering. Measured across all three:
+  no_count_exchange                       300/300 burned
+  counts as received (after-forwarding)   300/300 burned
+  counts as signed (before-forwarding)      0/300 burned
+So the shipped default closes it -- as a side effect of when the step runs.
+
+TWO REPAIRS CONSIDERED AND REJECTED, and I want the reasoning on record because both look
+obviously right for about ten seconds.
+
+1. SPEND ONLY ON AN ACCEPTANCE. Then a rejected declaration can be re-presented, and
+   re-presenting the same pair is harmless because verify() is deterministic in
+   (declaration, record). But it is not the same pair that gets re-presented. An ADAPTIVE
+   adversary presents a declaration, sees the rejection, edits one position, and presents
+   again -- unlimited tries against one round, and he can walk the matched set. That turns a
+   bounded forgery probability into a search. Strictly worse than the DoS it fixes.
+2. KEY THE LEDGER ON (session_id, message_bit, declaration_digest). Same thing, more
+   directly: every distinct declaration gets its own shot at the round.
+
+One shot per round is the property worth keeping. WHERE the shot is taken is what
+authentication buys, and that is the honest pricing:
+
+  the residual denial-of-service surface is one burned round per verifier per presentation
+  channel the adversary controls, and it is closed only when every channel that can present
+  a declaration to a verifier is authenticated, OR the count exchange runs ahead of the hop.
+
+verify.py now says that, under a new :ref:`ledger-denial` anchor, with the measurements and
+both rejected repairs. No code changed: the spend rule is right.
+
+Two smaller prose corrections landed in the same pass, both for the same reason -- a Phase 3
+measurement contradicted a shipped claim:
+
+- session.py ChannelSample.wings_agree was documented as "the signature of something that
+  acted on ONE leg, which is the shape of an eavesdropper on the wire". True for a damping
+  or replacement channel (its own worked example is a split product state), MISLEADING for
+  eavesdropping on a Bell-pair link: no trace-preserving map on one half of a maximally
+  entangled pair can change only that half's marginal, so all three channel adversaries act
+  on one leg and leave wings_agree True on every round. Zero detection power against that
+  family. The docstring now says so and names what does see them (fidelity, concurrence,
+  purity for a kept share, and above all the per-link check QBER).
+
+- analysis.py's (AUTH) section quoted "0/60 accepted, at QBER = 0.4987 (Bob) and 0.4806
+  (Charlie)". The acceptance count reproduces; 0.4806 does not, and could not have -- no key
+  length, no n, and no statement of whether the rate was pooled over positions or averaged
+  over runs. At any plausible L the pooled sd over 60 runs is at most 0.0144, putting 0.4806
+  about 1.3 sd low while quoted to four figures. Replaced with the four-row L=192 / n=200
+  table from impersonation.MEASURED, whose rows carry their own counts and re-check their
+  own arithmetic at import. Replaced rather than corrected: the defect was the missing
+  conditions, not the digits.
+
+### `[*]` The p=0.5 QBER disagreement was a high draw, settled by n and not by seeds
+
+*finding · phase3-integrator · 2026-08-31T23:14:49Z*
+
+One measurement in the Phase 3 attack tables was flagged agrees=false: the channel agent's
+depolarising QBER at p = 0.5 came in at 0.2635 on 8000 rounds against an exact prediction of
+0.2500, with a 99% Wilson interval of [0.25101, 0.27638] that EXCLUDES the prediction. The
+agent re-ran at four further seeds, all covering, and read it as a 2.8 sigma fluctuation.
+
+That reasoning is right but the evidence was the wrong shape, because "I ran it again with
+other seeds and it was fine" is indistinguishable from seed-shopping to a reader who was not
+there. The question is whether the SAMPLER is biased, and that is settled by sample size, not
+by a different seed: a bias survives a large increase in n and a fluctuation does not.
+
+WHAT I DID. Pooled 25 independent batches of 8000 rounds each -- 200,000 rounds, 25x the
+batch that missed -- and looked at both the pooled z-score and the per-batch coverage rate.
+
+  pooled:      49800/200000 = 0.249000 against 0.250000, z = -1.03
+  per-batch:   25/25 of the 99% intervals cover the prediction (expected ~24.75)
+  batch rates: 0.247 0.25462 0.24225 0.25675 0.25775 0.245 0.25438 0.24413 0.25588 0.2505
+               0.251 0.25562 0.24225 0.24388 0.25012 0.25688 0.24525 0.253 0.24088 0.2405
+               0.25212 0.243 0.24763 0.24638 0.24825
+
+VERDICT: the formula is right and the measurement was a high draw. Note the closed form is
+not an approximation to be checked -- qber_from_tensor(depolarising_tensor(p)) == p/2 holds
+identically, and the identity is separately pinned against the protocol's own
+analysis.depolarising_error_rate to 1e-12 across p. There was never a formula to be wrong;
+the only live question was the sampler, and it is unbiased.
+
+CONTEXT that makes the original miss unsurprising rather than alarming: the channel module
+makes twelve comparisons at 99% in one run, so the expected number of misses is 0.12 and
+seeing one has probability about 11%. Nothing was wrong.
+
+PINNED: tests/test_phase3_integration.py::test_the_depolarising_sampler_is_unbiased_at_p_
+equals_one_half runs 10 batches (80,000 rounds) at a 3-sigma band and asserts |z| < 3. Ten
+batches rather than 25 for runtime; 80,000 rounds still gives a standard error of 0.00153,
+so a bias of the size the original batch would have implied (+0.0135) would show at nearly
+9 sigma.
+
+I did NOT loosen any tolerance and did NOT change any seed to make this pass, because either
+would have hidden the question rather than answered it. The tolerance mechanism used
+throughout the integration suite is derived instead: agrees_within() computes its band as
+4 * sqrt(p(1-p)/n) at the PREDICTED p, so the band shrinks as the sample grows and cannot be
+widened by an author who dislikes a result.
+
+The other flagged disagreement in the tables -- the forging recipient under the shipped
+pooled rule, reported as agrees=false with "none available" as its prediction -- was never a
+numerical disagreement. It was the Phase C' ordering gap, and it is now measured and agrees
+(see the separate entry on count_exchange_timing).
+
+### `[-]` Seam friction: what was fixed, and what was declined and why
+
+*note · phase3-integrator · 2026-08-31T23:17:13Z*
+
+Every seam-friction item the five attack agents reported, and what happened to it.
+
+FIXED
+1. isolation.py had no mode for a deterministic-by-construction adversary; three agents hit
+   it. Fixed with a documented waiver requiring a written justification plus a randomised
+   sibling row. Separate entry.
+2. No Forwarder-seam probe existed, so two agents wrote one privately. isolation.py now
+   ships forwarder_probe(scenario, *, party, matched_count), which calls the candidate the
+   way transfer() does -- reading the arity off its signature with the same helper the
+   session uses, so a probe pass and a session run exercise one code path.
+3. Four private copies of the Wilson interval, two carrying the same float-dust bug (the
+   closed form returns ~1.7e-18 rather than 0.0 at zero successes, and EVERY defended
+   result in this suite is 0/N). New sih141/attacks/statistics.py holds the arithmetic once,
+   clamped exactly by case at both ends; the four public wilson_interval functions keep
+   their own signatures and delegate. Also there: agrees_within(), whose band is
+   4*sqrt(p(1-p)/n) at the PREDICTED p -- the tolerance mechanism the integration suite uses
+   so that no Phase 3 tolerance is a number somebody liked the look of.
+4. Two private helpers reached for from outside their modules -- session._forwarder_wants_
+   view (imported by a test) and distribute._accepts_context (imported by a test and by an
+   attack). Both promoted to public names, both privates kept as aliases so nothing that
+   already imports them breaks. Which shape a seam has is part of the seam's contract.
+5. The Phase C' ordering gap. Separate entry.
+6. Three prose claims contradicted by measurement (verify.py's DoS pricing, session.py's
+   wings_agree, analysis.py's (AUTH) figures). Separate entry.
+7. Two Phase 4 blockers closed by new transcript fields: spent_rounds (each verifier's
+   ledger, previously readable only off an object the verifier holds) and replay_refusals
+   (a refused re-presentation previously left NO trace, because filing it as the verifier's
+   outcome would let a replay delete the acceptance that spent the round -- so it is counted
+   beside the verdict instead of in place of it).
+8. The two probe traps that report a flawless attack as a cheat -- a distributor probe
+   returning the seam's output rather than the adversary's decision, and a payload_map probe
+   run with check_fraction > 0 -- are now documented centrally in isolation.py under
+   :ref:`probe-traps`, with the rule both are instances of: everything the adversary
+   legitimately observes, INCLUDING the set of occasions on which it is consulted, must be
+   identical across probe calls.
+
+DECLINED, with reasons.
+9. "A suite-wide probe registry beside signer_probe." Declined beyond forwarder_probe. The
+   distributor, count_exchange and payload probes are not generic: distributor_probe must
+   return the KEY the adversary substituted (a generic one returning the records fails check
+   (a) honestly), starvation_probe freezes two synthetic MatchedCountMessages rather than
+   running a session, and a payload probe needs check_fraction pinned to zero. Each is a
+   statement about its own adversary, and hoisting them would produce four functions with
+   one caller each and a false suggestion that any of them is reusable. The rule that IS
+   general is now documented instead.
+10. "Widen the Signer seam's keys annotation to accept an empty tuple." Declined. The
+    impersonation agent widened its own annotation, which is the right place: the seam's
+    contract is that Alice's committed pair is offered, and an adversary ignoring it is not
+    a reason to weaken what the session promises to pass.
+11. "Change the ledger's spend rule so a rejection does not burn a round." Declined, and
+    this one matters: it would give an adaptive adversary unlimited tries at one round --
+    present, see the rejection, edit one position, present again -- turning a bounded
+    forgery probability into a search. Keying the ledger on the declaration digest as well
+    does the same thing more directly. One shot per round is the property worth keeping;
+    where the shot is taken is what authentication buys, and that is now the documented
+    pricing.
+12. "The seams cannot express a cross-round replay, because _bind_to_round overwrites the
+    opening." Declined as a change. It is deliberate and load-bearing: without it every
+    forgery would abort as SESSION_MISMATCH and the forgery table would empty into the
+    no-verdict column. The consequence an integrator must know -- that a transcript of
+    ReplayingForwarder shows an ALTERED FORWARDING, not a replay -- is documented in
+    docs/PHASE3.md and pinned by the replay module's own test.
+13. "Drop the arity assertion that imports a protocol private." Superseded by fix 4; the
+    import is now of a public name and the assertion can stay.
+14. Cross-run per-party history (starvation) and adversary ground truth (channel,
+    starvation). Not reachable and should not be: a transcript is one run, and an
+    adversary's own log is not evidence a detector may read. Stated in docs/PHASE3.md with
+    what Phase 4 must do instead -- keep its own ledger keyed by party, and score its
+    false-positive rate against a labelled harness.
+
+### `[*]` Check-round estimate is steerable: payload_map and channel_monitor leak the check set to the channel adversary
+
+*finding · phase3-auditor-replay-and-checkrounds · 2026-09-01T00:00:21Z*
+
+The load-bearing invariant of sih141/protocol/checkrounds.py is stated in
+sih141/protocol/distribute.py as "The factory is the whole of the adversary's
+access to this loop, so it sees one undifferentiated stream of requests", and
+pinned by test_the_factory_cannot_tell_a_check_round_from_a_key_round. The test
+exercises resource_factory ALONE. The declared adversary is not alone.
+
+session.py's own threat model says: "A channel adversary owns the quantum links
+and the payload line: any entanglement resource he likes per hop
+(resource_factory), and any substitution he likes on the state Alice sends
+(payload_map)." payload_map is called on KEY ROUNDS ONLY. So the positions on
+which the same adversary is *not* consulted are exactly the check positions, and
+context.position is handed to him, so the gaps are legible. Measured: the check
+set is recovered exactly (24/24, 120/120) from the payload-map call pattern
+alone, for both message bits.
+
+Two things make it exploitable rather than merely observable:
+  1. distribute_public_key_with_checks runs Bob's whole pass before Charlie's
+     first hop (verified: Bob's last factory call index 95, Charlie's first 96),
+     and both links execute the SAME plan.
+  2. channel_monitor is invoked on check rounds only, which recovers the same
+     set with no Alice-side seam involved at all (120/120).
+
+Exploit, at L=480, check_fraction=1/4, Werner p=0.9 on Charlie's link, with the
+key hops treated bit-identically in both arms (real key mismatch 0.223140 in
+both, exact equality):
+    naive             published QBER 0.4667  [0.2565, 0.6768]  S = 0.439
+    spare the watched published QBER 0.0000  [0.0000, 0.2101]  S = 2.673
+Same delivered channel, same wrecked key, and the published estimate is entirely
+under the adversary's control.
+
+As a subclass of the SHIPPED sih141.attacks.channel.DepolarisingChannel (which
+already exposes attack.resource and attack.payload on one object, exactly as
+docs/PHASE3.md section 4 prescribes), six lines, L=1200, p=0.4 on Charlie:
+    shipped attack    published QBER 0.2400  S = 1.237
+    selective         published QBER 0.0000  S = 2.007
+
+The facts were half-known: docs/PHASE3.md section 7 records "a payload_map probe
+must run with check_fraction = 0" because the set of occasions the adversary is
+consulted moves with the seed, and it even states the general rule -- "everything
+the adversary legitimately observes, INCLUDING the set of occasions on which it
+is consulted, must be identical across probe calls". That rule was applied to
+probe hygiene and never to the adversary. Nobody turned it around.
+
+Every channel number Phase 4 will key a detector off is a number a channel
+adversary can set to whatever he likes.
+
+### `[*]` Ledger DoS survives the shipped count ordering when the adversary owns the count link too
+
+*finding · phase3-auditor-replay-and-checkrounds · 2026-09-01T00:00:38Z*
+
+verify.py's :ref:`ledger-denial` prices the residual DoS as "closed only when
+every channel that can present a declaration to a verifier is authenticated, OR
+the count exchange runs ahead of the hop", and reports before-forwarding at
+0/300. I reproduce 0/40 for a hop-only adversary -- the "or" clause is true only
+against an adversary restricted to the declaration link.
+
+The threat model's classical-link adversary "sees and may alter the classical
+messages", and session.py's own COUNTS_AFTER_FORWARDING docstring argues that
+"in a deployment they are the same link". Give him both, under the SHIPPED
+before-forwarding default: he picks his substitute declaration before Phase C'
+and returns a PooledMatchedCounts whose declaration_digest is the substitute's.
+Charlie's provenance check then compares like with like, passes, Charlie scores
+the substitute, rejects it, and a rejection is a verdict, so the round burns.
+Measured 40/40 at L=96. Alice's genuine declaration re-presented to Charlie
+afterwards: records-already-verified, permanently.
+
+Residual detectability: Bob still refuses with counts-from-two-declarations, so
+the run is not silent. But Charlie's transcript records a REJECTION (rate 1.0)
+of a round Alice signed honestly, which is exactly the transferability failure
+signature a repudiating Alice would produce -- the adversary frames Alice.
+
+Separately, and inconsistent with the same file: session.py's
+COUNTS_AFTER_FORWARDING bullet 1 claims a third party on the hop means "Neither
+verifier reaches a verdict, and a refusal spends no round." Measured over 20
+runs: 20 verdicts (Charlie rejects every time), Charlie's round burned 20/20,
+Bob refusing on counts-from-two-declarations. The mechanism in that bullet is
+inverted -- _declaration_counted() returns the FORWARDED declaration for BOTH
+recipients under this timing, so it is Bob's count that names the substitute and
+Charlie's that matches what he scores. The ledger-denial section's own
+"after-forwarding 300/300" is the correct number; the two passages contradict
+each other and a reader who stops at the first is misled.
+
+Everything else in the replay defence stood up: forged/relabelled identifiers
+refuse (session-identifier-mismatch), cross-run pairing refuses, the record is
+the anchor, refusals spend nothing, and the identically-seeded-collision caveat
+is real and correctly documented.
+
+### `[-]` Audited and sound: effective-length propagation, retained-key uniformity; plus sift_record drops the symmetrised bit
+
+*note · phase3-auditor-replay-and-checkrounds · 2026-09-01T00:00:56Z*
+
+Audited as an adversary and could not break these; recording so the next agent
+does not re-derive them.
+
+EFFECTIVE KEY LENGTH. Every floor and bound on the shipped path is computed from
+signing_length, not L. At L=960, check_fraction=1/8 (signing 840):
+  m_min      123 (would be 152 from nominal L)
+  M_min      338 (would be 402)
+  guaranteed_pooled 338 (would be 402)
+and all three agree term for term with ProtocolParams(key_length=840).
+session._scored_params is params.sifted(); every VerificationResult carries
+key_length=840; PooledMatchedCounts.key_length=840; SessionTranscript keeps the
+UNSIFTED set but re-derives sifted() before _check_result_against /
+_check_abort_against / _check_pooled_against; repudiation_guarantee goes through
+params.sifted(). session_identifier is derived at the effective length too.
+The documented figures reproduce exactly: DEFAULT 1.4139e-09, CHECKED_PARAMS
+(L=131664, signing 115206) 1.4124e-09, and DEFAULT+1/8-checks-without-lengthening
+1.8853e-08. The analysis module really is the unsafe one and really is optimistic
+unsifted (forgery_bound 1.88e-47 vs 1.30e-41 at this length) -- the warning in
+ProtocolParams.sifted is not overstated.
+
+RETAINED KEY IS UNBIASED. plan.sift_key returns the same element OBJECTS
+(identity, not equality) in order; the plan is a function of the recipient stream
+alone and reproduces identically for two different keys; over 400 keys x 480
+positions the retained (basis, eigenvalue) histogram gives chi-square 4.08 on 5
+dof against uniform (0.1% critical 20.5); per-position retention over 4000 plans
+has sd 0.0051 against a binomial 0.0052, min 0.8600 max 0.8905 around 0.8750.
+
+MINOR BUG, fail-safe. CheckRoundPlan.sift_record rebuilds through
+RecipientRecord.from_measurements and therefore silently drops the `symmetrised`
+provenance bit: a symmetrised record in, symmetrised=False out. Its docstring
+says it exists "for a caller who distributed without a plan and wants to apply
+one after the fact", which is precisely the ordering that hits this. Consequence
+is a refusal (verify_all declines a raw pair), not a false accept, so it costs an
+honest verdict rather than granting a dishonest one -- but it costs it silently.

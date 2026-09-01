@@ -222,7 +222,8 @@ bounds, so the abort rule can never become the dominant reason an honest run fai
   on Alice not knowing them. We found and fixed a bug where an attack harness could read them
   (§10).
 - **Recipients follow the protocol during the exchange phases.** A recipient who lies about his
-  matched count can force aborts — a denial-of-service, not a forgery. Phase 3 will measure it.
+  matched count can force aborts — a denial-of-service, not a forgery. Phase 3 measured it:
+  free, deterministic, and detectable at `z <= -11.54` ([PHASE3](PHASE3.md) §6).
 
 ---
 
@@ -235,9 +236,9 @@ The problem statement does not ask us to invent the signature scheme. It asks fo
 | --- | --- | --- | --- |
 | **Forgery** | Produces a signature without the private key | Mismatch rate exceeds threshold; success decays exponentially in `L` | Implemented and measured |
 | **Impersonation** | Poses as Alice during distribution | QBER jumps to ≈ 0.5 | Measured; full impersonation is out of model by assumption |
-| **Replay** | Re-sends a captured `(message, signature)` pair | **Nothing catches this yet** | **Phase 3 must build the defence** |
-| **Channel manipulation** | Intercept-resend, entanglement swapping, injected noise | QBER rises; CHSH falls from 2√2 toward 2 | Detectable, but the statistics are not yet recorded |
-| **Count starvation** *(we found this one)* | A recipient under-reports his matched count | Repeated aborts from one party | Phase 3 will measure it |
+| **Replay** | Re-sends a captured `(message, signature)` pair | Round identifier on the declaration; consumed-records ledger per verifier | Built and measured: `100/100` accepted before, `0/100` after ([PHASE3](PHASE3.md) §5) |
+| **Channel manipulation** | Intercept-resend, entanglement swapping, injected noise | Per-link QBER rises; CHSH falls from 2√2 toward 2 | Measured on both the entanglement line and the payload line; the per-link form also *names* the compromised party ([PHASE3](PHASE3.md) §4) |
+| **Count starvation** *(we found this one)* | A recipient under-reports his matched count | The declared count as a z-score: below `-11.54` at every key length | Measured: free, deterministic, and it cannot be done quietly ([PHASE3](PHASE3.md) §6) |
 
 CHSH separates the channel attacks cleanly:
 
@@ -482,7 +483,14 @@ walk of all six seams, 0/4001 generator-rewind steps, 0/19 seed-reconstruction r
 
 ## 12. The plan: Phases 3–7
 
-### Phase 3 — The attack suite *(next)*
+### Phase 3 — The attack suite *(complete — see [PHASE3.md](PHASE3.md))*
+
+> The plan as written below is kept as a record of what was planned. All three items landed,
+> and two things the plan did not anticipate turned up: the shipped Phase C' ordering made the
+> recipient-forgery rate of the real protocol unmeasurable, and the replay ledger's
+> denial-of-service surface was priced at zero when it is not zero. Both are in
+> [PHASE3.md](PHASE3.md).
+
 
 Working, measured implementations of every attack, so the numbers are evidence rather than
 assertion. Three things are real work rather than plumbing:
@@ -539,7 +547,7 @@ We state these rather than hoping nobody looks. Each one is worse if a judge fin
 - **Full impersonation succeeds with probability 1** if the channel from Alice is not
   authenticated. Inherent to this family of schemes; stated as a precondition.
 - **A recipient can force aborts** by under-reporting his matched count. Denial of service, not
-  forgery, but it is a real fifth attack surface and Phase 3 will measure it.
+  forgery, but it is a real fifth attack surface and Phase 3 measured it ([PHASE3](PHASE3.md) §6).
 - **The problem statement's deliverables table was left blank** by the organisation — the
   published brief ends with an unfilled placeholder. Our scope is therefore our own documented
   reading of the stated objectives, recorded deliberately rather than left implicit.

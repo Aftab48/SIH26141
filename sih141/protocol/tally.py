@@ -261,6 +261,7 @@ __all__ = [
     "exchange_matched_counts",
     "matched_count_message",
     "no_count_exchange",
+    "counterpart_count",
 ]
 
 
@@ -1081,6 +1082,81 @@ def exchange_matched_counts(
         # Checked equal above, and neither can be absent, so either stands for
         # the pair.
         declaration_digest=bob.declaration_digest,
+    )
+
+
+def counterpart_count(message: MatchedCountMessage) -> int:
+    """Return one recipient's message as the number :func:`verify` takes.
+
+    An :class:`int` carrying the digest of the declaration **its sender**
+    counted, which is what a verifier receives over Phase C' when the two
+    recipients do not hold the same declaration -- and therefore the one thing
+    that lets him *refuse* rather than crash.
+
+    Why this is public and why it was missing. :func:`exchange_matched_counts`
+    pools two counts and refuses, with a :exc:`ValueError`, to pool counts made
+    against two different declarations: that refusal is right, because ``m_B +
+    m_C`` is conserved for one declaration and means nothing across two. But a
+    :exc:`ValueError` is a *wiring* error, and two recipients holding two
+    declarations is not a wiring error -- it is an attack on the Bob-to-Charlie
+    hop, and the protocol's answer to it is a verifier who declines to pool
+    (:attr:`sih141.protocol.verify.AbortReason.COUNTS_FROM_TWO_DECLARATIONS`).
+    Handing each verifier the counterpart's message *as sent* is what turns the
+    crash back into the verdict-free refusal the protocol specifies.
+    :class:`~sih141.protocol.session.QDSSession` uses it for exactly that, under
+    ``count_exchange_timing="after-forwarding"``.
+
+    Parameters
+    ----------
+    message : MatchedCountMessage
+        The counterpart's message, built by :func:`matched_count_message`
+        against whatever declaration the counterpart was holding.
+
+    Returns
+    -------
+    int
+        The count, carrying ``message.declaration_digest``. It compares, adds
+        and serialises as the plain integer it is, so a caller that wants only
+        the number can ignore all of this.
+
+    Raises
+    ------
+    TypeError
+        If ``message`` is not a :class:`MatchedCountMessage`.
+
+    See Also
+    --------
+    exchange_matched_counts : The pooled view, for the case where the two
+        recipients *do* hold one declaration.
+    sih141.protocol.verify.verify : Where the provenance is checked.
+
+    Notes
+    -----
+    Consumes no randomness (D3) and reads no positions (D4).
+
+    Examples
+    --------
+    >>> from sih141.protocol.tally import MatchedCountMessage, counterpart_count
+    >>> count = counterpart_count(
+    ...     MatchedCountMessage("Charlie", 0, 196, 600, "0f1e")
+    ... )
+    >>> count, count + 4, count == 196
+    (196, 200, True)
+
+    It names the declaration its *sender* counted, not the one its receiver is
+    scoring, and that difference is the whole point:
+
+    >>> count.declaration_digest
+    '0f1e'
+    """
+    if not isinstance(message, MatchedCountMessage):
+        raise TypeError(
+            f"message must be a MatchedCountMessage, got "
+            f"{type(message).__name__}. It is what the counterpart sent over "
+            f"Phase C'; build one with matched_count_message(...)."
+        )
+    return _BoundMatchedCount(
+        message.matched_count, message.declaration_digest
     )
 
 

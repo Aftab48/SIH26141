@@ -92,14 +92,36 @@ def tree_fingerprint() -> dict[str, str]:
     return prints
 
 
-def describe_drift(before: dict[str, str], after: dict[str, str]) -> list[str]:
-    drift = []
+#: Paths whose contents can change what `pytest` reports. `pyproject.toml` carries
+#: `testpaths` and `addopts`; everything the suite collects lives under these two
+#: package roots. A file outside this set cannot alter the result, so drift there
+#: is worth reporting but must not block a commit.
+TEST_AFFECTING = ("sih141/", "tests/", "pyproject.toml", "conftest.py")
+
+
+def _affects_tests(path: str) -> bool:
+    return path.startswith(TEST_AFFECTING[:2]) or path in TEST_AFFECTING[2:]
+
+
+def describe_drift(before: dict[str, str], after: dict[str, str]) -> tuple[list[str], list[str]]:
+    """Split drift into what invalidates the test run and what merely happened.
+
+    Returns ``(blocking, benign)``. The distinction matters in practice: a
+    concurrent agent writing a journal entry while the suite runs is not a reason
+    to refuse a commit, because no test collects that file. Treating all drift as
+    blocking made the guard refuse a green 2098-test run over one Markdown edit.
+    Treating none of it as blocking is how a mutated source file reached origin in
+    Phase 2. The line between them is exactly `pytest`'s collection roots.
+    """
+    blocking: list[str] = []
+    benign: list[str] = []
     for path in sorted(set(before) | set(after)):
         b, a = before.get(path), after.get(path)
-        if b != a:
-            kind = "added" if b is None else "removed" if a is None else "modified"
-            drift.append(f"{kind}: {path}")
-    return drift
+        if b == a:
+            continue
+        kind = "added" if b is None else "removed" if a is None else "modified"
+        (blocking if _affects_tests(path) else benign).append(f"{kind}: {path}")
+    return blocking, benign
 
 
 def suite_is_green() -> tuple[bool, str]:
@@ -158,12 +180,14 @@ def main() -> int:
             print("            Fix the failures, then re-run this checkpoint.")
             return 1 if ns.strict else 0
 
-        drift = describe_drift(before, tree_fingerprint())
-        if drift:
+        blocking, benign = describe_drift(before, tree_fingerprint())
+        for line in benign[:10]:
+            print(f"checkpoint: note - changed during the run, cannot affect tests: {line}")
+        if blocking:
             print("checkpoint: TREE CHANGED WHILE THE SUITE WAS RUNNING -- refusing to commit.")
-            print("            A concurrent agent edited files after the tests passed, so the")
-            print("            suite did not validate what would be committed.")
-            for line in drift[:20]:
+            print("            A concurrent agent edited files the suite collects, so the tests")
+            print("            did not validate what would be committed.")
+            for line in blocking[:20]:
                 print(f"              {line}")
             print("            Re-run the checkpoint once no agent is mid-edit.")
             return 1 if ns.strict else 0
@@ -173,10 +197,10 @@ def main() -> int:
               f"as {subject!r} and push.")
         return 0
 
-    drift = describe_drift(before, tree_fingerprint())
-    if drift:
-        print("checkpoint: tree changed just before staging -- refusing to commit.")
-        for line in drift[:20]:
+    blocking, _ = describe_drift(before, tree_fingerprint())
+    if blocking:
+        print("checkpoint: tests-affecting files changed just before staging -- refusing.")
+        for line in blocking[:20]:
             print(f"              {line}")
         return 1 if ns.strict else 0
 

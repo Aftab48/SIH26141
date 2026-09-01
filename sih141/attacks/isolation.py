@@ -109,6 +109,87 @@ decisions from Alice's stream instead of from its own generator, which
 :ref:`sih141.protocol.session <phase3-seams>` already asks implementations not
 to do and which nothing until now checked.
 
+.. _deterministic-mode:
+
+When check (b) cannot apply, and what to do instead
+---------------------------------------------------
+Check (b) -- *vary the adversary's own generator and its decisions must move* --
+is what stops check (a) passing vacuously, because a constant is independent of
+every input. It also cannot be satisfied by the adversary whose rate this
+project most wants to publish.
+
+The optimal recipient forger is a **deterministic function of his view**.
+Declaring his own raw log strictly dominates every randomised alternative at
+every position: on a position the symmetrisation swapped away he matches with
+certainty, on a retained one his measured basis gives ``P(match | scored) =
+2/3`` against ``1/2`` for any other declaration, and flipping the eigenvalue is
+strictly worse. He has nothing to draw. The same trap catches the obvious
+depolarising channel -- returning the Werner state
+``(1-p)|Phi+><Phi+| + p I/4`` consumes no randomness at all -- and a count
+starver whose declaration is a fixed function of the counterpart's count.
+
+Three responses, in order of preference.
+
+1. **Realise the adversary as a sampled process** where the physics allows it.
+   A Pauli twirl drawn per round from the adversary's own generator has exactly
+   the depolarising ensemble and *is* a function of its own stream, so check (b)
+   applies unchanged. This is the right answer whenever it exists, and note that
+   the two realisations are not observationally equivalent to a channel monitor:
+   the sampled twirl leaves purity and concurrence pinned at ``1.0`` with
+   fidelity flipping between ``1`` and ``0``, where the averaged state would
+   report a constant fidelity of ``1 - 3p/4`` on every round.
+
+2. **Check a randomised sibling that shares the call path.** Give the adversary
+   a knob that mixes in its own coin -- ``guess_probability`` on the recipient
+   forger, ``jitter`` on the count starver -- and run the ordinary two-sided
+   check on ``functools.partial(TheAdversary, guess_probability=0.25)``. The
+   knob is strictly suboptimal, so no published rate may be measured with it,
+   but it exercises the identical ``__call__`` and therefore demonstrates that
+   *that code* draws from the generator it was handed.
+
+3. **Waive check (b) in writing**, with ``deterministic="..."``. Check (a) still
+   runs and still raises; what the waiver buys is that
+   :attr:`IsolationReport.isolated` no longer requires (b), and the reason is
+   carried in the report and printed by :meth:`IsolationReport.summary` so that
+   nobody reads the verdict without it. The waiver is only sound **alongside**
+   response 2: on its own it says "this candidate made the same choice five
+   times", which is equally consistent with a candidate that quietly derived
+   that choice from the session. Phase 3 uses both together for
+   :class:`~sih141.attacks.forgery.RecipientForger`.
+
+What the waiver must never be used for is a candidate that *has* randomness and
+is failing (b) because the probe is not looking at it. That is a broken probe,
+and the fix is to return the part of the decision the generator reaches.
+
+.. _probe-traps:
+
+Two ways to write a probe that blames the adversary for your bug
+-----------------------------------------------------------------
+Both were found the hard way in Phase 3, by different agents, and both report a
+perfectly isolated attack as a cheat.
+
+**A distributor probe must return the adversary's own decision, never the seam's
+output.** The obvious probe for the ``distributor`` seam returns the records it
+produced -- but the records are a function of the session's Alice-side stream
+*by construction*, honestly and for every implementation, so check (a) fails and
+the report points at the adversary. Return the thing the adversary chose: the
+key an impersonating distributor substituted, the axis a channel attack drew.
+:func:`sih141.attacks.impersonation.distributor_probe` is the worked example.
+
+**A payload_map probe must run with ``check_fraction = 0``.** ``payload_map`` is
+called on key rounds only, and *which* positions are key rounds is drawn from
+the session's own generator, so the set of contexts the seam is legitimately
+offered moves with the session seed even for a flawless adversary. A probe
+returning a log that includes positions therefore fails check (a), which
+:func:`check_attack_isolation` then reports as ``reads_the_session=True``. The
+``resource_factory`` seam has no such problem: check-round lockstep calls it at
+every position identically.
+
+The rule both cases are instances of: everything the adversary *legitimately
+observes* -- including the set of occasions on which it is consulted -- must be
+identical across probe calls, or check (a) is not a statement about the
+adversary at all.
+
 Adding the sixth adversary
 --------------------------
 The candidate is supplied as an :class:`AttackBuilder`, and the ordinary
@@ -163,11 +244,17 @@ from sih141.protocol.records import (
     RecipientView,
     recipient_views,
 )
-from sih141.protocol.session import QDSSession
+from sih141.protocol.session import (
+    NO_RECIPIENT_LOGS,
+    QDSSession,
+    forwarder_wants_view,
+    honest_signer,
+)
 
 __all__ = [
     "DEFAULT_ATTACK_SEEDS",
     "DEFAULT_SESSION_SEEDS",
+    "MIN_JUSTIFICATION",
     "SCENARIO_PARAMS",
     "SCENARIO_SEED",
     "AttackBuilder",
@@ -178,6 +265,7 @@ __all__ = [
     "assert_attack_isolated",
     "canonical",
     "check_attack_isolation",
+    "forwarder_probe",
     "signer_probe",
     "signer_scenario",
 ]
@@ -214,6 +302,15 @@ SCENARIO_PARAMS: Final[ProtocolParams] = ProtocolParams(key_length=24)
 Neither matched-count floor carries a security claim below ``L = 140``, and
 none is wanted here: the scenario exists to give a candidate adversary a
 realistic set of records to react to, not to measure a forgery rate.
+"""
+
+MIN_JUSTIFICATION: Final[int] = 40
+"""Shortest ``deterministic=`` justification :func:`check_attack_isolation` takes.
+
+Forty characters, which is about one clause. The argument switches off half the
+check, so it is deliberately not satisfiable by ``"n/a"`` or ``"deterministic"``:
+the caller has to write down *why* the adversary has no randomness to vary, and
+that sentence is what the next reader audits. See :ref:`deterministic-mode`.
 """
 
 _MAX_CANONICAL_DEPTH: Final[int] = 16
@@ -418,6 +515,10 @@ class IsolationReport:
         Canonicalised decisions under ``attack_seeds[0]``, one per session seed.
     decisions_across_attack_seeds : tuple
         Canonicalised decisions under ``session_seeds[0]``, one per attack seed.
+    deterministic_justification : str or None, optional
+        The caller's stated reason that check (b) is inapplicable to this
+        candidate, or ``None`` for the ordinary two-sided check. See
+        :ref:`deterministic-mode`.
 
     Attributes
     ----------
@@ -427,6 +528,7 @@ class IsolationReport:
     session_seed_offered : bool
     decisions_across_session_seeds : tuple
     decisions_across_attack_seeds : tuple
+    deterministic_justification : str or None
 
     Examples
     --------
@@ -449,6 +551,7 @@ class IsolationReport:
     session_seed_offered: bool
     decisions_across_session_seeds: tuple[Any, ...]
     decisions_across_attack_seeds: tuple[Any, ...]
+    deterministic_justification: str | None = None
 
     @property
     def reads_the_session(self) -> bool:
@@ -470,9 +573,28 @@ class IsolationReport:
         return len(set(self.decisions_across_attack_seeds)) > 1
 
     @property
+    def deterministic_accepted(self) -> bool:
+        """bool: ``True`` when check (b) was waived by a stated justification.
+
+        Only meaningful alongside :attr:`uses_its_own_generator`: a waiver on a
+        candidate that turned out to be random anyway was unnecessary, and the
+        report says so rather than hiding it.
+        """
+        return self.deterministic_justification is not None
+
+    @property
     def isolated(self) -> bool:
-        """bool: ``True`` only when both halves passed."""
-        return not self.reads_the_session and self.uses_its_own_generator
+        """bool: ``True`` when check (a) passed and check (b) passed or is waived.
+
+        Without a waiver this is "both halves passed", which is the only verdict
+        that stands on its own. With one it is "check (a) passed, and the caller
+        has written down why check (b) cannot apply" -- weaker, deliberately
+        visible in :meth:`summary`, and the only verdict available for the
+        optimal recipient forger (:ref:`deterministic-mode`).
+        """
+        if self.reads_the_session:
+            return False
+        return self.uses_its_own_generator or self.deterministic_accepted
 
     @property
     def offending_session_seeds(self) -> tuple[int, ...]:
@@ -530,6 +652,18 @@ class IsolationReport:
         """
         across_session = len(set(self.decisions_across_session_seeds))
         verdict = "ISOLATED" if self.isolated else "NOT ISOLATED"
+        if self.deterministic_accepted:
+            verdict = (
+                "ISOLATED (check (b) waived)"
+                if self.isolated
+                else "NOT ISOLATED"
+            )
+        waiver = (
+            ""
+            if not self.deterministic_accepted
+            else f"\n  (b) waived, deterministic by construction: "
+            f"{self.deterministic_justification}"
+        )
         return (
             f"{self.attack}: {verdict}\n"
             f"  (a) vary session seed, fix own rng: {across_session} distinct "
@@ -540,12 +674,56 @@ class IsolationReport:
             f"(want >1)\n"
             f"  session_seed offered to the builder: "
             f"{'yes' if self.session_seed_offered else 'no'}"
+            f"{waiver}"
         )
 
 
 # --------------------------------------------------------------------------- #
 # The check
 # --------------------------------------------------------------------------- #
+
+
+def _as_justification(value: Any) -> str | None:
+    """Validate a ``deterministic=`` waiver: ``None`` or a real sentence.
+
+    Parameters
+    ----------
+    value : object
+        ``None`` for the ordinary two-sided check, or the caller's reason.
+
+    Returns
+    -------
+    str or None
+        The stripped justification, or ``None``.
+
+    Raises
+    ------
+    TypeError
+        If ``value`` is neither ``None`` nor a string.
+    ValueError
+        If the string is shorter than :data:`MIN_JUSTIFICATION` characters.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError(
+            f"deterministic must be None or a string explaining why check (b) "
+            f"cannot apply, got {type(value).__name__}. It is not a flag: "
+            f"passing True would switch off half the check without leaving a "
+            f"reason in the report."
+        )
+    reason = value.strip()
+    if len(reason) < MIN_JUSTIFICATION:
+        raise ValueError(
+            f"deterministic must be at least {MIN_JUSTIFICATION} characters of "
+            f"actual justification, got {len(reason)}. Say why this adversary "
+            f"has no randomness for check (b) to vary -- for instance that "
+            f"declaring his own raw log strictly dominates every randomised "
+            f"alternative at every position -- because that sentence is the "
+            f"argument replacing the check, and it is what the next reader "
+            f"audits."
+        )
+    return reason
 
 
 def _as_seed_tuple(seeds: Any, name: str) -> tuple[int, ...]:
@@ -634,6 +812,7 @@ def check_attack_isolation(
     session_seeds: Sequence[int] = DEFAULT_SESSION_SEEDS,
     attack_seeds: Sequence[int] = DEFAULT_ATTACK_SEEDS,
     name: str | None = None,
+    deterministic: str | None = None,
 ) -> IsolationReport:
     """Run both halves of the D6 check against one candidate adversary.
 
@@ -660,6 +839,13 @@ def check_attack_isolation(
     name : str or None, optional
         Keyword-only label for the report; defaults to the builder's
         ``__name__``.
+    deterministic : str or None, optional
+        Keyword-only. A written justification that check (b) is inapplicable
+        because the candidate is deterministic *by construction*. Both halves
+        still run and both are still reported; what changes is that
+        :attr:`IsolationReport.isolated` no longer requires (b). At least
+        :data:`MIN_JUSTIFICATION` characters -- see :ref:`deterministic-mode`
+        for when this is legitimate and when it is a bug being papered over.
 
     Returns
     -------
@@ -728,6 +914,7 @@ def check_attack_isolation(
     """
     sessions = _as_seed_tuple(session_seeds, "session_seeds")
     attacks = _as_seed_tuple(attack_seeds, "attack_seeds")
+    justification = _as_justification(deterministic)
     offered = _builder_offers_session_seed(build, "build")
     if not callable(probe):
         raise TypeError(
@@ -767,6 +954,7 @@ def check_attack_isolation(
         session_seed_offered=offered,
         decisions_across_session_seeds=across_session,
         decisions_across_attack_seeds=across_attack,
+        deterministic_justification=justification,
     )
 
 
@@ -777,6 +965,7 @@ def assert_attack_isolated(
     session_seeds: Sequence[int] = DEFAULT_SESSION_SEEDS,
     attack_seeds: Sequence[int] = DEFAULT_ATTACK_SEEDS,
     name: str | None = None,
+    deterministic: str | None = None,
 ) -> IsolationReport:
     """Run :func:`check_attack_isolation` and raise unless the candidate passes.
 
@@ -796,6 +985,11 @@ def assert_attack_isolated(
         Keyword-only. As :func:`check_attack_isolation`.
     name : str or None, optional
         Keyword-only. As :func:`check_attack_isolation`.
+    deterministic : str or None, optional
+        Keyword-only. As :func:`check_attack_isolation`. When supplied, a
+        candidate that fails check (b) is *not* raised on; a candidate that
+        fails check (a) still is, and that is the half the waiver does not
+        touch.
 
     Returns
     -------
@@ -837,6 +1031,7 @@ def assert_attack_isolated(
         session_seeds=session_seeds,
         attack_seeds=attack_seeds,
         name=name,
+        deterministic=deterministic,
     )
     if report.reads_the_session:
         raise AttackIsolationError(
@@ -858,7 +1053,7 @@ def assert_attack_isolated(
             f"everything the adversary legitimately observes fixed.\n"
             f"{report.summary()}"
         )
-    if not report.uses_its_own_generator:
+    if not report.uses_its_own_generator and not report.deterministic_accepted:
         raise AttackIsolationError(
             f"{report.attack} ignored the generator it was handed.\n"
             f"The session seed was held fixed at {report.session_seeds[0]} and "
@@ -871,6 +1066,13 @@ def assert_attack_isolated(
             f"is not drawing from its rng -- in which case D6 is untested for "
             f"it -- or the probe is not looking at the part of it that is "
             f"random.\n"
+            f"If the candidate is deterministic *by construction* -- its "
+            f"optimal move is a fixed function of what it observes, so there "
+            f"is no randomness to vary and never was -- pass "
+            f"deterministic='...' with the argument for why, and read "
+            f":ref:`deterministic-mode` first: the waiver is only sound when a "
+            f"randomised variant of the same adversary is checked alongside "
+            f"it.\n"
             f"{report.summary()}"
         )
     return report
@@ -1125,5 +1327,156 @@ def signer_probe(scenario: SignerScenario | None = None) -> DecisionProbe:
             resolved.params,
             records=resolved.raw_records,
         )
+
+    return probe
+
+
+def forwarder_probe(
+    scenario: SignerScenario | None = None,
+    *,
+    party: Party = Party.BOB,
+    matched_count: int | None = None,
+) -> DecisionProbe:
+    """Return a :class:`DecisionProbe` for the ``forwarder`` seam.
+
+    The Bob-to-Charlie hop, which is where the threat model actually puts an
+    adversary and which had no ready-made probe: two Phase 3 agents each wrote
+    one privately before this existed. It calls the candidate exactly as
+    :meth:`sih141.protocol.session.QDSSession.transfer` would -- the declaration
+    Bob received, the parameters, and a keyword-only ``view`` carrying **Bob's**
+    holdings and nobody else's -- and returns the declaration the seam forwarded.
+
+    A forwarder that does not want the view is called with two arguments, the
+    way the session calls one; the choice is read off the candidate's signature
+    exactly as :func:`sih141.protocol.session.forwarder_wants_view` reads it,
+    so a probe pass and a session run exercise the same code path.
+
+    ``session_seed`` is **deliberately unused**, for the reason spelled out on
+    :func:`signer_probe`: one frozen scenario is replayed into every call, so
+    the seed is a quantity the candidate can only have by going and taking it.
+
+    Parameters
+    ----------
+    scenario : SignerScenario or None, optional
+        The frozen observations. ``None`` uses :func:`signer_scenario`.
+    party : Party, optional
+        Keyword-only. Whose view the hop is given; Bob owns this hop, so
+        :attr:`~sih141.protocol.params.Party.BOB` is the only value a shipped
+        run produces and the default. Charlie is accepted for a probe of a
+        second hop; Alice is refused, because she holds no record.
+    matched_count : int or None, optional
+        Keyword-only. The matched count to put on the view, standing in for the
+        verdict the forwarding party has just reached. ``None`` -- the default
+        -- models a party who reached no verdict, and is the conservative
+        choice: an adversary that branches on the count is then exercised on the
+        branch that does not have it.
+
+    Returns
+    -------
+    DecisionProbe
+        ``(attack, session_seed) -> Signature``.
+
+    Raises
+    ------
+    TypeError
+        If ``scenario`` is neither ``None`` nor a :class:`SignerScenario`, or
+        ``party`` is not a :class:`~sih141.protocol.params.Party`.
+    ValueError
+        If ``party`` is :attr:`~sih141.protocol.params.Party.ALICE`.
+
+    See Also
+    --------
+    signer_probe : The same discipline for the Phase B seam.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from sih141.attacks.isolation import (
+    ...     assert_attack_isolated, forwarder_probe)
+    >>> from sih141.protocol.keys import KeyElement, PrivateKey
+    >>> from sih141.protocol.signature import Signature
+
+    A hop that substitutes a declaration built from its own coins is isolated:
+
+    >>> class CoinFlippingHop:
+    ...     def __init__(self, *, rng: np.random.Generator) -> None:
+    ...         self.rng = rng
+    ...     def __call__(self, signature, params, *, view):
+    ...         elements = [
+    ...             KeyElement(
+    ...                 params.bases[int(self.rng.integers(len(params.bases)))],
+    ...                 int(self.rng.choice((-1, 1))),
+    ...             )
+    ...             for _ in range(params.key_length)
+    ...         ]
+    ...         return Signature(
+    ...             signature.message_bit,
+    ...             PrivateKey(signature.message_bit, elements),
+    ...         )
+    >>> assert_attack_isolated(CoinFlippingHop, forwarder_probe()).isolated
+    True
+
+    And the view it is handed is one party's, structurally:
+
+    >>> seen = {}
+    >>> class Peeking:
+    ...     def __init__(self, *, rng: np.random.Generator) -> None:
+    ...         self.rng = rng
+    ...     def __call__(self, signature, params, *, view):
+    ...         seen["party"] = view.party
+    ...         return signature
+    >>> _ = forwarder_probe()(Peeking(rng=np.random.default_rng(0)), 901)
+    >>> seen["party"] is Party.BOB
+    True
+    """
+    resolved = signer_scenario() if scenario is None else scenario
+    if not isinstance(resolved, SignerScenario):
+        raise TypeError(
+            f"scenario must be a SignerScenario or None, got "
+            f"{type(resolved).__name__}. Build one with signer_scenario()."
+        )
+    if not isinstance(party, Party):
+        raise TypeError(
+            f"party must be a Party, got {type(party).__name__}"
+        )
+    if party is Party.ALICE:
+        raise ValueError(
+            "Alice does not forward: the hop this probe models is the one "
+            "between the two recipients, and she holds no measurement record "
+            "to build a RecipientView from. Pass Party.BOB, who owns it."
+        )
+    if matched_count is not None and (
+        isinstance(matched_count, bool)
+        or not isinstance(matched_count, (int, np.integer))
+    ):
+        raise TypeError(
+            f"matched_count must be an int or None, got "
+            f"{type(matched_count).__name__}"
+        )
+
+    view = RecipientView.for_party(
+        party,
+        resolved.message_bit,
+        raw_records=resolved.raw_records,
+        records=resolved.records,
+        matched_count=None if matched_count is None else int(matched_count),
+    )
+    # The declaration the hop receives is frozen alongside the records, and is
+    # Alice's honest one: a probe that re-signed per seed would be varying the
+    # candidate's observations, which is exactly the mistake :ref:`probe-traps`
+    # is about.
+    declaration = honest_signer(
+        resolved.message_bit,
+        resolved.keys,
+        resolved.params,
+        records=NO_RECIPIENT_LOGS,
+    )
+
+    def probe(attack: Any, session_seed: int) -> Any:
+        """Forward once against the frozen scenario; return what was passed on."""
+        del session_seed  # An isolated hop cannot see it. That is the point.
+        if forwarder_wants_view(attack):
+            return attack(declaration, resolved.params, view=view)
+        return attack(declaration, resolved.params)
 
     return probe
