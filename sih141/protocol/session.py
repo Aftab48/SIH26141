@@ -180,7 +180,8 @@ than two different programs.
 ``payload_map`` -- the state Alice actually sends
     Callable ``payload_map(state, context)``, forwarded verbatim to
     :func:`~sih141.protocol.distribute.distribute_to_recipient` and invoked once
-    per **key round** with the eigenstate about to be teleported and the
+    per **position** -- check rounds included -- with the eigenstate about to be
+    teleported and the
     :class:`~sih141.protocol.distribute.ResourceContext` naming the hop. ``None``
     -- the default -- calls nothing. This is where an attack on the *payload
     line* stands, as distinct from the channel: a damped or rotated preparation,
@@ -192,8 +193,10 @@ than two different programs.
     attack -- a copy that drifts the first time
     :mod:`sih141.protocol.distribute` changes, and whose bugs are invisible
     because the honest path never runs it. See :ref:`sih141.protocol.distribute
-    <payload-seam>`, including the two things it deliberately cannot reach: it
-    is never called on a check round, and it draws no randomness.
+    <payload-seam>`, including what it deliberately cannot reach: its answer is
+    **discarded** on a check round -- read once first, so that the read tally
+    is flat and cannot be used to find the check rounds either -- and it draws
+    no randomness.
 
 ``signer`` -- Phase B, i.e. who is holding the pen
     Callable matching :class:`Signer`, defaulting to :func:`honest_signer`. It
@@ -384,7 +387,13 @@ than two different programs.
     call sequence -- 120 of 120 positions at ``L = 480``, no statistics
     involved -- and the declared channel-side adversary holds this seam
     alongside ``resource_factory`` and ``payload_map``. So it is now called
-    everywhere and its answer discarded at key positions. What must stay true
+    everywhere and its answer discarded at key positions -- and *consumed*
+    everywhere too, because closing the call route promoted the next one:
+    a mapping iterated only where a sample was built let a monitor count its
+    own iterations and recover the same set, at the same precision, with the
+    calls already equal. :func:`_call_monitor` now coerces what comes back to
+    JSON leaves at every hop, so what the transcript keeps at a check position
+    is a dict this module built. What must stay true
     is the other half of the argument, and it does: a per-position record about
     the rounds the key is made of would stop the sampled estimate being a
     sample of anything, so the session **records** nothing at a key position,
@@ -505,12 +514,17 @@ The rest of the seams, audited for the same class of leak:
   :class:`~sih141.protocol.distribute.ResourceContext` -- party, message bit,
   position -- and no generator, so a channel-side adversary cannot reach the
   coins even indirectly. A seam that wants randomness closes over its own
-  generator, which is the documented way (D6).
+  generator, which is the documented way (D6). What each returns is
+  **adopted** on the way in
+  (:func:`~sih141.protocol.distribute._adopt_state`): read once, copied, and
+  not referenced again, so neither can learn the branch by counting how often
+  the protocol reads it back.
 * ``channel_monitor`` gets a resource and a context, no generator, and is
   invoked at every position alike, so that its call sequence says nothing about
-  where the recipients' own stream put the check rounds. It can read the
-  channel it is shown and nothing else, it cannot change what is delivered, and
-  what it returns is published only at the check positions.
+  where the recipients' own stream put the check rounds. Its answer is consumed
+  at every position alike, for the same reason. It can read the channel it is
+  shown and nothing else, it cannot change what is delivered, and what it
+  returns is published only at the check positions.
 * ``symmetriser`` *is* handed ``self._recipient_rng``, which is correct: it
   replaces the recipients' step and the coins are theirs. It is the one seam
   from which the coins are readable -- and, by rewinding, the check plan drawn
@@ -1173,7 +1187,7 @@ def _call_monitor(
     monitor: ChannelMonitor | None,
     density: DensityMatrix,
     context: ResourceContext,
-) -> Mapping[str, Any]:
+) -> dict[str, Any]:
     """Put one hop's resource past the channel-monitor seam.
 
     Parameters
@@ -1188,15 +1202,32 @@ def _call_monitor(
 
     Returns
     -------
-    mapping
-        Whatever the seam returned, unvalidated as to its *contents* --
-        :class:`ChannelSample` coerces those to JSON leaves and is the one
-        place that has to.
+    dict
+        The seam's diagnostics, already coerced to JSON leaves and copied into
+        a plain :class:`dict`. **Consumed here, on every hop, and not later on
+        the check hops alone** -- that is the point of doing it here rather
+        than leaving it to :class:`ChannelSample`, which is where it used to
+        happen. A monitor invoked everywhere but whose mapping was *iterated*
+        only where a sample was built could count its own iterations and read
+        the check set off the tally, at precision 1.0 and recall 1.0, with the
+        call sequence already equalised: being *consumed* was the signal once
+        being *called* stopped being one
+        (:ref:`sih141.protocol.distribute <check-round-lockstep>`). Iterating
+        it here makes the tally ``1`` at every position, and
+        :meth:`ChannelSample.__post_init__` then re-coerces a plain dict this
+        module built, which is idempotent and touches nothing of the monitor's.
+
+        The change also moves *when* a monitor's mistake is reported, and in
+        the right direction: a value JSON cannot carry now fails at the hop
+        that produced it rather than at the next check hop.
 
     Raises
     ------
     TypeError
-        If ``monitor`` is not callable, or did not return a mapping.
+        If ``monitor`` is not callable, did not return a mapping, or returned a
+        value with no JSON representation.
+    ValueError
+        If it returned a non-finite number.
     """
     if monitor is None:
         return {}
@@ -1223,7 +1254,9 @@ def _call_monitor(
             f"Return an empty mapping to record nothing beyond the "
             f"built-in summary."
         )
-    return returned
+    # Read once, here, at every hop. What comes back is a plain dict of JSON
+    # leaves; the monitor's own mapping is not referenced again.
+    return _as_json_value(returned, "extra")
 
 
 @dataclass(frozen=True)
@@ -1451,11 +1484,12 @@ class ChannelSample:
             Keyword-only. The seam, invoked here; ``None`` records the built-in
             summary alone.
         extra : mapping or None, optional
-            Keyword-only. A monitor's output already collected by the caller,
-            for the case where the seam must be invoked somewhere this method
-            cannot see -- which is every position, not only the check ones, so
-            that being called stops being the signal it was
-            (:class:`_ChannelTap`). Mutually exclusive with ``monitor``.
+            Keyword-only. A monitor's output already collected **and already
+            consumed** by the caller, for the case where the seam must be
+            invoked somewhere this method cannot see -- which is every
+            position, not only the check ones, so that neither being called nor
+            being iterated is the signal it was (:class:`_ChannelTap`). Mutually
+            exclusive with ``monitor``.
 
         Returns
         -------
@@ -1639,20 +1673,33 @@ class _ChannelTap:
     holds the seam, in one pass, with no statistics and no inference -- the
     declared channel-side adversary holds this seam and the two in
     :mod:`sih141.protocol.distribute` together, so a call pattern that differs
-    between the branches is a call pattern that hands the check set over. What
-    must stay true is the *other* half of the original argument: nothing is
-    ever **recorded** at a key position, because a per-position statement about
-    the rounds the key is made of would stop the sample being a sample. So the
-    seam sees everything and the transcript sees only the check rounds, and
-    :func:`_check_sample_against` re-checks that on the way back in from JSON.
+    between the branches is a call pattern that hands the check set over.
+    *Being consumed* is the same signal one step further in, and closing the
+    first opened the second: with the monitor called everywhere, its returned
+    mapping was still **iterated** only where a sample was built, so a monitor
+    returning a mapping that counted its own iterations recovered the check set
+    again -- precision 1.0, recall 1.0. It is now consumed at every hop, in
+    :func:`_call_monitor`, which returns a plain dict of JSON leaves; the
+    sample below is built from that dict and never touches the monitor's
+    object. What must stay true is the *other* half of the original argument:
+    nothing is ever **recorded** at a key position, because a per-position
+    statement about the rounds the key is made of would stop the sample being a
+    sample. So the seam sees everything, is read the same amount everywhere,
+    and the transcript sees only the check rounds --
+    :func:`_check_sample_against` re-checks the last of those on the way back
+    in from JSON.
 
     The order matters and is the reason this is a wrapper rather than a hook
     inside the distribution loop. The underlying factory is called identically
     at every position, before anything is recorded and with a context that says
     nothing about the branch, so the invariant that an adversary standing at the
     channel cannot tell a watched round from an unwatched one
-    (:ref:`sih141.protocol.distribute <check-round-lockstep>`) is untouched: the
-    tap is downstream of the only thing the adversary can see.
+    (:ref:`sih141.protocol.distribute <check-round-lockstep>`) is untouched.
+    That the tap sits downstream of the call is not on its own enough, because
+    what happens downstream is observable too if the object handed down is the
+    adversary's: it is not, because :func:`_draw_resource` adopts it, so
+    everything from here on -- the monitor's copy, the summary, the
+    measurement -- reads memory this process allocated.
 
     One tap serves every link of one message bit, and the plan deals its
     reserved rounds between them
@@ -1716,11 +1763,18 @@ class _ChannelTap:
 
     def __call__(self, context: ResourceContext) -> StateLike:
         """Draw one hop's resource, monitor it, and record it if it is watched."""
+        # Adopted on the way in (:func:`_adopt_state`, called by
+        # _draw_resource), so the factory's own object is read once and this
+        # method, the monitor and the sample below all work on a copy the
+        # protocol owns. Whatever they do with it, the factory's read tally is
+        # 1 at every position and carries nothing about the branch.
         resource = _draw_resource(self._factory, self._wants_context, context)
         # Every hop, so that the seam cannot read the plan off its own call
-        # sequence. Guarded rather than folded into the call, so that a run
-        # with no monitor neither coerces the state nor validates it here: the
-        # pair check would otherwise fire at position 0 of an unmonitored run
+        # sequence -- and its answer is consumed here too, in _call_monitor,
+        # so it cannot read the plan off its own consumption tally either.
+        # Guarded rather than folded into the call, so that a run with no
+        # monitor neither coerces the state nor validates it here: the pair
+        # check would otherwise fire at position 0 of an unmonitored run
         # instead of where it used to, and an honest run's cost would grow for
         # a seam it does not have.
         extra: Mapping[str, Any] = {}
@@ -3150,21 +3204,28 @@ class QDSSession:
         quoting.
     resource_factory : callable or None, optional
         Keyword-only. The quantum-channel seam, forwarded verbatim to the
-        distributor and invoked once per key position per recipient. ``None``
-        selects :func:`~sih141.protocol.distribute.ideal_resource`. See
+        distributor and invoked once per position per recipient -- check rounds
+        included, and its answer read once at each. ``None`` selects
+        :func:`~sih141.protocol.distribute.ideal_resource`. See
         :ref:`phase3-seams`.
     payload_map : callable or None, optional
         Keyword-only. The payload-line seam, forwarded to the distributor and
-        invoked once per key round with the eigenstate about to be teleported.
-        ``None`` sends what Alice prepared. See :ref:`phase3-seams` and
-        :ref:`sih141.protocol.distribute <payload-seam>`.
+        invoked once per **position** with the eigenstate about to be
+        teleported -- check rounds included, where what it returns is read once
+        and then discarded, because a seam called or read on key rounds alone
+        publishes the check set (:ref:`sih141.protocol.distribute
+        <check-round-lockstep>`). ``None`` sends what Alice prepared. See
+        :ref:`phase3-seams` and :ref:`sih141.protocol.distribute
+        <payload-seam>`.
     channel_monitor : ChannelMonitor or None, optional
         Keyword-only. Extra per-check-round diagnostics for a Phase 4 detector,
         called with the resource and the hop's
-        :class:`~sih141.protocol.distribute.ResourceContext` and recorded in
-        :attr:`SessionTranscript.channel`. ``None`` records the built-in
-        summary alone. Ignored entirely on a parameter set without check
-        rounds, because there is no round it would be legitimate to call it on.
+        :class:`~sih141.protocol.distribute.ResourceContext` at **every**
+        position, its mapping consumed at every position, and recorded in
+        :attr:`SessionTranscript.channel` at the check positions only. ``None``
+        records the built-in summary alone. Ignored entirely on a parameter set
+        without check rounds, because there is no round it would be legitimate
+        to call it on.
     distributor : Distributor or None, optional
         Keyword-only. The Phase A seam. ``None`` selects
         :func:`~sih141.protocol.distribute.distribute_public_key_with_checks`,

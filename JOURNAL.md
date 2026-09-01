@@ -8,7 +8,7 @@
 > on the maintainer's explicit instruction. The permanent record is
 > `docs/METRICS.md` and the `docs/PHASE*.md` notes.
 
-**113 entries** — 29 finding · 28 issue · 26 decision · 16 fix · 12 note · 2 deadend
+**118 entries** — 30 finding · 28 issue · 27 decision · 18 fix · 13 note · 2 deadend
 
 
 ## Phase 0 — Scaffold
@@ -3819,3 +3819,316 @@ Also open: the re-stated CHSH half-widths at PHASE3.md:317 and :740 do not repro
 at the low tail of their sampling distributions, and both are prose pinned by no doctest, in a
 repository whose own D5 rule puts load-bearing figures in doctests and whose README already
 records five wrong prose numbers.
+
+
+## Phase 4 — Detection engine
+
+### `[+]` CLOSED -- routes D, E and F: read every seam's answer once, at the boundary
+
+*fix · fix:read-count-routes · 2026-09-01T21:58:45Z*
+
+STATUS: closed, measured in both directions, per route.
+
+WHAT THE ROUTES WERE. The first hardening round equalised how often each seam is CALLED. It
+did not equalise what the protocol then DID with what the seam returned, and that turned out
+to be the same signal one step further in:
+
+  D  resource read-count   the returned pair was read ONCE on a key round (inside teleport)
+                           and TWICE on a check round (ChannelSample.of -> _as_pair, then
+                           observe_qber_round). With a channel_monitor installed, 2 and 3.
+  E  payload read-count    the mapped payload was read by teleport on a key round and by
+                           nothing at all on a check round. Being USED was the new signal.
+  F  monitor mapping       the mapping was ITERATED only where a ChannelSample was built.
+
+REPRODUCED FIRST, against adee91b, at L = 64 / cf = 0.25 over three session seeds: an
+adversary returning an instrumented object (a Statevector/DensityMatrix subclass whose .data
+property counts, a Mapping whose __iter__ counts) and nominating the minority read-class
+recovers every link's check set at precision 1.0000 and recall 1.0000. Three routes, three
+seeds, four links each, no misses.
+
+THE FIX IS ONE IDEA, NOT THREE PATCHES: ADOPT AT THE SEAM. The object a seam returns is read
+exactly once, immediately, into a copy the protocol owns, and nothing downstream ever touches
+the seam's object again.
+
+  _draw_resource  -> return _adopt_state(resource)
+  _map_payload    -> return _adopt_state(mapped)
+  _call_monitor   -> return _as_json_value(returned, "extra")   (consume, every hop)
+
+_adopt_state preserves representation and dims -- a pure state stays a Statevector, which is
+teleport()'s exact fidelity path (D1) -- and copies the array, so the tally an adversary keeps
+is 1 at every position of every link. A constant carries no bits.
+
+WHY NOT MATCH THE COUNTS DOWNSTREAM. Reading the resource a second time on key rounds to
+balance the check round's second read would fix today's tally and break on the next edit that
+touches either branch, with nothing failing. Adoption is a property of the boundary, not an
+accounting identity across two code paths.
+
+MEASURED AFTER: every route's tally collapses to a single class {1}, the nomination degenerates
+to "every position", and the score is the per-link base rate 0.1250 with recall 1.0. Same
+probes, same seeds.
+
+THE CONSEQUENCE, END TO END. An in-run spare-the-watched exploit: a factory returning an
+instrumented Werner pair (p = 0.5) plus a payload map that, called for the same hop a moment
+later, asks whether that pair has been read yet -- before the fix the only reader at that
+instant was the ChannelSample the tap builds, so a read meant CHECK ROUND -- and writes the
+clean amplitudes back into the pair in place, before the round measures it.
+
+  L = 192, cf = 0.25, session seed 20260213:
+                              adee91b            now
+    published QBER unspared   19/48              19/48
+    published QBER sparing     0/48              19/48
+    key damage sparing        Bob 11/52,         identical
+                              Charlie 18/62
+    positions nominated       96                 768
+    precision / recall        1.0000 / 1.0000    0.1250 / 1.0000
+
+So it took the attack from detected-and-attributed to neither, with bit-identical key damage;
+it now takes it nowhere.
+
+NOTHING ELSE MOVED. Honest, monitored and attacked runs are byte-identical to adee91b: two
+parameter sets, three configurations, two seeds each, SHA-256 over transcript.to_dict() plus
+the adversary's own log. The change is invisible to the physics and total for the object.
+
+TESTS, BOTH DIRECTIONS. Four new tests. Each fails against adee91b and passes here:
+  test_no_seam_learns_the_check_set_by_counting_its_own_reads          (D, E, F together)
+  test_a_spare_the_watched_adversary_no_longer_finds_the_watched_rounds (the consequence)
+  test_the_payload_seams_answer_is_read_once_on_both_branches          (E, without a session)
+  test_adopt_state_keeps_the_state_and_drops_the_object                (the helper's contract)
+Each of the first three carries a POSITIVE CONTROL -- the same scorer, run over a tally with
+the pre-fix shape, must still recover the set -- because a probe that has quietly stopped
+counting would satisfy the main assertion trivially. That is the exact failure the Phase 3
+audit found in check (a) of the isolation suite, and it is cheap to guard against.
+
+### `[D]` Route G stays open, by argument: the simulator models information flow, not execution
+
+*decision · fix:read-count-routes · 2026-09-01T21:59:11Z*
+
+DECISION: route G -- the timing side channel on the check-round branch -- is OUT OF SCOPE, by
+argument, and the argument is now written in docs/PHASE3.md section 12 with the assumption it
+leaves behind named (NO-TIMING). It is not closed in code and will not be.
+
+THE ARGUMENT, IN ONE LINE. This simulator models the protocol's INFORMATION FLOW, not its
+physical execution: nothing in the package represents wall-clock timing, power draw, emission,
+photon number or detector dead time, so a timing side channel is outside its scope in the same
+way power analysis already is.
+
+WHY THAT IS AN ARGUMENT AND NOT AN EXCUSE. Four things had to be true and each is stated:
+
+1. The boundary is not drawn for this occasion. It is the same boundary that already excludes
+   power analysis, detector blinding and photon-number splitting -- none of which this package
+   pretends to reason about either. What is new is only that a channel INSIDE the harness was
+   found and is being left open, which is why it needs saying out loud.
+
+2. The measured route is a measurement of Python. The gap route G reads is the interpreter's
+   cost of teleport() against two projective_measure() calls. It is a property of how this
+   simulator is written, not of the protocol it simulates.
+
+3. Closing it in code would cost double and buy less than it looks like. The only way to
+   equalise the branches is to teleport on check rounds too and discard the result: every
+   position then costs what a key position costs, taking an L = 192 session from ~0.36 s to
+   the order of 0.7 s and a DEFAULT_PARAMS session from the order of four minutes to the order
+   of eight, with every Phase 5 sweep doubling. And equal WORK is not constant TIME -- two
+   Python branches doing the same matrix operations still differ by allocation and cache -- so
+   the honest result would be "the gap is smaller", not "the route is closed". Worse, picking
+   the point where the residual gap counts as small enough is choosing a threshold by looking
+   at the data, which is precisely what D7 forbids.
+
+4. In a deployment the check set is secret when it matters. Both branches consume one
+   entangled pair and one preparation; an eavesdropper on the fibre sees the same pulses
+   either way; what differs is a LOCAL decision the recipient makes about a qubit that has
+   already arrived, and check positions are announced afterwards -- standard practice, the
+   same argument that lets QKD announce bases after transmission.
+
+WHERE THE ARGUMENT IS WEAK, AND IT IS WRITTEN DOWN RATHER THAN GLOSSED. A deployment's
+RECEIVER is not identical on the two branches: a key round waits for Alice's two correction
+bits and applies a correction, a check round does not. An adversary watching the recipient's
+APPARATUS -- not the fibre -- may be able to separate them in a real system. That is a genuine
+engineering requirement on a deployment and one this simulator cannot discharge, because it
+does not model the apparatus at all.
+
+WHAT IT COSTS, STATED ONCE AND NOT BURIED. (NO-TIMING) is in section 12 as a blockquote, is
+pointed at from the document's opening paragraph, from the head of section 8's detector table,
+and from limitation 9.11:
+
+    Every claim about CHECK-ROUND STATISTICS -- the per-link QBER and CHSH of section 4, the
+    ChannelSample rows of section 8, and anything Phase 4 or Phase 5 builds on them -- is
+    conditioned on the adversary not inferring the check set from timing.
+
+Two things bound what that assumption carries, and both are in the section:
+  - It does not touch the strongest signal. The verifier's mismatch rate, the matched counts,
+    declaration_z_score and every abort reason read the KEY, not the sample, and a
+    spare-the-watched adversary damages the key by construction. The Phase 3 prototype
+    separated 4 of 5 adversaries on the rate alone with no check rounds at all. What leans on
+    (NO-TIMING) is check-round ATTRIBUTION -- which link Eve touched.
+  - It is an assumption about the harness, not about the protocol. Aâ€“F could be closed because
+    they were bugs in how the simulator passes objects around. G cannot be closed here because
+    there is no clock here to close it against.
+
+REJECTED ALTERNATIVE: constant-work rounds. Considered and priced above. Rejected on the double
+cost plus the fact that it would not deliver the property it is bought for. Recorded so the
+next round does not re-derive it.
+
+### `[*]` MINOR and OPEN -- route H, the raise oracle: a malformed payload names the branch
+
+*finding · fix:read-count-routes · 2026-09-01T21:59:35Z*
+
+STATUS: OPEN. Found while closing D, E and F; measured; deliberately not fixed. Written up in
+docs/PHASE3.md section 12 as route H so it is not discovered by a judge.
+
+THE ROUTE. _map_payload accepts whatever the payload seam returns. A KEY round then hands it to
+teleport(), which refuses anything but a one-qubit state; a CHECK round discards it unexamined.
+So a payload map that returns a TWO-qubit state at exactly one position turns "did the run
+raise" into a clean read of that position's branch. No instrumentation, no statistics, no
+timing.
+
+MEASURED. L = 32, check_fraction = 0.25, session seed 555. Probing all 32 positions of Bob's
+link, one probe run each, the runs that SURVIVED are {8, 19, 25, 30} -- which is exactly
+plan.rounds_by_position(Party.BOB) for bit 0. Precision 1.0000, recall 1.0000.
+
+THE resource_factory SEAM CARRIES NO EQUIVALENT, and this was checked rather than assumed: a
+malformed resource raises on BOTH branches -- teleport on a key round, observe_qber_round (via
+_as_pair) on a check round -- so there is no oracle there. The asymmetry is specific to the
+payload line, and it is specific for the same structural reason routes D and E were: a check
+round is the branch that DISCARDS what the payload seam returned.
+
+WHY IT IS LEFT OPEN, and it is not because it is hard. It is a different and weaker threat
+model than A-G. Each probe destroys the run it is made in: the adversary learns one bit and
+forfeits the session. To turn that into spare-the-watched it must re-run the SAME RECIPIENT
+STREAM L times and then attack it once more. In this harness that is a fixed seed. In a
+deployment it is the recipients reusing their randomness across sessions, which they must not
+do for reasons that have nothing to do with this route.
+
+THE FIX, IF IT IS WANTED, IS ONE SHAPE CHECK. Refuse a mapped payload that is not one qubit,
+inside _map_payload, before the branch, so the refusal is identical on both. Same principle
+that closed D-F; costs an array-shape comparison per position; cannot change an honest run,
+because payload_map=None returns before the check and element.state() is one qubit by
+construction.
+
+WHY I DID NOT APPLY IT. It changes an ERROR PATH -- which exception a mis-wired attack meets,
+and where -- and the brief for this round was D, E and F plus the argument for G. Changing an
+error path in a shared module as a side effect of a different task is how a downstream test
+starts failing for a reason nobody wrote down. It belongs to whoever owns the next round, with
+one decision to make: whether _map_payload should validate the payload's qubit count at all, or
+whether that validation belongs where it is now, inside teleport.
+
+A NOTE ON WHAT THIS SAYS ABOUT THE FAMILY. Three rounds have now each closed the current
+spelling of one idea -- being CALLED, being READ, being USED -- and each time the next spelling
+appeared. "Whether the run survived" is the fourth. The general statement is that ANY
+observable whose value depends on which branch was taken is a channel, and the branch is
+observable through every difference the two paths have, including their failure modes. A future
+round wanting to close the family rather than the instance should look for a formulation of
+that invariant that a test can assert directly.
+
+### `[+]` Closed two leftovers: three contradicting docstrings, and two CHSH half-widths that did not reproduce
+
+*fix · fix:read-count-routes · 2026-09-01T21:59:58Z*
+
+Two items the previous round left open in files this round owns. Both closed.
+
+1. THREE DOCSTRINGS STILL ASSERTED THE INVARIANT THAT WAS THE VULNERABILITY.
+distribute.py's PayloadMap type-alias contract, session.py's phase3-seams section and
+QDSSession.__init__ all still said payload_map is "called once per key round". It has been
+called at every position since the first hardening round, and the parallel channel_monitor text
+HAD been updated, so the repository contradicted itself about the exact invariant the critical
+fix established. All three now say "once per position -- check rounds included", and each says
+what happens to the answer on a check round (read once, then discarded), because that is the
+part this round changed.
+
+2. THE TWO RE-STATED CHSH HALF-WIDTHS DID NOT REPRODUCE, AND ARE NOW DERIVED RATHER THAN
+SAMPLED. PHASE3.md quoted a 99% half-width of 0.36 at 320 CHSH rounds and 0.51 at 160, in two
+places, as prose pinned by no doctest.
+
+  The derivation: on an ideal link each of the four correlators has |E| = 1/sqrt(2), so
+  Var(S) = sum (1 - E^2)/n = 4 * (1/2) / (N/4) = 8/N, and the half-width is
+  z(0.995) * sqrt(8/N) = 2.5758 * sqrt(8/N)
+  = 0.4073 at N = 320 and 0.5760 at N = 160.
+
+  Checked against the sampler over 300 seeds: mean realised half-width 0.4040 at N = 320 and
+  0.5698 at N = 160, so the closed form is right. The shipped 0.36 sits at the 3rd percentile
+  of its own sampling distribution and 0.51 at the 10th -- both were low-tail single draws,
+  exactly as the audit said.
+
+  THE CORRECTION STRENGTHENS THE CONCLUSION IT SUPPORTS. The claim is that CHSH cannot
+  attribute at demo sizing, because the shift 2*sqrt(2)*p = 0.3960 at p = 0.14 is comparable to
+  the half-width. With the correct half-widths the shift is INSIDE the interval at both sample
+  sizes rather than marginally outside one of them. Both places in PHASE3.md now carry the
+  corrected figures and the algebra beside them, so a reader can check the number without
+  running anything.
+
+  This is the sixth wrong prose number this project has shipped. Section 11's D5 note claimed
+  every number in PHASE3.md is reproduced by tests/test_phase3_integration.py; that claim was
+  itself no longer true, so it now names its three exceptions -- section 12's read-count
+  figures (reproduced by the three new tests), section 12's route-H figure (pinned by NO test,
+  because the route is reported rather than fixed), and section 9.4's derived half-widths.
+  Naming the exceptions is worth more than the sentence was.
+
+### `[-]` Mutation table for the three new defences, and route G measured rather than cited
+
+*note · fix:read-count-routes · 2026-09-01T22:35:42Z*
+
+Three one-line reversions, each applied to its own copy of the tree in a scratchpad, each run
+against the WHOLE suite. No mutation ever existed in the repository.
+
+  revert _draw_resource's adoption (D)   RED, 2 failures, and only those two:
+                                           test_no_seam_learns_the_check_set_by_counting_its_own_reads
+                                           test_a_spare_the_watched_adversary_no_longer_finds_the_watched_rounds
+  revert _map_payload's adoption  (E)    RED, 2 failures, a DIFFERENT two:
+                                           test_the_payload_seams_answer_is_read_once_on_both_branches
+                                           test_no_seam_learns_the_check_set_by_counting_its_own_reads
+  revert _call_monitor's consume  (F)    RED, 1 failure:
+                                           test_no_seam_learns_the_check_set_by_counting_its_own_reads
+
+Two things worth keeping from the shapes.
+
+D AND E ARE INDEPENDENTLY NECESSARY, not two spellings of one defence. The spare-the-watched
+test stays GREEN under the payload reversion, because that exploit reads the RESOURCE tally.
+Reverting either one alone leaves a live recovery route; the pair is the defence.
+
+F IS A FAIL-OPEN MUTATION AND LOOKS LIKE NOTHING. One failure, and every JSON-safety test still
+passes, because ChannelSample.__post_init__ still coerces the mapping at the check positions.
+Nothing about the transcript changes. The only thing that moves is WHERE the mapping is read --
+which is the entire signal. That is why the monitor route needed a test of its own instead of
+riding on the JSON tests, and it is the same lesson as the isolation suite's check (a): a
+defence whose removal changes no visible output needs a test that looks at the mechanism.
+
+ROUTE G, RE-MEASURED HERE RATHER THAN CITED. L = 192, cf = 0.25, twelve session seeds. The
+adversary holds resource_factory only, times the gap between its own consecutive calls, and
+nominates the check_count/2 positions per link with the LARGEST gaps -- a rank rule over public
+parameters, no threshold, nothing fitted.
+
+  key round    median 461.0 us   mean 473.7   sd 60.1   n = 671
+  check round  median 657.6 us   mean 668.0   sd 77.2   n =  96
+  precision 0.6667 .. 0.8646 over twelve seeds, mean 0.7665, base rate 0.1250
+
+Two details the audit's range did not carry. The CHECK round is the slower branch -- two
+projective measurements of a two-qubit state cost more than one teleportation plus one
+one-qubit measurement -- so a classifier that guesses the wrong way round scores precision
+0.0000, exactly, on all twelve seeds. And the distributions overlap: 2.2% of key rounds sit
+above the check median, which is why a rank rule forced to nominate the right NUMBER of
+positions lands near 0.77 rather than 1.00.
+
+The units are the argument. The signal is a two-hundred-microsecond difference between two
+branches of a Python loop, modelling physical operations that in hardware are optical events
+six orders of magnitude faster. It is a measurement of the interpreter.
+
+COST OF CLOSING IT, CORRECTED. My first draft of section 12 said "teleport on check rounds too,
+which doubles every session at DEFAULT_PARAMS". Both halves were wrong and the numbers are now
+derived from the medians above.
+
+  (a) Teleporting on check rounds does not EQUALISE anything -- the check round would then do a
+      teleportation AND two wing measurements, strictly more than a key round. Equalisation
+      means every position performing the UNION of both branches.
+  (b) DEFAULT_PARAMS has check_fraction = 0.0. It reserves no check rounds, so route G does not
+      arise there at all. The security-grade set with check rounds is CHECKED_PARAMS,
+      L = 131664, f = 0.125.
+
+  per position now (f = 0.125)   0.875*461 + 0.125*658 = 486 us
+  per position equalised         <= 461 + 658 = 1119 us   (upper bound; basis draw double-counted)
+  CHECKED_PARAMS session         526656 hops: 4.3 min -> 9.8 min
+
+Checkable end to end: the same arithmetic at f = 0.25 predicts 510 us per position and 392 ms
+per session, against 385 ms measured over five seeded runs.
+
+THE ADOPTION ITSELF COSTS NOTHING MEASURABLE. Five seeded L = 192 runs, median 0.3875 s before
+and 0.3847 s after with check rounds, 0.3659 s before and 0.3703 s after without -- differences
+smaller than the run-to-run spread, in both directions. A 2- or 4-element array copy per hop.

@@ -69,6 +69,11 @@ from sih141.protocol import (
     ideal_resource,
 )
 from sih141.core.paulis import PauliBasis
+from sih141.protocol.checkrounds import draw_check_plan
+from sih141.protocol.distribute import (
+    _adopt_state,
+    distribute_to_recipient_with_checks,
+)
 
 SEED = 20260141
 """Base seed for key generation; distribution uses ``SEED + _DIST_OFFSET``."""
@@ -1141,3 +1146,139 @@ def test_resource_context_is_frozen_and_made_of_plain_values() -> None:
         1,
         7,
     )
+
+
+# --------------------------------------------------------------------------- #
+# What the protocol DOES with what a seam returned                             #
+#                                                                              #
+# The seams above are called identically on both branches. That is necessary   #
+# and it is not sufficient: with the calls equalised, what the loop then did    #
+# with the returned object still differed, and a seam returning an instrumented #
+# state read the check set off its own tally. This is the distribute-level half #
+# of that -- the payload seam, whose answer used to be read by teleport() on a  #
+# key round and by nothing at all on a check round. The resource seam's half is #
+# only visible with the session's channel tap in place, and lives in            #
+# tests/test_protocol_session.py alongside the monitor's.                       #
+# --------------------------------------------------------------------------- #
+
+
+class _CountingStatevector(Statevector):
+    """A pure state that tallies every read of its amplitudes.
+
+    A subclass rather than a wrapper so that it passes every ``isinstance``
+    check and every coercion the protocol makes: what is being measured is the
+    protocol's read pattern, not a rejection path.
+    """
+
+    def __init__(self, data: object, tally: Counter, position: int) -> None:
+        super().__init__(data)
+        object.__setattr__(self, "_tally", tally)
+        object.__setattr__(self, "_position", position)
+
+    @property
+    def data(self) -> object:  # noqa: D102 -- overrides a qiskit property
+        self._tally[self._position] += 1
+        return self._data
+
+
+def test_the_payload_seams_answer_is_read_once_on_both_branches() -> None:
+    """Being *used* was the signal, once being *called* stopped being one.
+
+    ``_map_payload`` is called at every position, check rounds included. Its
+    answer, though, was read by :func:`~sih141.core.teleport.teleport` on a key
+    round and by nothing at all on a check round, so a map returning an
+    instrumented state saw a tally of ``1`` at exactly the signing positions
+    and ``0`` at exactly the watched ones -- the whole check set, complemented,
+    in one pass. It is now adopted the moment it is returned, so the tally is
+    ``1`` everywhere.
+
+    Asserted here without the session, because the leak is in this module's own
+    loop: one link, one message bit, one plan.
+    """
+    params = _params(64, check_fraction=0.25)
+    plan = draw_check_plan(params, rng=np.random.default_rng(SEED + 90))
+    key = _key(params)
+    tally: Counter = Counter()
+
+    def payload(state: object, context: ResourceContext) -> Statevector:
+        return _CountingStatevector(
+            Statevector(state).data, tally, context.position
+        )
+
+    distribute_to_recipient_with_checks(
+        key,
+        params,
+        party=Party.BOB,
+        payload_map=payload,
+        check_plan=plan,
+        rng=np.random.default_rng(SEED + 91),
+    )
+
+    watched = set(plan.rounds_by_position(Party.BOB))
+    assert watched, "the plan must designate something for this link"
+    assert set(tally) == set(range(params.key_length))
+    assert set(tally.values()) == {1}, (
+        f"the payload seam's answer is read {sorted(set(tally.values()))} "
+        f"times depending on the position, so its read tally is the check set: "
+        f"{sorted(position for position in tally if tally[position] == 0)}"
+    )
+
+    # Positive control on the same instrument and the same plan: a tally with
+    # the pre-fix shape must give the check set back exactly, so a probe that
+    # has quietly stopped counting cannot pass the assertion above.
+    pre_fix = Counter(
+        {
+            position: (0 if position in watched else 1)
+            for position in range(params.key_length)
+        }
+    )
+    assert {
+        position for position in pre_fix if pre_fix[position] == 0
+    } == watched
+
+
+def test_adopt_state_keeps_the_state_and_drops_the_object() -> None:
+    """The adoption must be invisible to the physics and total for the object.
+
+    Three properties, and all three are load-bearing. The numbers survive, or
+    every attack this project measures would change. The representation
+    survives -- a pure state stays a :class:`~qiskit.quantum_info.Statevector`
+    -- because that is :func:`~sih141.core.teleport.teleport`'s exact fidelity
+    path for a pure payload, and silently moving honest runs off it would be a
+    change of physics disguised as a change of plumbing (D1). And the returned
+    object shares no memory with the one handed in, which is what makes the
+    read tally a constant and, incidentally, stops a seam writing through to a
+    pair it has already delivered.
+    """
+    pair = ideal_resource()
+    adopted = _adopt_state(pair)
+    assert isinstance(adopted, Statevector) and adopted is not pair
+    assert np.allclose(adopted.data, pair.data)
+    assert adopted.dims() == pair.dims()
+
+    mixed = _werner(0.3)
+    adopted_mixed = _adopt_state(mixed)
+    assert isinstance(adopted_mixed, DensityMatrix)
+    assert np.allclose(adopted_mixed.data, mixed.data)
+    assert adopted_mixed.dims() == mixed.dims()
+
+    # No shared memory in either representation.
+    adopted.data[0] = 0.0
+    adopted_mixed.data[0, 0] = 0.0
+    assert np.allclose(ideal_resource().data, pair.data)
+    assert np.allclose(_werner(0.3).data, mixed.data)
+
+    # Exactly one read, whatever the representation.
+    tally: Counter = Counter()
+    _adopt_state(_CountingStatevector(pair.data, tally, 0))
+    assert tally == Counter({0: 1})
+
+    # A raw array is adopted too -- a seam may return one (D1) and an ndarray
+    # subclass can count reads as readily as a state can.
+    raw = _adopt_state([1.0, 0.0])
+    assert isinstance(raw, np.ndarray) and raw.dtype == np.complex128
+
+    # Anything that is not a state at all passes through untouched, so the
+    # validator downstream still produces its own message rather than one here.
+    sentinel = object()
+    assert _adopt_state(sentinel) is sentinel  # type: ignore[arg-type]

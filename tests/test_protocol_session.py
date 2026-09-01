@@ -38,7 +38,19 @@ tested here is everything that only exists once the phases are composed:
    three directions: what the monitor is called on, what the transcript carries,
    and what a hand-edited transcript claiming a key position does when it is
    read back.
-6. **Phase order and single use.** Every out-of-order call is refused with a
+6. **What the seams can infer about the check set.** Calling every seam at every
+   position was not enough on its own: the protocol then *read* what came back a
+   different number of times on the two branches, so an adversary returning an
+   instrumented object recovered the whole check set from its own read tally at
+   precision ``1.0``. Every seam's answer is now adopted at the boundary, and
+   the tests here drive all three seams at once, assert the tally is flat, and
+   run an end-to-end spare-the-watched exploit that used to take a channel
+   attack from detected to invisible. Both carry a control against the way this
+   family of test fails silently: the tally test scores a synthetic pre-fix
+   tally and requires the check set back, and the exploit test pins the
+   *unspared* arm's published QBER and key damage, so an adversary that has
+   quietly stopped attacking cannot pass by leaving nothing to detect.
+7. **Phase order and single use.** Every out-of-order call is refused with a
    message naming the call that would fix it, and a session distributes once and
    signs once.
 
@@ -64,6 +76,8 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from collections import Counter
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
@@ -2797,6 +2811,376 @@ def test_the_channel_monitor_is_never_called_without_check_rounds() -> None:
     assert not transcript.channel_monitored
     # And an unchecked run is unchanged by the monitor being there at all.
     assert transcript == _session(_params(24)).run(0)
+
+
+# ==========================================================================
+# The check set, and the read counts that used to publish it
+# ==========================================================================
+#
+# Equalising how often each seam is CALLED closed one family of leaks and
+# promoted the next: what the protocol then DID with what a seam returned still
+# differed between the branches. A resource was read once on a key round and
+# twice on a check round, a mapped payload once and not at all, and the
+# monitor's mapping was iterated only where a sample was built. All three
+# tallies recovered the whole check set -- precision 1.0, recall 1.0, no
+# statistics -- for an adversary who returned an instrumented object and
+# counted. The three seams are held by one declared adversary, so they are
+# driven together here, the way tests/test_protocol_checkrounds.py's
+# test_the_factory_cannot_tell_a_check_round_from_a_key_round drives their call
+# sequences together.
+#
+# One route in this family is deliberately NOT closed and is not tested here:
+# the wall-clock gap between the branches. It is out of the simulator's scope,
+# argued in docs/PHASE3.md section 12, and it leaves the named assumption
+# (NO-TIMING) on every check-round statistic this project publishes.
+
+
+class _CountingStatevector(Statevector):
+    """A pure state that tallies every read of its amplitudes.
+
+    The instrument the whole section is built on, and the reason it is a
+    subclass rather than a wrapper: it has to pass every ``isinstance`` check
+    and every coercion the protocol makes, so that what is measured is the
+    protocol's own read pattern and not a rejection path.
+    """
+
+    def __init__(
+        self, data: Any, tally: Counter[Any], hop: Any
+    ) -> None:
+        super().__init__(data)
+        object.__setattr__(self, "_tally", tally)
+        object.__setattr__(self, "_hop", hop)
+
+    @property
+    def data(self) -> Any:  # noqa: D102 -- overrides a qiskit property
+        self._tally[self._hop] += 1
+        return self._data
+
+
+class _CountingDensityMatrix(DensityMatrix):
+    """The same instrument for a mixed state. Same reason it is a subclass."""
+
+    def __init__(
+        self, data: Any, tally: Counter[Any], hop: Any
+    ) -> None:
+        super().__init__(data)
+        object.__setattr__(self, "_tally", tally)
+        object.__setattr__(self, "_hop", hop)
+
+    @property
+    def data(self) -> Any:  # noqa: D102 -- overrides a qiskit property
+        self._tally[self._hop] += 1
+        return self._data
+
+
+class _CountingMapping(Mapping):
+    """A monitor result that tallies every iteration of itself."""
+
+    def __init__(
+        self, payload: dict[str, Any], tally: Counter[Any], hop: Any
+    ) -> None:
+        self._payload = payload
+        self._tally = tally
+        self._hop = hop
+
+    def __getitem__(self, key: str) -> Any:
+        return self._payload[key]
+
+    def __iter__(self) -> Any:
+        self._tally[self._hop] += 1
+        return iter(self._payload)
+
+    def __len__(self) -> int:
+        return len(self._payload)
+
+
+def _nominate(counts: dict[int, int], length: int) -> set[int]:
+    """Return the positions an adversary reading ``counts`` would call watched.
+
+    The check set is the minority (``check_fraction < 1/2``), so a read tally
+    that separates the branches at all separates them into a small class and a
+    large one, and the small class is the check set. When every position lands
+    in one class there is nothing to separate and the best available strategy
+    is to nominate everything -- which scores exactly the base rate, and is
+    what "no better than chance" means as a number.
+
+    Parameters
+    ----------
+    counts : dict
+        Position to read count, for one link of one message bit.
+    length : int
+        ``L``, so that the degenerate answer is the whole range.
+
+    Returns
+    -------
+    set of int
+        The nominated positions.
+    """
+    classes: dict[int, set[int]] = {}
+    for position, count in counts.items():
+        classes.setdefault(count, set()).add(position)
+    if len(classes) == 1:
+        return set(range(length))
+    return min(classes.values(), key=len)
+
+
+def _score_against_plans(
+    tally: Counter[Any], session: QDSSession, params: ProtocolParams
+) -> tuple[float, float, set[int]]:
+    """Score a read tally against the plans the session actually drew.
+
+    Parameters
+    ----------
+    tally : collections.Counter
+        Keyed by ``(party, message_bit, position)``.
+    session : QDSSession
+        The run that produced it, read for its plans **after** the fact. This
+        is the labelled harness of §8: the adversary never sees it.
+    params : ProtocolParams
+        For ``L``.
+
+    Returns
+    -------
+    tuple
+        Precision, recall, and the set of distinct read counts observed.
+    """
+    hits = nominated = watched = 0
+    classes: set[int] = set()
+    for bit, plan in session.check_plans.items():
+        for party in VERIFIERS:
+            counts = {
+                position: tally[(party, bit, position)]
+                for position in range(params.key_length)
+            }
+            classes.update(counts.values())
+            truth = set(plan.positions_for(party))
+            guess = _nominate(counts, params.key_length)
+            hits += len(guess & truth)
+            nominated += len(guess)
+            watched += len(truth)
+    return (
+        hits / nominated if nominated else 0.0,
+        hits / watched if watched else 0.0,
+        classes,
+    )
+
+
+def test_no_seam_learns_the_check_set_by_counting_its_own_reads() -> None:
+    """Every seam's answer is read the same number of times on both branches.
+
+    The load-bearing test of the read-count family, and the companion to
+    ``test_the_factory_cannot_tell_a_check_round_from_a_key_round``, which says
+    the same thing about *calls*. All three channel-side seams return
+    instrumented objects at once, because one adversary holds all three and the
+    check set is recovered if **any** of the three tallies separates the
+    branches.
+
+    Two assertions, and the second is the one that means something. The
+    structural one: each seam's tally has exactly one distinct value, so there
+    is no minority class to nominate. The operational one: an adversary scoring
+    that tally lands on the per-link base rate ``check_fraction / 2``, which is
+    what an adversary who nominates blindly gets and therefore what "learned
+    nothing" is worth as a number.
+
+    The positive control at the end is not decoration. A probe that has stopped
+    measuring anything -- a subclass whose property no longer overrides, a
+    tally keyed on something that never varies -- would satisfy both assertions
+    above trivially, and that is exactly the failure the Phase 3 audit found in
+    the D6 isolation check. So the same scorer is run over a tally with the
+    *pre-fix* shape, built from the plans this very run drew, and it must
+    recover the whole set.
+    """
+    params = _checked(64, 0.25)
+    resource_reads: Counter[Any] = Counter()
+    payload_reads: Counter[Any] = Counter()
+    monitor_reads: Counter[Any] = Counter()
+
+    def hop(context: ResourceContext) -> tuple[Party, int, int]:
+        return (context.party, context.message_bit, context.position)
+
+    def factory(context: ResourceContext) -> Statevector:
+        return _CountingStatevector(
+            bell_state(BellState.PHI_PLUS).data, resource_reads, hop(context)
+        )
+
+    def payload(state: Any, context: ResourceContext) -> Statevector:
+        return _CountingStatevector(
+            Statevector(state).data, payload_reads, hop(context)
+        )
+
+    def monitor(resource: Any, context: ResourceContext) -> Mapping[str, Any]:
+        return _CountingMapping({"seen": 1}, monitor_reads, hop(context))
+
+    session = _session(
+        params,
+        seed=SEED + 71,
+        resource_factory=factory,
+        payload_map=payload,
+        channel_monitor=monitor,
+    )
+    session.distribute()
+
+    hops = 2 * len(VERIFIERS) * params.key_length
+    for name, tally in (
+        ("resource_factory", resource_reads),
+        ("payload_map", payload_reads),
+        ("channel_monitor", monitor_reads),
+    ):
+        precision, recall, classes = _score_against_plans(
+            tally, session, params
+        )
+        # Every position was actually instrumented, so a flat tally is a
+        # measurement and not an empty one.
+        assert len(tally) == hops, f"{name} was not offered every position"
+        assert classes == {1}, (
+            f"{name}'s answer is read {sorted(classes)} times depending on the "
+            f"position, and the read count is therefore a channel: an "
+            f"adversary returning an instrumented object reads the check set "
+            f"off its own tally. See sih141.protocol.distribute's "
+            f"check-round-lockstep note."
+        )
+        # The base rate is per LINK, so it is half the check fraction: the plan
+        # reserves ``check_count`` positions for the run and deals them between
+        # the two links, and a link measures only its own
+        # (:ref:`sih141.protocol.checkrounds <check-round-links>`).
+        base_rate = params.check_fraction / len(VERIFIERS)
+        assert precision == pytest.approx(base_rate), (
+            f"{name}'s tally moved the posterior off the {base_rate} base "
+            f"rate to {precision}"
+        )
+        assert recall == pytest.approx(1.0)
+
+    # Positive control: the scorer above, on a tally shaped the way the code
+    # used to produce -- one read at a key position, two at a check one.
+    pre_fix: Counter[Any] = Counter()
+    for bit, plan in session.check_plans.items():
+        for party in VERIFIERS:
+            watched = set(plan.positions_for(party))
+            for position in range(params.key_length):
+                pre_fix[(party, bit, position)] = (
+                    2 if position in watched else 1
+                )
+    precision, recall, classes = _score_against_plans(
+        pre_fix, session, params
+    )
+    assert (precision, recall) == (1.0, 1.0) and classes == {1, 2}
+
+
+def test_a_spare_the_watched_adversary_no_longer_finds_the_watched_rounds() -> None:
+    """The consequence, end to end: the published QBER tracks the key damage.
+
+    The inference above is only worth closing because of what it bought. This
+    adversary holds ``resource_factory`` and ``payload_map`` -- both are the
+    declared channel-side seams -- and attacks every position with a Werner
+    pair of strength ``1/2``. Its payload map, called for the same hop a
+    moment later, asks whether the pair it just handed over has been read yet;
+    before the fix the only reader at that instant was the ``ChannelSample``
+    the tap builds, so a read meant *check round*, and the map wrote the clean
+    amplitudes back into the pair, in place, before the round measured it.
+
+    Measured against the code as it stood at commit ``adee91b``, at these exact
+    parameters and this exact seed:
+
+    ========================  ===================  ===================
+    quantity                  before               after
+    ========================  ===================  ===================
+    published QBER, unspared  ``19/48``            ``19/48``
+    published QBER, sparing   ``0/48``             ``19/48``
+    key damage, either arm    ``11/52``/``18/62``  ``11/52``/``18/62``
+    positions nominated       ``96``               ``768``
+    precision, recall         ``1.0``, ``1.0``     ``0.125``, ``1.0``
+    ========================  ===================  ===================
+
+    So the exploit used to take the attack from *detected and attributed* to
+    *neither*, with bit-identical key damage; it now takes it nowhere. The
+    ``0.125`` it scores afterwards is the per-link base rate,
+    ``check_fraction / 2`` -- the adversary nominates every position, because
+    it can no longer tell them apart, and nominating everything scores the
+    prior.
+
+    The counts are pinned rather than estimated. ``19/48`` is one seeded run of
+    a 48-round sample whose expectation is ``p / 2 = 0.25``, so the level
+    carries a wide interval and is not the claim; the claim is the
+    **difference** between the two arms of the comparison, which is what the
+    assertions state. Sparing must not change the published QBER, and it must
+    not change the key damage either -- the second is what says the adversary
+    really did attack, rather than quietly doing nothing.
+    """
+    params = _checked(192, 0.25)
+    ideal = DensityMatrix(bell_state(BellState.PHI_PLUS)).data
+
+    class SpareTheWatched:
+        """Attack every position; undo it on the ones that turn out watched."""
+
+        def __init__(self, *, spare: bool) -> None:
+            self.spare = spare
+            self.reads: Counter[Any] = Counter()
+            self.live: dict[Any, Any] = {}
+            self.nominated: set[Any] = set()
+
+        def resource(self, context: ResourceContext) -> DensityMatrix:
+            hop = (context.party, context.message_bit, context.position)
+            pair = _CountingDensityMatrix(_werner(0.5), self.reads, hop)
+            self.live[hop] = pair
+            return pair
+
+        def payload(self, state: Any, context: ResourceContext) -> Any:
+            if self.spare:
+                hop = (context.party, context.message_bit, context.position)
+                if self.reads[hop] > 0:
+                    self.live[hop]._data[:, :] = ideal
+                    self.nominated.add(hop)
+            return state
+
+    def run(*, spare: bool) -> tuple[SpareTheWatched, QDSSession, Any]:
+        attack = SpareTheWatched(spare=spare)
+        session = _session(
+            params,
+            seed=SEED + 72,
+            resource_factory=attack.resource,
+            payload_map=attack.payload,
+        )
+        return attack, session, session.run(0)
+
+    def published_qber(transcript: Any) -> tuple[int, int]:
+        rounds = [
+            observation
+            for log in transcript.check_logs
+            for observation in log.qber
+        ]
+        return sum(int(item.is_error) for item in rounds), len(rounds)
+
+    def damage(transcript: Any) -> tuple[tuple[str, int, int], ...]:
+        return tuple(
+            (result.party.value, result.mismatches, result.matched_count)
+            for result in transcript.results
+        )
+
+    plain_attack, _, plain = run(spare=False)
+    sparing_attack, sparing_session, sparing = run(spare=True)
+
+    # The attack is real and visible on both arms of the comparison.
+    assert published_qber(plain) == (19, 48)
+    assert damage(plain) == (("Bob", 11, 52), ("Charlie", 18, 62))
+
+    # And trying to hide from the check rounds achieves exactly nothing.
+    assert published_qber(sparing) == published_qber(plain)
+    assert damage(sparing) == damage(plain)
+    assert set(plain_attack.reads.values()) == {1}
+    assert set(sparing_attack.reads.values()) == {1}
+
+    # It nominated every position, which is the shape of learning nothing.
+    hops = 2 * len(VERIFIERS) * params.key_length
+    assert len(sparing_attack.nominated) == hops
+    watched = {
+        (party, bit, position)
+        for bit, plan in sparing_session.check_plans.items()
+        for party in VERIFIERS
+        for position in plan.positions_for(party)
+    }
+    assert len(watched & sparing_attack.nominated) / hops == pytest.approx(
+        params.check_fraction / len(VERIFIERS)
+    )
 
 
 def test_monitor_output_is_coerced_to_json_leaves() -> None:

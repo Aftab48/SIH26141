@@ -5,6 +5,10 @@ measured at, the isolation convention that makes those measurements mean anythin
 detector signals Phase 4 will consume, the replay defence and its real price, the
 check-round sampling design, and every limitation the phase found.
 
+**Before quoting a check-round number from here, read §12.** It states the one boundary of
+what this simulator models, and the one assumption — **(NO-TIMING)** — that every check-round
+statistic in §4 and §8 is conditioned on.
+
 Status: complete. **Not one adversary needed a protocol edit to be mounted**, which is what
 the Phase 2 seams were for. Mounting and *measuring* are not the same thing, though, and one
 gap turned up between them — §2b. Five things did change in `sih141/protocol/`, and none of them is
@@ -63,6 +67,22 @@ doubled — at `L = 384, cf = 0.5` the two links' 99% QBER intervals are now dis
 session seeds in eight, where before they were disjoint on eight of eight. Nothing else moved:
 an honest run's records, verdicts and unchecked transcript are **byte-identical** to the
 pre-fix code at the same seed (§10).
+
+**Item 1 needed a second round, and this is the record of it.** Equalising how often each
+seam was *called* closed the three routes the audit named and promoted four more, because it
+had not equalised what the protocol then *did* with what a seam returned. An independent
+re-measurement against `adee91b` recovered the whole check set again — precision `1.0000`,
+recall `1.0000` — from the resource seam's read count, the payload seam's read count and the
+monitor mapping's iteration count, and a fourth time from wall-clock timing alone. The three
+read-count routes are now closed by adopting each seam's answer at the boundary, so every seam
+is read exactly once at every position; the timing route is **not** closed, is out of the
+simulator's scope by an argument set out in full in §12, and carries the named assumption
+**(NO-TIMING)** that every check-round statistic in this document depends on. Closing the three
+turned up an eighth route — a malformed payload raises on a key round and is discarded on a
+check round, so "did the run survive" is the branch — which is reported rather than fixed, with
+its threat model and its one-line remedy, in §12. Nothing an honest or an attacked run computes
+changed: transcripts, verdicts, check logs and adversary logs are byte-identical to `adee91b`
+at every seed tried, honest, monitored and attacked.
 
 ---
 
@@ -313,10 +333,12 @@ The two check-log intervals are disjoint at 99%, so **Phase 4 can name the compr
   its price.** At `L = 96` the same attack is plainly detected on Bob's link and the two 99%
   intervals still *overlap*, so a detector could not name the party; at `L = 384, cf = 0.5`
   they now overlap on 2 seeds in 8, where before the deal they were disjoint on all 8. The
-  CHSH arm cannot attribute at demo sizing at all — at `p = 0.14` the shift in `S` is `2√2·p ≈
-  0.4`, against a 99% half-width of `0.36` at 320 CHSH rounds and `0.51` at 160, and 160 is
-  what a run delivering 320 before the deal delivers now. `required_check_rounds` sizes the
-  arm to resolve `2·s_a` at `L = 115200`; anything smaller has to say what it can resolve.
+  CHSH arm cannot attribute at demo sizing at all — at `p = 0.14` the shift in `S` is
+  `2√2·p = 0.3960`, against a 99% half-width of `z(0.995)·√(8/N)`, which is `0.4073` at 320
+  CHSH rounds and `0.5760` at 160, and 160 is what a run delivering 320 before the deal
+  delivers now. The shift is inside the interval at both sizes (§9.4 carries the derivation
+  and the correction to two earlier figures). `required_check_rounds` sizes the arm to resolve
+  `2·s_a` at `L = 115200`; anything smaller has to say what it can resolve.
 
 ---
 
@@ -660,6 +682,9 @@ adversary is independent of.
 ## 8. Detector signals for Phase 4
 
 Everything here is reachable from `SessionTranscript` unless the last column says otherwise.
+The three check-round rows — per-link QBER, per-link CHSH and the `ChannelSample` summaries —
+carry the **(NO-TIMING)** assumption of §12; the rest read the key rather than the sample and
+do not.
 
 | Statistic | Honest | Under attack | Reachable |
 | --- | --- | --- | --- |
@@ -736,11 +761,19 @@ Three requests could not be made reachable, and each is a design fact rather tha
    channel adversaries act on one leg and leave it `True` on every round. It is a detector for
    damping or replacement — its docstring's worked example is a split product state — and its
    docstring now says so.
-4. **CHSH cannot attribute at demo check sizing.** `dS = 2√2·p` is only about `0.4` at
-   `p = 0.14`, against a 99% half-width of `0.36` at 320 CHSH rounds and `0.51` at 160. A
-   sample-size fact, but any Phase 4 attribution built on CHSH needs the full-scale sample and
-   must say so — and the per-link deal (§4) halved the rounds a given run puts on each link,
-   so the number to compare against is the one at half the rounds you used to get.
+4. **CHSH cannot attribute at demo check sizing.** `dS = 2√2·p` is only `0.3960` at
+   `p = 0.14`, against a 99% half-width of `0.4073` at 320 CHSH rounds and `0.5760` at 160 —
+   so the shift is *inside* the interval at both sizes, not merely comparable to it. Those two
+   half-widths are **derived, not sampled**: on an ideal link each of the four correlators has
+   `|E| = 1/√2`, so `Var(S) = Σ (1 − E²)/n = 4·(1/2)/(N/4) = 8/N` and the half-width is
+   `z(0.995)·√(8/N) = 2.5758·√(8/N)`. An earlier revision of this line quoted `0.36` and `0.51`
+   from single runs; over 300 seeds the realised half-width has mean `0.4040` at `N = 320` and
+   `0.5698` at `N = 160`, and `0.36` sits at the 3rd percentile of its distribution while
+   `0.51` sits at the 10th. The correction moves the conclusion in the direction the
+   conclusion already went. It is a sample-size fact, but any Phase 4 attribution built on
+   CHSH needs the full-scale sample and must say so — and the per-link deal (§4) halved the
+   rounds a given run puts on each link, so the number to compare against is the one at half
+   the rounds you used to get.
 5. **Measured CHSH routinely lands above Tsirelson at demo sample sizes** — `3.0425` on a clean
    link over 480 rounds, `2.8410` over 8000. `estimate_chsh` clips only at the algebraic bound,
    which is right, but a Phase 6 dashboard rendering `S = 3.04` next to `ideal 2.83` will read
@@ -776,6 +809,16 @@ Three requests could not be made reachable, and each is a design fact rather tha
     number a deployment sets, and `draw_check_plan(..., parties=None)` is a documented way
     back to the coupled full-sample plan for anyone who prefers the old arithmetic to the
     second line of defence.
+11. **The check set is still inferable from timing, and that route is out of scope rather
+    than closed.** A check round measures both wings; a key round teleports and measures one,
+    so the two take different wall-clock times and a seam that timed its own consecutive calls
+    classified the branch with no instrumentation at all. Six other routes to the same
+    knowledge were found and closed; this one is not, because this simulator models
+    information flow and not physical execution, and closing it in code would double every
+    session for a gap that would shrink rather than vanish. The full argument, what it costs
+    and the named assumption **(NO-TIMING)** it leaves behind are §12 — the one limitation on
+    this list with a section of its own, because it conditions every check-round number in
+    §4 and §8.
 
 ### One reported disagreement, resolved
 
@@ -801,9 +844,13 @@ was the protocol gap of §2b, and it is now measured and agrees.
 ## 10. Mutation checks
 
 A defence with no test that fails when it is removed is not tested. Each mutation switches one
-defence off surgically and runs the tests. The last five were applied to **copies** of the tree
-in a scratchpad and run there, so no mutation ever existed in the repository; the first three
-were applied in place and each site verified byte-identical afterwards.
+defence off surgically and runs the tests. All but the first three were applied to **copies**
+of the tree in a scratchpad and run there, so no mutation ever existed in the repository; the
+first three were applied in place and each site verified byte-identical afterwards.
+
+The last three rows are the second hardening round's, and each is a **one-line** reversion —
+which is the point of closing these routes at the boundary rather than by balancing counts
+across two code paths. Each was run against the whole suite.
 
 | Defence disabled | Mutation | Result |
 | --- | --- | --- |
@@ -815,6 +862,9 @@ were applied in place and each site verified byte-identical afterwards.
 | the channel monitor's every-position call | `_ChannelTap.__call__` invokes the seam only where it records a sample | **RED** — 6 failures on the *whole* suite and only those six, including `test_the_channel_monitor_is_called_on_every_position` and `test_an_observing_seam_changes_the_call_count_and_nothing_else`. Exactly one of them is in the isolation suite, because no adversary row mounts on the monitor — which is why the lockstep assertion has to exist beside the rows and not only inside them |
 | the per-link deal | `draw_check_plan`'s `parties` defaults back to `None`, so both links run the same plan | **RED** — 12 failures over the six seam files and the three protocol modules' doctests, including `test_the_two_links_do_not_watch_the_same_positions` and `test_retained_positions_are_bit_identical_to_an_unchecked_run` |
 | **the payload seam and the per-link deal, together** | the payload-seam mutation and the per-link-deal mutation applied to one copy | **RED**, and this is the row that says why there are two defences. Neither single reversion brings the spare-the-watched exploit back — with the deal in force, the positions the payload seam offers on Bob's link already cover Charlie's whole check set; with the seam offering everything, there is nothing to spare. Reverted together, `test_sparing_the_watched_no_longer_separates_published_from_real` fails with the audit's own shape: published QBER `0.0000` on the spared arm against `0.3333` naive, over a key damaged identically in both |
+| the **resource** seam's answer being adopted (route D) | `_draw_resource` returns the factory's own object instead of `_adopt_state(resource)` | **RED** — 2 failures on the whole suite and only those two: `test_no_seam_learns_the_check_set_by_counting_its_own_reads` (the tally splits into `{2, 3}` with a monitor installed, `{1, 2}` without) and `test_a_spare_the_watched_adversary_no_longer_finds_the_watched_rounds`, whose sparing arm goes straight back to `0/48` published over the identical `11/52` and `18/62` of key damage. One line, and the whole spare-the-watched exploit is live again |
+| the **payload** seam's answer being adopted (route E) | `_map_payload` returns the map's own object instead of `_adopt_state(mapped)` | **RED** — 2 failures, and a different two: `test_the_payload_seams_answer_is_read_once_on_both_branches` and the tally test again. The spare-the-watched test stays green, correctly — that exploit reads the *resource* tally, so this row and the one above are independently necessary rather than two spellings of one defence |
+| the **monitor** mapping being consumed every hop (route F) | `_call_monitor` returns the seam's mapping raw instead of `_as_json_value(returned, "extra")` | **RED** — 1 failure, `test_no_seam_learns_the_check_set_by_counting_its_own_reads`. Exactly one, and that is the shape a fail-*open* mutation should have: `ChannelSample.__post_init__` still coerces the mapping at the check positions, so every JSON-safety test still passes and nothing looks wrong — the only thing that changed is *where* the mapping is read, which is the entire signal. It is also why the monitor route needs a test of its own rather than riding on the JSON tests |
 | the session a channel isolation probe runs | `_channel_session` deletes its `session_seed` and pins `rng=default_rng(4242)` | **RED** — 1 failure, `test_the_channel_probes_vary_the_session_they_run`. It earns a row because **before the two fixes were reconciled the same mutation left the whole suite green**: it is the third probe trap of §7, and the one that costs a row half its meaning without turning anything red |
 
 The honest path is the other half of a mutation check and is asserted the same way. An honest
@@ -860,16 +910,225 @@ comes from `ProtocolParams` and was fixed before any run started.
 
 **D5 — load-bearing numbers in doctests.** `pyproject` runs `--doctest-modules` over `sih141`,
 so every numeric claim written as an executable example is a live test. The numbers in *this*
-document are prose and are therefore **not** checked by the suite — every one of them is
-reproduced by `tests/test_phase3_integration.py`, which is, and which is where a reader should
-check them.
+document are prose and are therefore **not** checked by the suite — they are reproduced by
+`tests/test_phase3_integration.py`, which is, and which is where a reader should check them.
+Four exceptions, named so that the sentence above stays true. §12's read-count and
+spare-the-watched figures are reproduced by
+`test_no_seam_learns_the_check_set_by_counting_its_own_reads`,
+`test_the_payload_seams_answer_is_read_once_on_both_branches` and
+`test_a_spare_the_watched_adversary_no_longer_finds_the_watched_rounds`. §12's route-H figure
+is reproducible from the probe, parameters and seed printed beside it, and is pinned by **no**
+test, because that route is reported rather than fixed. §12's route-G timing and equalisation-cost figures are pinned by
+no test **and cannot be** — a wall-clock assertion is an assertion about the machine, and would
+be flaky by construction. §9.4's two CHSH half-widths are **derived** — the algebra is printed with them —
+and the 300-seed distribution quoted against them is a measurement made once, for the
+correction, and not re-run by the suite.
 
 **D6 — attacks own their randomness.** §7. This is the convention Phase 3 added, and it is the
 one the whole phase's arithmetic rests on.
 
 ---
 
-## 12. Cost
+## 12. What this simulator models, and the one claim that is conditioned on it
+
+**Read this before quoting any check-round number from §4 or §8.**
+
+`sih141` models the protocol's **information flow**. It does not model its physical execution.
+Nothing in the package represents wall-clock timing, power draw, electromagnetic emission,
+photon number, detector dead time or apparatus temperature, and no claim in this document, in
+Phase 4 or in Phase 5 is about any of them. That boundary is not drawn here for convenience:
+it is the same boundary that already puts power analysis, detector blinding and
+photon-number-splitting outside the threat model, none of which this package pretends to
+reason about either. What is new is that one side channel **inside** the harness was found,
+measured, and is being left open on purpose — so the boundary has to be stated where a reader
+will meet it, rather than inferred from the absence of a section.
+
+### The eight routes, and where each one ended up
+
+An adversary who learns which positions are check rounds can spare exactly those and corrupt
+the rest: the published QBER goes to zero over a key that is damaged just as badly. Seven
+routes to that knowledge were found across two hardening rounds, and an eighth turned up while
+the second round was closing the others. Six are closed; two are open and each is open for its
+own reason, set out below the table.
+
+| | Route | How it worked | Status |
+| --- | --- | --- | --- |
+| A | `payload_map` call gaps | the seam was called on key rounds only, so its call gaps *were* the check set | **closed** — called at every position |
+| B | `channel_monitor` invocation | called on check rounds only, so *being called* was the whole signal | **closed** — called at every position |
+| C | `resource_factory` call gaps | the same shape on the third seam | **closed** — was already called everywhere; re-verified |
+| D | resource read-count | with the calls equal, the returned pair was read **once** on a key round and **twice** on a check round | **closed** — read once, adopted, and never touched again |
+| E | payload read-count | the mapped payload was read by `teleport` on a key round and by nothing on a check round: *being used* replaced *being called* | **closed** — same adoption |
+| F | monitor mapping consumed | the mapping was **iterated** only where a `ChannelSample` was built | **closed** — consumed at every hop, in `_call_monitor` |
+| G | **timing** | a check round measures both wings; a key round teleports and measures one. The wall-clock gap between consecutive seam calls classifies the branch, with no instrumentation of any kind | **open, and out of scope — this section** |
+| H | **the raise oracle** | a malformed payload — a two-qubit state where one is expected — makes `teleport` raise on a key round and is silently discarded on a check round, so *whether the run survived* is the branch. One bit per run, exact | **open, reported not fixed — below** |
+
+D, E and F each recovered the whole set at precision `1.0000` and recall `1.0000` against a
+per-link base rate of `0.1250`, in one pass, with no statistics: an adversary returned an
+object that counted how often the protocol read it. They are closed by construction rather
+than by balancing the counts — each seam's answer is copied into an object the protocol owns
+the moment it is returned, so the tally is `1` at every position of every link, and a constant
+carries no bits. The copies are a `2`- or `4`-element array per hop and cost nothing
+measurable: five seeded `L = 192` runs, median `0.3875 s` before and `0.3847 s` after with
+check rounds, `0.3659 s` before and `0.3703 s` after without — differences smaller than the
+run-to-run spread, in both directions. Both directions of the *leak* are measured too:
+`test_no_seam_learns_the_check_set_by_counting_its_own_reads` and
+`test_the_payload_seams_answer_is_read_once_on_both_branches` fail against the pre-fix code and
+pass against this one, and each scores a synthetic **pre-fix** tally through the same scorer
+and requires the check set back — so a probe that has quietly stopped counting cannot pass by
+measuring nothing, which is exactly how check (a) of the isolation suite failed silently for a
+whole phase (§7).
+
+Routes A–F were artefacts of the **harness**: they counted how often a Python object was
+called, read or iterated. A real adversary on a fibre observes none of that. They mattered
+anyway, and the reason is worth keeping: every attack number this project publishes comes out
+of this harness, so a harness a simulated adversary can steer produces published figures that
+are wrong *even where a real adversary could not steer*. That is the same category as the
+Phase 3 finding that the harness leaked the symmetrisation coins — not a break of the
+protocol, a break of our ability to measure it.
+
+### Why route G is not closed in code
+
+Closing it means making the two branches cost the same, and "teleport on check rounds too" is
+not enough to do that: a check round would then perform a teleportation *and* two wing
+measurements, which is strictly more than a key round's teleportation and one measurement. Real
+equalisation means every position performing the **union** of the two branches — a
+teleportation, one measurement of the received qubit, and two measurements of the pair — with
+whichever half the position does not need discarded. That is what it costs.
+
+The arithmetic, from the per-branch medians measured below (`461 µs` for a key round, `658 µs`
+for a check round, at `L = 192` on this machine) and the hop count `2 · |VERIFIERS| · L`:
+
+| | per position now | per position equalised | one session |
+| --- | --- | --- | --- |
+| `DEMO_CHECKED_PARAMS`, `L = 192`, `f = 0.125` | `486 µs` | `≤ 1119 µs` | `0.37 s → 0.86 s` |
+| `CHECKED_PARAMS`, `L = 131664`, `f = 0.125` | `486 µs` | `≤ 1119 µs` | `4.3 min → 9.8 min` |
+
+`CHECKED_PARAMS` is the set to quote, not `DEFAULT_PARAMS`: `DEFAULT_PARAMS` reserves no check
+rounds at all (`check_fraction = 0.0`), so route G does not arise there. The equalised column is
+an upper bound — the basis draw is shared and counted twice in it. The "now" column is worth a
+glance because it is checkable end to end: the same arithmetic at `L = 192, f = 0.25` predicts
+`0.75 · 461 + 0.25 · 658 = 510 µs` per position and `392 ms` for the session, against `385 ms`
+measured over five seeded runs. So the honest headline is that equalising **a little more than
+doubles** every checked session, and every Phase 5 sweep over checked parameters with it.
+
+Paying that would buy less than it looks like. Equal *work* is not constant *time*. Two Python
+branches that do the same number of matrix operations still differ by allocation, by cache
+state and by whatever else the interpreter is doing, so the honest description of the result
+would be "the gap is smaller", not "the route is closed" — a mitigation dressed as a proof, at
+double the cost of every measurement this project makes, and one no test could assert without
+becoming flaky. A threshold chosen to make the residual gap look small enough would also be a
+threshold chosen by looking at the data, which is exactly what D7 forbids.
+
+The measured route is in any case a measurement of Python. Re-measured here, at `L = 192`,
+`check_fraction = 0.25`, twelve session seeds, with an adversary that holds only
+`resource_factory`, times the gap between its own consecutive calls, and nominates the
+`check_count / 2` positions per link with the **largest** gaps — a rank rule over public
+parameters, no threshold and nothing fitted:
+
+| | median gap | mean | sd | n |
+| --- | --- | --- | --- | --- |
+| key round | `461.0 µs` | `473.7` | `60.1` | 671 |
+| check round | `657.6 µs` | `668.0` | `77.2` | 96 |
+
+Precision `0.6667` to `0.8646` across the twelve seeds, mean `0.7665`, against a per-link base
+rate of `0.1250`. The **check** round is the slower branch — two projective measurements of a
+two-qubit state cost more than one teleportation and one one-qubit measurement — and the
+distributions overlap enough in the tails that `2.2%` of key rounds sit above the check
+median, which is why a rank rule forced to nominate exactly the right number of positions lands
+near `0.77` rather than at `1.00`.
+
+Read the units. The signal is a **two-hundred-microsecond** difference between two branches of
+a Python loop, on hardware where the physical operations being modelled — one teleportation,
+two local measurements — would be optical events six orders of magnitude faster and would not
+be separated by anything resembling this margin. The gap route G reads is the interpreter's
+cost of `teleport()` against two `projective_measure()` calls: a property of how this
+simulator is written, not of the protocol it simulates.
+
+Those figures are also, necessarily, **not pinned by a test**. Any assertion about a wall-clock
+gap is an assertion about the machine the suite happens to run on, and would be flaky by
+construction — which is the same reason a constant-work rewrite could not be *shown* to work
+either, and is worth noticing rather than treating as an inconvenience.
+
+### Why the exclusion is defensible in a deployment, and where it is weak
+
+In a deployment the check set is secret at the moment it has to be. Both branches consume
+exactly one entangled pair and one preparation from Alice, and an eavesdropper on the fibre
+sees the same pulses either way; what differs between them is a **local** decision the
+recipient makes about a qubit that has already arrived. Check positions are chosen by the
+recipients, from the recipients' own stream — which is why `check_plans` is drawn from
+`_recipient_rng` and not from Alice's — and are announced only afterwards. That is standard
+practice and the same argument that lets QKD announce bases after transmission rather than
+before.
+
+The weak point, stated rather than glossed: a deployment's *receiver* is not identical on the
+two branches. A key round waits for Alice's two classical correction bits and applies a
+correction; a check round does not. An adversary who can watch the recipient's apparatus — not
+the fibre, the apparatus — may therefore be able to tell them apart in a real system. That is
+a genuine engineering requirement on a deployment (constant-work receivers, or delaying the
+correction bits, or delaying the announcement), and it is a requirement this simulator cannot
+discharge, because it does not model the apparatus at all. Saying so is the point of this
+section: the exclusion is a statement about what has been modelled, not a claim that the
+problem does not exist.
+
+### Route H, found while closing D–F, reported rather than fixed
+
+`_map_payload` accepts whatever the seam returns; a **key** round then hands it to `teleport`,
+which refuses anything but a one-qubit state, and a **check** round discards it unexamined. So
+a payload map that returns a two-qubit state at exactly one position turns "did the run raise"
+into a clean read of that position's branch. Measured at `L = 32`, `check_fraction = 0.25`,
+session seed `555`: probing all 32 positions of Bob's link recovers `{8, 19, 25, 30}`, which is
+that link's reserved set exactly — precision `1.0000`, recall `1.0000`.
+
+It is left open, and the reason is that it is a **different and weaker threat model** than
+A–G, not that it is hard to close. Each probe destroys the run it is made in, so the adversary
+learns one bit and forfeits the session; to turn that into a spare-the-watched attack it must
+re-run the *same recipient stream* `L` times and then attack it once more. Inside this harness
+that is a fixed seed. In a deployment it is the recipients reusing their randomness across
+sessions, which they must not do for reasons that have nothing to do with this route. The
+`resource_factory` seam carries no equivalent, checked and stated: a malformed *resource*
+raises on both branches — `teleport` on a key round, `observe_qber_round` on a check one — so
+there is no oracle there.
+
+The fix, if it is wanted, is one shape check: refuse a mapped payload that is not one qubit in
+`_map_payload`, before the branch, so the refusal is identical on both. That is the same
+principle that closed D–F and it costs an array-shape comparison per position. It is not
+applied here because it changes an error path — which exception a mis-wired attack meets, and
+where — and that is a decision for whoever owns the next round rather than a side effect of
+this one.
+
+### What the exclusion costs — the conditioning, stated once and plainly
+
+> **(NO-TIMING).** Every claim this project makes about **check-round statistics** — the
+> per-link QBER and CHSH of §4, the `ChannelSample` rows of §8, and anything Phase 4 or Phase 5
+> builds on them — is conditioned on the adversary not inferring the check set from timing.
+> Under that assumption the published channel statistics track the real key damage, which is
+> what closing routes A–F bought and what
+> `test_a_spare_the_watched_adversary_no_longer_finds_the_watched_rounds` asserts. Without it,
+> a timing-capable adversary **in this harness** can still spare the watched rounds, and the
+> published channel statistics would then understate the damage — to zero, in the limit. The
+> same conditioning covers route H, whose extra precondition — an adversary able to replay one
+> recipient stream `L` times — is stated with it above.
+
+Cite it the way §3 cites **(AUTH)**: as a stated assumption with a named boundary, not as an
+oversight.
+
+Two things bound how much that assumption is carrying.
+
+1. **It does not touch the strongest detector signal.** The verifier's own mismatch rate,
+   the matched counts, `declaration_z_score` and every abort reason read the **key**, not the
+   sample, and a spare-the-watched adversary damages the key by construction — that is the
+   whole point of sparing. The Phase 3 prototype separated four of five adversaries on the
+   rate alone, with no check rounds at all. So a detector that stands on the verification
+   statistics is unaffected by (NO-TIMING); it is the check-round *attribution* — which link
+   Eve touched — that leans on it.
+2. **It is an assumption about the harness, not about the protocol.** Routes A–F could be
+   closed because they were bugs in how the simulator hands objects around. Route G cannot be
+   closed here because there is no clock here to close it against. A deployment inherits the
+   requirement; this document inherits the obligation to say so.
+
+---
+
+## 13. Cost
 
 | Arm | Cost |
 | --- | --- |
@@ -881,7 +1140,7 @@ one the whole phase's arithmetic rests on.
 | `tests/test_phase3_isolation_suite.py` | 52 tests, **14 s** |
 | `tests/test_attack_isolation.py` | 49 tests, **3 s** |
 | one `DEFAULT_PARAMS` session | minutes — out of reach for any repeated-trials measurement |
-| the **whole suite** (`python -m pytest`) | **2169 passed in 749.94s (0:12:29)** |
+| the **whole suite** (`python -m pytest`) | **2174 passed in 787.24s (0:13:07)** — was `2169 in 749.94s` before §12's four new tests and one new doctest |
 
 The heavy shipped tables (800 impersonation sessions at `L = 192`, 8 minutes; 2000 outside
 forgeries at `L = 30`) are **not** in the unit suite. What is in the suite is a smaller live

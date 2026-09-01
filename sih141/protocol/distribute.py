@@ -133,14 +133,22 @@ another is one line of attack code and cannot drift.
 Three properties of the seam are worth stating because they are consequences
 rather than decisions:
 
-* **It is called on every position, and what it returns on a check round is
-  thrown away.** A check round prepares no payload of its own; it spends its
-  pair on measuring the channel. But *being called* is a signal, and this seam
-  used to be called on key rounds only -- which made the gaps in its call
-  sequence the check set, exactly, and recoverable in one pass. So the call is
-  now made everywhere and the result discarded where it has no use, the same
-  way the recipient's basis draw is made everywhere and discarded on a check
-  round. See :ref:`check-round-lockstep`.
+* **It is called on every position, its answer is read on every position, and
+  what it returns on a check round is thrown away after that read.** A check
+  round prepares no payload of its own; it spends its pair on measuring the
+  channel. But *being called* is a signal, and this seam used to be called on
+  key rounds only -- which made the gaps in its call sequence the check set,
+  exactly, and recoverable in one pass. So the call is now made everywhere and
+  the result discarded where it has no use, the same way the recipient's basis
+  draw is made everywhere and discarded on a check round. *Being used* is a
+  signal for the same reason and was the next one to fall: with the call
+  equalised, a mapped payload was still read by
+  :func:`~sih141.core.teleport.teleport` on a key round and by nothing at all
+  on a check round, so a seam returning an instrumented state counted its own
+  reads and recovered the check set again, at precision 1.0. It is now adopted
+  the moment it is returned (:func:`_adopt_state`) -- one read per position,
+  both branches -- and the object thrown away on a check round is this
+  module's copy, not the seam's. See :ref:`check-round-lockstep`.
 * **A payload attack still cannot reach the watched positions.** What is
   discarded is discarded: the substituted state is never teleported on a check
   round, so neither the QBER nor the CHSH estimate can move because of one.
@@ -178,8 +186,8 @@ key is drawn at full length and sifted afterwards.
 The one thing this module has to get right is that **nothing distinguishes a
 check round from a key round on the wire**, because an adversary who could tell
 them apart would behave on the ones that are watched and misbehave on the ones
-that are not, and every estimate here would be a fiction. Three invariants
-secure it, and all three are tested:
+that are not, and every estimate here would be a fiction. Four invariants
+secure it, and all four are tested:
 
 * **Every seam is called on every position**, in the same order, with the same
   :class:`ResourceContext`, before the branch is taken. That is the
@@ -190,6 +198,29 @@ secure it, and all three are tested:
   ``test_the_factory_cannot_tell_a_check_round_from_a_key_round`` drives all
   three together and pins it. It used to drive the factory alone, and passed
   against code that published the whole check set through the other two.
+* **Every seam's answer is read exactly once, on both branches**, and the
+  protocol never touches the seam's own object again. Equalising the calls left
+  the *use* differing: a resource was read once on a key round (inside
+  :func:`~sih141.core.teleport.teleport`) and twice on a check round (once to
+  summarise the pair, once to measure it), a mapped payload once and not at
+  all, and the ``channel_monitor``'s mapping was iterated at check positions
+  alone. All three tallies separated the branches at precision 1.0 and recall
+  1.0 -- the whole check set, in one pass, no statistics -- for an adversary
+  who returned an instrumented object and counted. So each seam's answer is now
+  **adopted** at the boundary (:func:`_adopt_state` for the two state seams,
+  :func:`~sih141.protocol.session._call_monitor` for the mapping) before the
+  branch is taken. The tally is ``1`` at every position of every link: a
+  constant, and a constant carries no bits. Equalising by construction rather
+  than by matching reads downstream is deliberate -- a matched count is one
+  edit away from unmatched, and nothing would fail.
+  ``test_the_payload_seams_answer_is_read_once_on_both_branches`` here and
+  ``test_no_seam_learns_the_check_set_by_counting_its_own_reads`` in
+  ``tests/test_protocol_session.py`` -- where the session's channel tap is in
+  place, which is what makes the resource and monitor halves visible -- run the
+  recovery both ways round: each asserts the tally is flat, and each then
+  asserts that the same scorer *does* recover the set from a deliberately
+  unbalanced control, so a probe that has stopped measuring anything cannot
+  pass quietly.
 * **Exactly three variates are consumed per position, on both branches.** A key
   round spends them on the recipient's basis draw, the Bell measurement inside
   :func:`~sih141.core.teleport.teleport`, and the recipient's projective
@@ -206,9 +237,27 @@ secure it, and all three are tested:
   of positions -- shared, because both recipients must retain the same key --
   but deals them between the links, so recovering the check set on the link an
   adversary sees first does not hand over the second's
-  (:ref:`sih141.protocol.checkrounds <check-round-links>`). The first two
+  (:ref:`sih141.protocol.checkrounds <check-round-links>`). The first three
   invariants say the set cannot be recovered at all; this one says what it
   would buy if it ever were.
+
+**What these invariants do not cover, stated here rather than left implicit.**
+A check round and a key round do different amounts of *work*: the key round
+teleports and measures once, the check round measures both wings and does not
+teleport. The two therefore take different wall-clock times -- measured, the
+check round is the slower branch -- and a seam that timed the gap between its
+own consecutive calls would classify the branch without instrumenting anything.
+That route is not closed in code. Closing it would mean every position
+performing the **union** of the two branches and discarding the half it does not
+need, which a little more than doubles the cost of every checked session; adding
+a discarded teleportation to check rounds alone would not even equalise them,
+since a check round would then do strictly more work than a key round. It is
+out of scope instead, because this module models the protocol's **information
+flow and not its physical execution**: it represents no wall-clock timing, no
+power draw and no emission, so a timing side channel here is an artefact of
+Python's execution speed rather than a property of the protocol. The argument is
+made in full, with what it costs and the assumption it leaves behind, in
+``docs/PHASE3.md`` section 12.
 
 Notes
 -----
@@ -256,7 +305,7 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 import numpy as np
-from qiskit.quantum_info import Statevector
+from qiskit.quantum_info import DensityMatrix, Statevector
 
 from sih141.core.measure import projective_measure
 from sih141.core.paulis import PauliBasis
@@ -369,10 +418,14 @@ context-aware factory.
 PayloadMap: TypeAlias = Callable[[StateLike, ResourceContext], StateLike]
 """A callable standing on the payload line, between preparation and Bell measurement.
 
-Called once per **key round** as ``payload_map(state, context)``, with the
-eigenstate :meth:`~sih141.protocol.keys.KeyElement.state` produced for that
+Called once per **position** -- check rounds included, since a seam called only
+on key rounds publishes the check set as the gaps in its call sequence -- as
+``payload_map(state, context)``, with the eigenstate
+:meth:`~sih141.protocol.keys.KeyElement.state` produced for that
 position and the same :class:`ResourceContext` the ``resource_factory`` was given
-for the same hop. Whatever it returns is what is teleported. Both arguments are
+for the same hop. Whatever it returns is read once, immediately, into a copy the
+protocol owns (:func:`_adopt_state`), and on a key round that copy is what is
+teleported; on a check round it is discarded unread. Both arguments are
 positional, and unlike :data:`ResourceFactory` there is only one accepted shape:
 this seam is new, so there is no historical arity to keep working, and a single
 shape means no inspection and no way to be called wrongly.
@@ -441,6 +494,98 @@ def identity_payload(payload: StateLike, context: ResourceContext) -> StateLike:
     return payload
 
 
+def _adopt_state(state: StateLike) -> StateLike:
+    """Read a seam's state **once**, into a copy the protocol owns.
+
+    The one-line answer to the read-count side channel
+    (:ref:`check-round-lockstep`). Equalising how often a seam is *called* was
+    not enough: what the protocol then *did* with the returned object differed
+    between the branches, so an adversary returning an instrumented state --
+    a :class:`~qiskit.quantum_info.Statevector` subclass whose ``data``
+    property increments a counter, say -- read the check set off the tally.
+    A resource was read once on a key round (inside
+    :func:`~sih141.core.teleport.teleport`) and twice on a check round (once to
+    summarise the pair, once to measure it); a mapped payload was read once on a
+    key round and not at all on a check round. Either tally separated the
+    branches at precision 1.0.
+
+    Counting reads downstream and matching them branch for branch would fix
+    today's tally and break on the next edit that touches either branch. This
+    does it by construction instead: the object a seam returns is read exactly
+    once, here, before the branch is taken, and **nothing downstream ever
+    touches it again** -- every later read is of a plain object this module
+    built. The tally an adversary keeps is therefore ``1`` at every position of
+    every link, which is a constant, and a constant carries no bits.
+
+    Purity is preserved, because it is load-bearing: a pure payload handed to
+    :func:`~sih141.core.teleport.teleport` as a
+    :class:`~qiskit.quantum_info.Statevector` takes that function's exact
+    fidelity path, and coercing everything to a density matrix here would
+    silently move honest runs off it (D1). Dimensions are preserved for the
+    same reason -- ``num_qubits`` is what
+    :func:`~sih141.protocol.session._as_pair` refuses a non-pair on.
+
+    Parameters
+    ----------
+    state : StateLike
+        Whatever a seam returned: either Qiskit representation (D1), or a raw
+        amplitude vector or density array.
+
+    Returns
+    -------
+    StateLike
+        The same state, same representation, same numbers, in an object backed
+        by memory this module allocated. A seam that kept a handle on the array
+        it returned can no longer write through it either, which closes the
+        narrower "edit the pair after handing it over" route at the same time.
+        Anything that is not a state and not array-like is passed through
+        untouched, so the existing validator downstream still produces its own
+        error message rather than one from here.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from sih141.protocol.distribute import _adopt_state, ideal_resource
+    >>> pair = ideal_resource()
+    >>> adopted = _adopt_state(pair)
+    >>> type(adopted).__name__
+    'Statevector'
+    >>> bool(np.allclose(adopted.data, pair.data))
+    True
+    >>> adopted is pair
+    False
+
+    A counting subclass is read exactly once and then left alone:
+
+    >>> from qiskit.quantum_info import Statevector
+    >>> class Counting(Statevector):
+    ...     reads = 0
+    ...     @property
+    ...     def data(self):
+    ...         Counting.reads += 1
+    ...         return self._data
+    >>> adopted = _adopt_state(Counting(ideal_resource().data))
+    >>> Counting.reads
+    1
+    >>> type(adopted).__name__
+    'Statevector'
+    """
+    if isinstance(state, DensityMatrix):
+        return DensityMatrix(
+            np.array(state.data, copy=True), dims=state.dims()
+        )
+    if isinstance(state, Statevector):
+        return Statevector(np.array(state.data, copy=True), dims=state.dims())
+    try:
+        return np.array(state, dtype=np.complex128)
+    except (TypeError, ValueError):
+        # Not a state and not array-like. Let it through: the validator it is
+        # about to meet says what is wrong with it in the vocabulary of the
+        # seam that produced it, and duplicating that message here would give
+        # two different errors for one mistake.
+        return state
+
+
 def _map_payload(
     payload_map: PayloadMap | None,
     payload: StateLike,
@@ -462,7 +607,15 @@ def _map_payload(
     Returns
     -------
     StateLike
-        What will actually be teleported.
+        What will actually be teleported, **adopted** by
+        :func:`_adopt_state`. The seam's own object is read once, here, on
+        every position; the copy is what the branch below either teleports or
+        discards. Being *used* was the signal once being *called* stopped
+        being one -- a mapped payload is read by
+        :func:`~sih141.core.teleport.teleport` on a key round and by nothing at
+        all on a check round, so an instrumented state recovered the check set
+        from its own read tally at precision 1.0
+        (:ref:`check-round-lockstep`).
 
     Raises
     ------
@@ -494,7 +647,7 @@ def _map_payload(
             f"identity_payload(state, context) -- to send the eigenstate "
             f"unaltered."
         )
-    return mapped
+    return _adopt_state(mapped)
 
 
 def _resolve_factory(
@@ -636,8 +789,22 @@ def _draw_resource(
     Returns
     -------
     StateLike
-        Whatever the factory returned; its physicality and qubit count are
-        checked by :func:`sih141.core.teleport.teleport`.
+        What the factory returned, **adopted** by :func:`_adopt_state` -- same
+        representation, same numbers, a copy this module owns. Its physicality
+        and qubit count are still checked downstream, by
+        :func:`sih141.core.teleport.teleport` on a key round and by
+        :func:`~sih141.protocol.checkrounds.observe_qber_round` or
+        :func:`~sih141.protocol.checkrounds.observe_chsh_round` on a check one.
+
+        The adoption is the fix for the resource read-count side channel: the
+        factory's object used to be read once on a key round and twice on a
+        check round, so a factory returning an instrumented pair recovered the
+        whole check set from its own read tally. It is now read exactly once,
+        here, before the branch (:ref:`check-round-lockstep`). Every seam that
+        hands the protocol an object crosses this boundary, including
+        :class:`~sih141.protocol.session._ChannelTap` when it stands in for a
+        session's factory, so the adoption happens once per crossing rather
+        than once per run.
 
     Raises
     ------
@@ -662,7 +829,7 @@ def _draw_resource(
             f"from a clean channel. Return ideal_resource() explicitly if a "
             f"clean pair is what you meant."
         )
-    return resource
+    return _adopt_state(resource)
 
 
 def _resolve_verifier(party: Party | str) -> Party:
@@ -1143,10 +1310,14 @@ def distribute_to_recipient_with_checks(
         basis = alphabet[int(generator.integers(len(alphabet)))]
 
         # 2. One resource per position, drawn from the seam BEFORE the branch
-        #    below, with a context that says nothing about which branch it is.
-        #    An adversary who could tell a watched round from an unwatched one
-        #    would behave on the watched ones and every estimate here would be
-        #    fiction, so the call is deliberately identical on both.
+        #    below, with a context that says nothing about which branch it is,
+        #    and READ ONCE on the way in -- _draw_resource adopts it, so what
+        #    the branch below teleports or measures is this module's copy and
+        #    the seam's own object is never touched again. An adversary who
+        #    could tell a watched round from an unwatched one would behave on
+        #    the watched ones and every estimate here would be fiction, so the
+        #    call is deliberately identical on both branches and so, now, is
+        #    the use made of what it returned.
         context = ResourceContext(
             party=recipient,
             message_bit=key.message_bit,
@@ -1162,10 +1333,15 @@ def distribute_to_recipient_with_checks(
         #    which is teleport()'s exact fidelity path for a pure payload. On a
         #    check round the mapped state is DISCARDED, unteleported and
         #    unmeasured -- the pair is spent on the channel instead -- exactly
-        #    as the recipient's basis draw above is made and discarded. The
-        #    call is what has to be identical, not the use made of it: it used
-        #    to be made on key rounds only, and the gaps in the call sequence
-        #    were the check set, recovered whole (:ref:`payload-seam`).
+        #    as the recipient's basis draw above is made and discarded. Both
+        #    the call AND the read have to be identical: the call used to be
+        #    made on key rounds only, and the gaps in the call sequence were
+        #    the check set, recovered whole; once that was closed, being USED
+        #    became the same signal, because a mapped payload was read by
+        #    teleport() on a key round and by nothing on a check round. So
+        #    _map_payload adopts what the seam returned -- one read, every
+        #    position -- and what is discarded below is this module's copy
+        #    (:ref:`payload-seam`).
         payload = _map_payload(payload_map, element.state(), context)
 
         scheduled = planned.get(index)
