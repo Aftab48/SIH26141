@@ -165,14 +165,21 @@ same printed bound.
 `sih141/attacks/isolation.py` makes that a behavioural check — hold the attack's generator
 fixed and vary the session seed, and its decisions must not move; hold the seed fixed and
 vary its generator, and they must. All **14** adversary-and-seam pairs pass it in
-`tests/test_phase3_isolation_suite.py`, both deliberately-defective controls are still
-caught, and adding a sixth adversary is one row in a table.
+`tests/test_phase3_isolation_suite.py`, every deliberately-defective control is still caught,
+and adding a sixth adversary is one row in a table.
 
-Three mutation checks confirm the defences are actually tested: disabling the replay ledger,
-the declaration binding, or check (a) of the isolation check each turns the relevant tests
-red, and only those tests.
+The first half of that check was **inert for most of Phase 3** — every probe deleted the
+session seed, so all fourteen rows passed a check none of them could fail — and the audit that
+found it is why the pass is now evidenced per row rather than asserted: each shipped adversary
+is re-run with the session's own seed folded into its generator, through its own probe, and
+check (a) has to catch it. Thirteen of the fourteen are covered directly; the fourteenth moves
+with nothing at all, which is the same fact its check-(b) waiver rests on.
 
-Full suite: **2098 passed in 12 min 39 s**, up from 1421 at the end of Phase 2.
+Four mutation checks confirm the defences are actually tested: disabling the replay ledger,
+the declaration binding, check (a) of the isolation check, or the session channel check (a)
+reaches the candidate by, each turns the relevant tests red and only those tests.
+
+Full suite: **2166 passed in 12 min 45 s**, up from 1421 at the end of Phase 2.
 
 ## Roadmap
 

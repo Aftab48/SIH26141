@@ -130,13 +130,47 @@ def test_the_optimal_recipient_forger_is_deterministic_not_leaky() -> None:
 def test_measurement_refuses_one_generator_for_attack_and_session() -> None:
     """Sharing a generator is the D6 defect, and is refused with an explanation."""
     shared = np.random.default_rng(1)
-    with pytest.raises(ValueError, match="different generators"):
+    with pytest.raises(ValueError, match="the same stream"):
         measure_outside_forgery(
             params_of(QUICK_LENGTH), trials=1, rng=shared, session_rng=shared
         )
     with pytest.raises(ValueError, match="symmetrisation coin"):
         measure_recipient_forgery(
             params_of(QUICK_LENGTH), trials=1, rng=shared, session_rng=shared
+        )
+
+
+def test_measurement_refuses_two_generators_built_from_one_seed() -> None:
+    """The defect as it actually arrives: one seed constant, used twice.
+
+    Two ``default_rng(1)`` calls are two objects and one stream. The adversary
+    can then redraw the session's 32-byte material and rebuild every private
+    symmetrisation coin, so a rate measured that way is fiction -- which the
+    object-identity test that shipped here could not see.
+    """
+    with pytest.raises(ValueError, match="the same stream"):
+        measure_outside_forgery(
+            params_of(QUICK_LENGTH),
+            trials=1,
+            rng=np.random.default_rng(1),
+            session_rng=np.random.default_rng(1),
+        )
+    with pytest.raises(ValueError, match="the same stream"):
+        measure_recipient_forgery(
+            params_of(QUICK_LENGTH),
+            trials=1,
+            rng=np.random.default_rng(1),
+            session_rng=np.random.default_rng(1),
+        )
+    # Advancing one of them does not make it a different stream either.
+    used = np.random.default_rng(1)
+    _ = used.random(64)
+    with pytest.raises(ValueError, match="the same stream"):
+        measure_outside_forgery(
+            params_of(QUICK_LENGTH),
+            trials=1,
+            rng=used,
+            session_rng=np.random.default_rng(1),
         )
 
 

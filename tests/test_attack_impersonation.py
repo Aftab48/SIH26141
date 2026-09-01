@@ -115,6 +115,42 @@ def test_isolation_check_would_catch_a_session_reading_impersonator():
     assert "reads the session's randomness" in str(excinfo.value)
 
 
+def test_the_measurements_refuse_one_seed_for_mallory_and_the_session():
+    """The guard this module had none of, and the form the defect really takes.
+
+    ``session_seed`` and ``attack_rng`` are separate arguments so that a caller
+    cannot pass one number and get both -- but nothing stopped
+    ``session_seed=7`` beside ``attack_rng=default_rng(7)``, which is the same
+    number written twice and gives Mallory the very stream ``QDSSession``
+    derives all three of its own from. Every acceptance rate measured that way
+    would be a statement about a correlation rather than about the attack.
+    """
+    with pytest.raises(ValueError, match="the stream session seed 7 produces"):
+        run_impersonation(
+            ImpersonationScope.SIGNING,
+            DEMO_MEASUREMENT_PARAMS,
+            session_seed=7,
+            attack_rng=np.random.default_rng(7),
+        )
+    # The arm-level guard runs over the whole seed list before the first trial,
+    # so a collision at trial 137 of 200 does not cost 136 sessions first.
+    with pytest.raises(ValueError, match="measure_impersonation"):
+        measure_impersonation(
+            ImpersonationScope.FULL,
+            DEMO_MEASUREMENT_PARAMS,
+            trials=4,
+            attack_rng=np.random.default_rng(FIRST_SESSION_SEED + 2),
+        )
+    # An unrelated seed is accepted, so the guard is not refusing everything.
+    trial = run_impersonation(
+        ImpersonationScope.SIGNING,
+        DEMO_MEASUREMENT_PARAMS,
+        session_seed=7,
+        attack_rng=np.random.default_rng(ATTACK_SEED),
+    )
+    assert trial.session_seed == 7
+
+
 def test_impersonator_refuses_an_integer_seed():
     """An adversary built from an int is one step from the harness's int."""
     with pytest.raises(TypeError) as excinfo:

@@ -8,7 +8,7 @@
 > on the maintainer's explicit instruction. The permanent record is
 > `docs/METRICS.md` and the `docs/PHASE*.md` notes.
 
-**93 entries** — 26 finding · 25 issue · 24 decision · 9 fix · 8 note · 1 deadend
+**104 entries** — 27 finding · 26 issue · 25 decision · 14 fix · 10 note · 2 deadend
 
 
 ## Phase 0 — Scaffold
@@ -2902,3 +2902,573 @@ measurements.
 
 Two auditors returned unsound; their findings are the next four entries. The third returned
 sound and established that Phase 4 is buildable.
+
+### `[+]` Check (a) was inert on all 14 rows; the session now reaches the candidate
+
+*fix · impl:d6-isolation · 2026-09-01T14:35:39Z*
+
+FINDING (audit, confirmed and fixed). Check (a) of the D6 isolation check was
+INERT ON ALL FOURTEEN ROWS of tests/test_phase3_isolation_suite.py. The headline
+"Result: 14/14 pass check (a)" was true and carried no evidence whatsoever,
+because no row could fail.
+
+Mechanism. check_attack_isolation.observe(attack_seed, session_seed) reaches the
+candidate by exactly two routes: the builder's optional session_seed= keyword,
+and the probe's session_seed argument. Six ready-made probes -- isolation.
+signer_probe, isolation.forwarder_probe, forgery.forwarder_probe, impersonation.
+signing_probe, replay.replay_probe, starvation.starvation_probe -- opened with
+`del session_seed`. No shipped adversary declares session_seed in its
+constructor, so _builder_offers_session_seed returned False for every one of
+them. The five "different" calls check (a) compares were therefore five runs of
+a byte-identical experiment. The channel probes ran a live session per seed, but
+ResourceContext carries only (party, message_bit, position) and check-round
+lockstep calls the seam identically at every position, so nothing the adversary
+could see moved there either.
+
+Why it survived. The two negative controls both read the seed through the
+BUILDER, which was the one channel that stayed live. They kept passing, and a
+green control on a dead channel reads exactly like a green control on a live one.
+
+FIX. check_attack_isolation.observe now wraps both the build and the probe call
+in a SessionEnvironment (sih141/attacks/isolation.py), varied with the session
+seed. It opens the three routes a real experiment leaks through:
+
+  1. active_session() -- the check's stand-in for the module-level SEED constant
+     every attack script keeps in scope. Published deliberately: a check that
+     offers no leak detects no theft.
+  2. ambient global randomness -- numpy.random's legacy global stream and
+     stdlib random's, seeded from the session seed for the duration of the call
+     and restored exactly afterwards (states compared before/after in a test).
+     D3 forbids drawing there; an adversary that does is now caught by check (a)
+     instead of the rule sitting unenforced in a docstring.
+  3. SessionEnvironment.stream_material() -- the session's own rng.bytes(32)
+     draw, so a control can rebuild the run precisely as QDSSession does.
+
+Note the routes are open to everyone and cost the honest candidate nothing: an
+isolated adversary draws from the generator it was handed, which is what check
+(b) varies.
+
+EVIDENCE, per row, which is the part a shared control cannot give. A control
+passing through signer_probe() says that probe's channel is live and says
+nothing about starvation_probe(), the two channel probes, or a probe added next
+year. test_the_session_channel_is_live_on_every_row rebuilds each shipped
+adversary with the session's seed folded into its generator -- same class, same
+__call__, same probe, one line of defect -- and requires check (a) to catch it.
+13/14 caught. The fourteenth is the deterministic recipient forger, whose
+decisions move with nothing at all; his randomised sibling is caught, which is
+the same argument the (b) waiver already rests on.
+
+NO CASCADE. All fourteen shipped rows still pass with the channel live, on every
+seam. No published rate moved on this account.
+
+Two mutation runs, snapshot-and-restore, isolation.py verified byte-identical
+afterwards:
+  reads_the_session -> False              25 failures (was 6 before this work)
+  observe() installs no SessionEnvironment 17 failures -- and BOTH shipped
+      negative controls still pass under it, which is the shape of the original
+      defect reproduced on demand.
+
+Also fixed in passing: signer_probe's docstring claimed it calls the candidate
+"exactly as QDSSession.sign would ... holding the raw pre-exchange logs". The
+shipped default is signer_sees_recipient_logs=False, so a live session hands the
+seam NO_RECIPIENT_LOGS. The probe is strictly more generous than the protocol,
+which is sound for an isolation check (an adversary shown more and still not
+moving is isolated a fortiori) but is not the equivalence that was claimed. The
+docstring now says which it is and why.
+
+### `[+]` Stream guards compared objects, not seeds; two rngs from one seed now refused
+
+*fix · impl:d6-isolation · 2026-09-01T14:35:40Z*
+
+FINDING (audit, confirmed and fixed). The D6 stream guards compared Python
+OBJECTS, not streams, and therefore refused only the form of the mistake nobody
+makes.
+
+forgery._check_streams tested `rng is session_rng`. replay._distinct_generators
+tested `checked_world is checked_attack`. Both waved through
+
+    SEED = 20260141
+    measure_outside_forgery(params, trials=N,
+                            rng=np.random.default_rng(SEED),
+                            session_rng=np.random.default_rng(SEED))
+
+which is two objects and ONE STREAM: identical bytes for ever. QDSSession
+consumes its caller's generator as a single rng.bytes(32) and derives Alice's
+stream, the recipients' stream and the binding stream from that material, so an
+adversary holding that stream rebuilds the run and predicts every private
+symmetrisation coin (120/120, pinned in isolation.py's own docstring). That is
+precisely the leak isolation.py exists to prevent, arriving by the shortest
+possible route -- and it is the route a real harness takes, because nobody
+passes one object twice but everybody writes one SEED constant.
+
+impersonation.py and starvation.py had no guard at all.
+
+FIX. sih141/attacks/isolation.py gained the stream-identity layer:
+
+  stream_fingerprint(rng)  -> (derivation, state). derivation is
+      (bit-generator type, seed-sequence entropy, spawn key); state is the bit
+      generator's current position.
+  same_stream(a, b)        -> same object, OR same position in one stream, OR
+      same derivation at any offset. Advancing one does not make it independent.
+      parent.spawn(2) children are correctly NOT refused -- that is the one
+      right way to split a generator and refusing it would push callers back to
+      two default_rng calls on one seed.
+  derived_from_seed(rng, seed) -> the seed-shaped half, for the entry points
+      that take a session seed for one role and a generator for the other.
+  require_distinct_streams(...) -> raises with the mechanism and a named repair.
+
+Rewired: forgery._check_streams, replay._distinct_generators. Added where there
+was nothing: impersonation.run_impersonation (against its one session_seed),
+impersonation.measure_impersonation (against the WHOLE seed list up front, so a
+collision at trial 137 of 200 is reported before any run is spent), and
+starvation.measure_starvation (against session_seed_start .. start+trials-1).
+
+No shipped call site was refused by the new guards -- FIRST_SESSION_SEED is
+900_000 and session_seed_start defaults to 500_000, both chosen to be far from
+any adversary seed in the package, and every doctest and test already used
+unrelated seeds. So no measured number moved. What moved is that the property is
+now enforced rather than assumed.
+
+CONNECTION TO THE OTHER FINDING. These two are the same leak from opposite ends.
+Check (a) asks whether the adversary went and TOOK the session's randomness; the
+stream guards ask whether the harness HANDED it over. Neither implies the other,
+and until now the first was inert and the second was looking at the wrong thing.
+
+### `[x]` Four wrong ways to make check (a) vary the session seed
+
+*deadend · impl:d6-isolation · 2026-09-01T14:35:45Z*
+
+DEAD ENDS from making check (a) non-vacuous. Recorded because each one looks
+right for about ten minutes and the next person will try them in this order.
+
+1. "Run a live QDSSession seeded with session_seed inside signer_probe /
+   forwarder_probe." This is the obvious reading of "depend on session_seed the
+   way a real run does", and it is the documented probe trap (:ref:`probe-traps`
+   in isolation.py) wearing a different hat. A recipient-forger's declaration is
+   a function of HIS OWN LOG, which is drawn from the session's stream; give him
+   a fresh session per seed and his declaration moves for an entirely honest
+   reason, check (a) fails, and the report blames a flawless adversary. The
+   frozen scenario is not an accident to be removed -- it is what makes check
+   (a) a statement about the adversary instead of about the harness. Freezing
+   the OBSERVATIONS and varying the SESSION are two different jobs and a probe
+   has to do both; `del session_seed` did neither.
+
+2. "Wrap the candidate in an adapter so a live session CALLS it while it is
+   handed the frozen arguments." Costs a full distribution per probe call and
+   buys nothing: the candidate's inputs are still constant, so a pure function
+   of them is still constant. The only adversary it would catch is one doing
+   frame introspection, which is not a threat model anybody has.
+
+3. "Offer session_seed at call time to any seam whose signature declares it,
+   mirroring _builder_offers_session_seed." Implemented in spirit and then
+   dropped as the PRIMARY route: Signer, Forwarder and CountExchange take no
+   such argument in the protocol, no shipped adversary declares one, so it can
+   never fire on a shipped row and would have left the check exactly as
+   vacuous as it was for the rows that matter. It catches only an adversary
+   polite enough to ask for the seed by name.
+
+4. "Just record in IsolationReport that check (a) had no live channel and let
+   the reader judge." Honest, and not a fix -- the brief is that the check must
+   CHECK, not that it must confess. Kept the honest half: the
+   session_seed_offered docstring no longer claims a call-time channel that did
+   not exist, because that sentence is what made the vacuity invisible in code
+   review.
+
+WHAT ACTUALLY WORKED, and why it is not artificial. The environment publishes
+the harness's seed constant. Nothing in the protocol publishes it; the CHECK
+publishes it, on purpose, because a check that offers no leak detects no theft
+and an adversary that reaches for it has done precisely what D6 forbids. Add the
+ambient global streams (which a reproducible harness really does seed from the
+same constant, and which D3 already bans drawing from) and the session's own
+32-byte material, and every candidate has a route whether or not it declares
+one.
+
+The composition is the point and is worth stating separately: check (b) already
+proves, per row, that the probe can see the candidate's own stream. So an
+adversary whose stream was derived from the session's MUST be visible to check
+(a) through that same probe. That turns two assertions into a proof, and it is
+what test_the_session_channel_is_live_on_every_row runs. The one row it cannot
+cover is the one whose decisions move with nothing at all -- the deterministic
+recipient forger -- which is the same fact the (b) waiver rests on, and is why
+the waiver is only ever sound beside a randomised sibling.
+
+### `[+]` Ledger DoS now scores its mechanism; every published figure re-measured, none moved
+
+*fix · impl:d6-isolation · 2026-09-01T14:35:45Z*
+
+FINDING (audit, confirmed and fixed). measure_ledger_denial_of_service scored
+itself on `not _accepted(honest)` -- the adversary's GOAL, but not his
+MECHANISM. The two agree on every healthy trial and come apart on a degenerate
+one, which makes a published 0/N a fact about the seed rather than a rule.
+
+The attack burns Charlie's round: the hop mints a declaration naming the live
+round, Charlie scores it, rejects it, and a rejection is a verdict, so the round
+is spent and the genuine declaration is afterwards refused as
+RECORD_ALREADY_VERIFIED. That refusal is the mechanism. "Not accepted" also
+covers an honest declaration that was never going to be accepted anyway -- below
+L = 140 both matched-count floors degenerate and an honest run can fail on its
+own -- and scoring those as burned rounds credits the adversary with something
+he did not do.
+
+REPRODUCED, not merely argued. At L = 12, rng=default_rng(1),
+attack_rng=default_rng(2), 120 trials, defended=False (no ledger present, so
+nothing can be spent and the attack provably achieves nothing that lasts):
+three trials end with the honest declaration refused as `empty-matched-set`.
+Under the old definition that arm reports 3/120 for an attack that cannot
+succeed in it at all. Under the new one it raises, naming trial 47.
+
+FIX. successes now counts _round_already_spent(honest), i.e. exactly
+AbortReason.RECORD_ALREADY_VERIFIED. A trial whose honest declaration is neither
+accepted nor denied by the ledger is refused outright with a ValueError naming
+the trial, the reason and the L: it is neither a success nor a clean failure,
+because the attack was not measured in it, and folding it into either column is
+how a rate acquires a denominator it does not deserve. refusals still counts
+every no-verdict, so successes == refusals exactly when the ledger was the only
+thing refusing, and a gap is visible rather than absorbed.
+
+RE-MEASURED. Every published figure re-run under both definitions, L = 24 with
+300 trials and L = 96 with 100, rng=default_rng(20260141),
+attack_rng=default_rng(4242), all three count orderings x defended/undefended:
+
+  L=24  defended  counts=none         old 300/300  new 300/300
+  L=24  defended  counts=as-received  old 300/300  new 300/300
+  L=24  defended  counts=as-signed    old   0/300  new   0/300
+  L=24  undefended, all three orderings old 0/300  new   0/300
+  L=96  defended  counts=none         old 100/100  new 100/100
+  L=96  defended  counts=as-received  old 100/100  new 100/100
+  L=96  defended  counts=as-signed    old   0/100  new   0/100
+  L=96  undefended, all three orderings old 0/100  new   0/100
+
+No degenerate trial occurred at either length ("other={}" on every arm), so
+NOTHING MOVED. docs/PHASE3.md's 300/300 and 0/300 stand as published. What
+changed is that they are now rules: the 0/300 at counts-as-signed is zero
+because nothing was spent, and a trial that could have made it non-zero for an
+unrelated reason now stops the measurement instead of contributing to it.
+
+### `[+]` Close the check-set inference channel: seams called everywhere, links dealt apart
+
+*fix · impl:uninferable-check-set · 2026-09-01T14:45:36Z*
+
+MEASURED, BEFORE THE FIX. The channel-side adversary recovered the check set
+exactly, by two independent routes, on the shipped code:
+
+  * payload_map was invoked on key rounds only and handed context.position, so
+    the GAPS in its call sequence were the check set. Recovered 24/24 at L=96,
+    check_fraction=1/4, for both recipients and both message bits.
+  * channel_monitor was invoked on check rounds only, so being called was the
+    whole signal. Recovered 120/120 at L=480, with no Alice-side seam involved.
+
+Exploitable, not merely observable, because distribute_public_key_with_checks
+finishes Bob's entire pass before Charlie's first hop and both links executed
+the SAME plan. Measured at L=480, check_fraction=1/4, Werner p=0.9 on Charlie's
+link, with the key hops held bit-identical between the two arms:
+
+                    published QBER              published CHSH   REAL mismatch
+  naive             0.4667 [0.2565, 0.6768]     0.439            0.223140
+  spare the watched 0.0000 [0.0000, 0.2101]     2.673            0.223140
+
+Reproduced here as 0.4333 vs 0.0000 under this agent's own seeds and twirl
+schedule; the shape is the finding, not the digits.
+
+The module docstring of distribute.py asserted "the factory is the whole of the
+adversary's access to this loop", and
+test_the_factory_cannot_tell_a_check_round_from_a_key_round drove resource_factory
+ALONE. session.py's own declared threat model hands the same party payload_map
+and channel_monitor as well. The invariant was false and its test could not see
+it: a test that drives one third of the declared adversary measures one third of
+the property.
+
+THE FIX, three parts, all landed.
+
+A. payload_map is invoked on EVERY position and its result discarded on a check
+   round -- the same shape the recipient's basis draw already had, and for the
+   same reason. distribute.py.
+B. channel_monitor is invoked on EVERY position and its result discarded on a
+   key round. _ChannelTap in session.py. The other half of the original
+   argument is untouched: nothing is RECORDED at a key position, and
+   _check_sample_against still re-checks that at the JSON boundary.
+C. The reserved positions are dealt between the two links instead of both links
+   running the same set. QberRound/ChshRound carry a `party` tag,
+   CheckRoundPlan.rounds_by_position(party) and positions_for(party) read it,
+   and draw_check_plan deals each arm round-robin. The reserved SET is still
+   shared -- it has to be, or the two records stop indexing the same key -- so
+   what changes is which link spends which reserved position on a check.
+
+MEASURED, AFTER. The three seams' call sequences are a CONSTANT function of the
+plan: over six runs whose only difference is the session seed, six distinct
+plans produce one distinct seam view (1440 calls each). Zero bits. So the
+posterior over check sets is the prior, and an adversary who must nominate
+check_count positions expects check_count^2 / L hits -- at L=120, cf=1/4 that is
+7.5 of 30, a precision of 0.25, the base rate, measured over 200 plans. The
+payload seam's nomination is now empty; the monitor's is all L positions, whose
+precision is exactly the base rate 0.125 at L=480.
+
+The spare-the-watched exploit no longer separates its two arms: published QBER
+0.2667 and CHSH -0.487 in BOTH, against a real matched-basis key mismatch of
+0.4793 in both. The published statistic tracks the damage instead of the
+watched subset.
+
+Determinism held: one seed still reproduces the transcript JSON, the plans and
+every seam's call order byte for byte, with three seams attached and called
+3 * 2 * 2 * L times.
+
+And the honest run is unmoved. The sifted records are BIT-IDENTICAL to before --
+test_retained_positions_are_bit_identical_to_an_unchecked_run passes unchanged,
+because a reserved position dealt to the other link runs as a key round that
+consumes the same integers/random/random pattern a check round did, so the
+generator is in the same state at the start of every position and only the
+discarded entry differs. Verdicts, matched counts and record contents are
+untouched; the demo functions in attacks/channel.py still report record_rate
+['0.0204', '0.0292'] and unsymmetrised_rate ['0.0000', '0.0567'] to the digit.
+
+### `[D]` Per-link check sets cost half the sample, and that is forced, not chosen
+
+*decision · impl:uninferable-check-set · 2026-09-01T14:46:04Z*
+
+Writing down the constraint that decided the shape of part C, because three
+designs were tried against it and two are dead ends worth not re-walking.
+
+THE CONSTRAINT. A recipient who spends position p on a check round has no key
+entry at p. Symmetrisation exchanges the two records position by position and
+verification scores one declaration against both, so both records must cover
+the SAME positions. Therefore the signing positions are the complement of the
+UNION of the two links' check sets, and
+
+    |S_Bob  U  S_Charlie|  =  params.check_count
+
+is forced, because params.signing_length = L - check_count is what every
+matched-count floor and the repudiation bound are derived from, and params.py
+is not a file this change can move.
+
+Given |union| = check_count, there are exactly two ways to place two check sets
+of equal size m:
+
+  * S_Bob = S_Charlie, m = check_count. Today's design. Full sample on both
+    links, and the two links coupled: one recovery buys both.
+  * S_Bob disjoint from S_Charlie, m = check_count / 2. Independent halves, and
+    half the published sample per link.
+
+There is no middle: a partial overlap makes the union size random, and a random
+union size makes signing_length random. So the choice is a straight trade, and
+it is worth stating in exactly those terms -- you cannot have a shared signing
+key, per-link check sets AND the full sample. The shipped answer is the disjoint
+split, with CheckRoundBudget.reserved_fraction (= 2 * fraction) as the number a
+deployment sizes with, and draw_check_plan(..., parties=None) as the documented
+way back to the coupled full-sample plan.
+
+DEAD END 1: two independently drawn full-size plans, union sifted. This is the
+literal reading of "give the two links independent check plans" and it cannot be
+built: |union| is then hypergeometric, so signing_length varies run to run and
+every floor in Phase 2 is computed against a length the run does not have.
+
+DEAD END 2: give the distributor a per-link plan, e.g. check_plan as a mapping
+of party to plan. It breaks sih141/attacks/impersonation.py, whose distributor
+seam has an explicit `check_plan: CheckRoundPlan | None` parameter and calls
+check_plan.sift_key(mine). That is why the split is carried INSIDE one
+CheckRoundPlan as a per-round `party` tag rather than as a second object: every
+existing signature, that one included, is untouched, and a plan whose rounds are
+untagged still means "every link measures every reserved position".
+
+DEAD END 3 (considered, not built): interleave Bob's and Charlie's passes so
+neither finishes before the other starts. It closes exploitability at zero cost
+in sample size, but it changes the variate ORDER, so every seeded outcome in the
+project moves, and it does not give the two links different check sets -- it
+only makes the shared set useless to an adversary who has to act before he can
+learn it. Worth revisiting if the halved sample ever becomes the binding
+constraint; the two are not mutually exclusive.
+
+WHAT THE SPLIT COSTS, exactly. Each link publishes check_count/2 rounds instead
+of check_count, so every published interval half-width grows by sqrt(2) at a
+fixed check_fraction. The reserved positions dealt to the other link are not
+wasted quantum resource in any physical sense -- they are teleported and
+measured like any key round -- but they yield neither key nor a published
+observation, which is the price of the two sets differing.
+
+WHAT IT BUYS, exactly. An adversary who learns S_Bob learns a set of positions
+that carry no key on either link. The reserved positions he does NOT know are
+precisely S_Charlie, every one of which Charlie is watching. So "attack
+everything except what I learned on link one" now attacks Charlie's entire check
+sample, and the published QBER reports the attack in full. Measured: the two
+arms of the spare-the-watched experiment are now identical to the digit.
+
+### `[!]` Five stale literals in attacks/channel.py need the owning agent's pen
+
+*issue · impl:uninferable-check-set · 2026-09-01T14:46:26Z*
+
+HAND-OFF, for whoever owns sih141/attacks/channel.py.
+
+Five doctest literals in that file move as a direct consequence of the
+check-set fix. I did not edit the file -- it is owned by another agent working
+concurrently -- so the suite is red at exactly two doctests until someone with
+the pen applies this. Every qualitative claim in both docstrings still holds;
+only the digits move, and each moved for a stated reason.
+
+sih141/attacks/channel.py :: attribution_survives_symmetrisation
+
+    >>> f"{outcome.check_qber[outcome.target]:.4f}"
+    '0.0708'      ->    '0.0542'
+
+  Reason: the check sample per link halved, because the reserved positions are
+  now dealt between Bob's link and Charlie's. Unchanged and still asserted:
+  min(check_qber) '0.0000'; attributable(margin=0.02) and intervals_disjoint()
+  both True; records_attributable(margin=0.02) False; record_rate
+  ['0.0204', '0.0292']; unsymmetrised_rate ['0.0000', '0.0567']. The records
+  are bit-identical -- only the published check statistics moved.
+
+sih141/attacks/channel.py :: payload_line_is_unwatched
+
+    >>> f"{seen['resource_qber']:.4f}", f"{seen['resource_chsh']:.4f}"
+    ('0.3177', '0.8813')    ->    ('0.3104', '0.9686')
+
+    >>> f"{seen['payload_qber']:.4f}", f"{seen['payload_chsh']:.4f}"
+    ('0.0000', '2.7561')    ->    ('0.0000', '2.7993')
+
+    >>> f"{seen['payload_record_rate']:.4f}"
+    '0.3613'      ->    '0.3535'
+
+  Reasons: the first two pairs move with the halved check sample. The last one
+  moves because payload_map is now consulted on every position rather than on
+  key rounds only, so a randomised payload adversary advances its OWN generator
+  at every position -- which is the point, since a seam whose own stream
+  advanced only on key rounds carried the check set out with it. It now equals
+  resource_record_rate ('0.3535') exactly, because the two seams are offered the
+  same hops in the same order and the same adversary seed therefore draws the
+  same sequence. resource_record_rate is unchanged at '0.3535'.
+
+Two prose statements in that file are now false and are not caught by any test:
+
+  * ChannelAttack.payload's docstring: "Called once per **key round** and never
+    on a check round". It is now called on every position; what it returns on a
+    check round is discarded, so the second half of the sentence -- that an
+    attack mounted here is invisible to both published statistics -- is still
+    true and is still the point.
+  * The module docstring's channel-detector table says a ChannelSample is
+    "Recorded on every **checked** run" -- still true; but note that samples are
+    now one per check round per LINK's own half, so a run publishes check_count
+    samples per message bit, not 2 * check_count.
+
+docs/PHASE3.md has already been updated to the new figures, so it is briefly
+ahead of attacks/channel.py until this lands.
+
+### `[+]` Re-pinned channel.py's five demo figures after the per-link check-set split
+
+*fix · impl:d6-isolation · 2026-09-01T14:50:46Z*
+
+HAND-OFF ACCEPTED, and independently re-measured. The agent who landed the
+per-link check-round split left a note naming five doctest literals in
+sih141/attacks/channel.py that its change moves. channel.py is owned here, so
+this entry is the re-pin -- and every figure below was produced by running the
+two demo functions in this working tree, not copied from the note.
+
+  attribution_survives_symmetrisation
+    check_qber[target]              '0.0708'  ->  '0.0542'
+    (unchanged and still asserted: min check_qber '0.0000'; attributable and
+     intervals_disjoint both True; records_attributable False; record_rate
+     ['0.0204','0.0292']; unsymmetrised_rate ['0.0000','0.0567'] -- the records
+     are untouched, only the published check statistics moved)
+
+  payload_line_is_unwatched
+    resource_qber, resource_chsh    ('0.3177','0.8813') -> ('0.3104','0.9686')
+    payload_qber,  payload_chsh     ('0.0000','2.7561') -> ('0.0000','2.7993')
+    payload_record_rate             '0.3613'  ->  '0.3535'
+    resource_record_rate            '0.3535'  ->  unchanged
+
+Causes, as stated by the change's author and checked here. The first four move
+with the halved per-link check sample. payload_record_rate moves because
+payload_map is now consulted at every position, so the payload adversary
+advances its own generator at every position and is offered exactly the hops the
+resource adversary is; under one seed it therefore draws the same sequence and
+the two rates coincide at 0.3535. That coincidence is now stated in the docstring
+as a consequence rather than left as two numbers that happen to match.
+
+The qualitative claim of both demos is intact: the payload line is still
+unwatched (0.0000 QBER, 2.7993 CHSH against 0.3104 and 0.9686 on the resource
+line at comparable key damage), and check logs still separate the attacked link
+from the clean one with disjoint intervals where the records do not.
+
+PROSE THAT WAS FALSE, verified before rewriting rather than after. Three places
+said the payload seam is "never called on a check round". Measured at L=24,
+check_fraction=0.25: payload_map is invoked 24/24 positions for both parties and
+both message bits. What changed is that its RESULT is discarded on a check
+round, not that it is not called -- and the distinction is the point of the
+change, because a seam whose own generator advanced only on key rounds carried
+the check set out in the gaps. The invisibility claim survives unchanged and is
+still what the doctest measures. Also corrected: a run publishes check_count
+ChannelSamples per message bit, each link watching its own half, not one per
+link per reserved position.
+
+### `[-]` Hand-off taken up: attacks/channel.py literals landed, two prose lines still stale
+
+*note · impl:uninferable-check-set · 2026-09-01T14:56:43Z*
+
+The hand-off in the entry above has landed: sih141/attacks/channel.py now
+carries all five updated literals, applied by the agent who owns that file, and
+both doctests pass. Recorded here rather than by editing that entry because
+this journal is append-only, and because a reader who finds the hand-off should
+not have to guess whether it was ever taken up.
+
+Still open in that file, and not caught by any test because it is prose:
+
+  * ChannelAttack.payload's docstring still says "Called once per **key round**
+    and never on a check round". It is now called on every position; what it
+    returns on a check round is discarded, so the sentence that follows -- that
+    an attack mounted here is invisible to both published statistics -- is
+    still true and is still the point.
+  * The module docstring's detector table says a ChannelSample is "Recorded on
+    every **checked** run", which remains true, but a run now publishes
+    check_count samples per message bit rather than 2 * check_count: the
+    reserved positions are dealt between the links, so each link's samples are
+    its own half.
+
+### `[-]` Stale probe rationale left in the isolation suite for its owner
+
+*note · impl:uninferable-check-set · 2026-09-01T14:58:00Z*
+
+One more stale rationale, left alone because its file is being edited
+concurrently and the edit is prose only.
+
+tests/test_phase3_isolation_suite.py :: _channel_payload_probe
+
+Its docstring says ``check_fraction`` is zero because "``payload_map`` is
+called on key rounds only and which positions are key rounds comes out of the
+session's own generator, so the set of contexts a payload adversary is
+legitimately offered moves with the session seed even when the adversary is
+flawless". That was true and is not any more: the seam is offered every
+position whether or not a plan is in force, which is precisely the fix that
+closed the check-set channel. The zero is now a harmless simplification rather
+than a requirement, and the probe passes either way.
+
+The twin of this docstring in tests/test_attack_channel.py :: _payload_probe
+has been updated in place, so the two now disagree; whoever owns the isolation
+suite should bring it into line. The same rationale is quoted a third time in
+docs/PHASE3.md section 7, which has been updated already.
+
+Neither is a test failure. All three are prose, which is exactly the category
+this project has shipped four wrong numbers in.
+
+### `[*]` A fifth wrong prose number: the check-(a) mutation cost 7 failures, not 6
+
+*finding · impl:d6-isolation · 2026-09-01T15:09:44Z*
+
+docs/PHASE3.md's falsification table said the mutation "IsolationReport.
+reads_the_session returns False" turned the suite RED with "6 failures". It is 7.
+
+Measured, not inferred: `git archive HEAD` into a scratch directory, the one
+line mutated there, and
+
+    python -m pytest tests/test_attack_isolation.py \
+        tests/test_phase3_isolation_suite.py sih141/attacks/isolation.py -q
+
+run against that untouched pre-audit tree. Seven FAILED lines. The working tree
+is not involved, so this is not a consequence of anything landed in this task --
+the number was wrong when it was written.
+
+Small, and it is the fifth wrong prose figure this project has shipped, which is
+the point of recording it. The document's own D5 note says the numbers in it are
+prose and therefore unchecked; that is exactly why each one has to be measured
+when it is written rather than counted from a failure list scrolled past once.
+
+The row now reads 24 (the same mutation on the current tree, measured) against 7
+(pre-audit, measured), and the second mutation row -- observe() installing no
+SessionEnvironment -- reads 18, likewise measured. Both mutation sites were
+restored from a scratchpad snapshot and verified byte-identical afterwards.

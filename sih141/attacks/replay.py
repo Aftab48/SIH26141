@@ -122,6 +122,7 @@ from typing import Any, Final
 
 import numpy as np
 
+from sih141.attacks.isolation import require_distinct_streams
 from sih141.attacks.statistics import wilson_bounds
 from sih141.protocol.analysis import forgery_probability
 from sih141.protocol.keys import KeyElement, PrivateKey
@@ -134,6 +135,7 @@ from sih141.protocol.tally import (
     matched_count_message,
 )
 from sih141.protocol.verify import (
+    AbortReason,
     ConsumedRecords,
     VerificationAbort,
     VerificationResult,
@@ -287,12 +289,18 @@ def _as_generator(value: Any, name: str) -> np.random.Generator:
 def _distinct_generators(
     world: Any, attack: Any
 ) -> tuple[np.random.Generator, np.random.Generator]:
-    """Validate both generators and refuse the same object for both.
+    """Validate both generators and refuse a shared stream (D6).
 
     The one mistake this module exists to make impossible. An adversary drawing
-    from the generator that also builds the sessions is an adversary correlated
+    from the randomness that also builds the sessions is an adversary correlated
     with the run he is attacking, and every rate he reports is fiction --
     :mod:`sih141.attacks.isolation` demonstrates the mechanism.
+
+    It used to refuse only the same *object*, which is the form of the mistake
+    nobody makes. The form everybody makes is one seed used twice, and two
+    generators built from one seed are one stream: identical bytes, for ever.
+    :func:`~sih141.attacks.isolation.same_stream` is the comparison that catches
+    both.
 
     Parameters
     ----------
@@ -311,19 +319,22 @@ def _distinct_generators(
     TypeError
         If either is not a generator.
     ValueError
-        If they are the same object.
+        If they are the same stream -- the same object, the same position in one
+        stream, or two generators derived from one seed.
     """
     checked_world = _as_generator(world, "rng")
     checked_attack = _as_generator(attack, "attack_rng")
-    if checked_world is checked_attack:
-        raise ValueError(
-            "rng and attack_rng must be different generators. The world's "
-            "randomness builds the sessions and the adversary's is his own "
-            "(D6); sharing one object makes the adversary's choices correlated "
-            "with the run he is attacking, and every rate measured that way is "
-            "fiction while looking entirely legitimate. See "
-            "sih141.attacks.isolation."
-        )
+    require_distinct_streams(
+        checked_world,
+        checked_attack,
+        left_name="rng",
+        right_name="attack_rng",
+        detail=(
+            "rng is the world's and builds the sessions; attack_rng is the "
+            "adversary's own and nothing he does may be a function of the "
+            "first."
+        ),
+    )
     return checked_world, checked_attack
 
 
@@ -1104,6 +1115,103 @@ def _refused(outcome: VerificationResult | VerificationAbort) -> bool:
     return isinstance(outcome, VerificationAbort)
 
 
+def _describe(outcome: VerificationResult | VerificationAbort) -> str:
+    """Return a short phrase naming what a verifier did, for a message.
+
+    Parameters
+    ----------
+    outcome : VerificationResult or VerificationAbort
+        The verifier's outcome.
+
+    Returns
+    -------
+    str
+
+    Examples
+    --------
+    >>> from sih141.attacks.replay import _describe
+    >>> from sih141.protocol.params import Party
+    >>> from sih141.protocol.verify import AbortReason, VerificationAbort
+    >>> _describe(
+    ...     VerificationAbort(
+    ...         party=Party.CHARLIE,
+    ...         reason=AbortReason.BELOW_FLOOR,
+    ...         matched_count=1,
+    ...         minimum_matched=3,
+    ...         expected_matched=16.0,
+    ...         key_length=24,
+    ...         message_bit=0,
+    ...     )
+    ... )
+    "no verdict, reason 'matched-count-below-floor'"
+    """
+    if isinstance(outcome, VerificationAbort):
+        return f"no verdict, reason {str(outcome.reason.value)!r}"
+    return f"a verdict, accepted={outcome.accepted}"
+
+
+def _round_already_spent(
+    outcome: VerificationResult | VerificationAbort,
+) -> bool:
+    """Return whether an outcome is the ledger refusing a spent round.
+
+    The mechanism :func:`measure_ledger_denial_of_service` measures, isolated
+    from every other way a declaration can fail to be accepted. That function
+    used to score itself on ``not _accepted(...)``, which is the adversary's
+    *goal* but not his *mechanism*, and the two come apart at a degenerate key
+    length: an honest declaration that was never going to be accepted counts as
+    a burned round under the first and as nothing at all under the second. A
+    published ``0/300`` computed the first way is a statement about the seed
+    that happened not to produce such a trial.
+
+    Parameters
+    ----------
+    outcome : VerificationResult or VerificationAbort
+        What the verifier did with the honest declaration.
+
+    Returns
+    -------
+    bool
+        ``True`` only for
+        :attr:`~sih141.protocol.verify.AbortReason.RECORD_ALREADY_VERIFIED`.
+
+    Examples
+    --------
+    >>> from sih141.attacks.replay import _round_already_spent
+    >>> from sih141.protocol.params import Party
+    >>> from sih141.protocol.verify import AbortReason, VerificationAbort
+    >>> spent = VerificationAbort(
+    ...     party=Party.CHARLIE,
+    ...     reason=AbortReason.RECORD_ALREADY_VERIFIED,
+    ...     matched_count=0,
+    ...     minimum_matched=1,
+    ...     expected_matched=16.0,
+    ...     key_length=24,
+    ...     message_bit=0,
+    ... )
+    >>> _round_already_spent(spent)
+    True
+
+    A refusal for any other reason is not this attack succeeding:
+
+    >>> starved = VerificationAbort(
+    ...     party=Party.CHARLIE,
+    ...     reason=AbortReason.BELOW_FLOOR,
+    ...     matched_count=1,
+    ...     minimum_matched=3,
+    ...     expected_matched=16.0,
+    ...     key_length=24,
+    ...     message_bit=0,
+    ... )
+    >>> _round_already_spent(starved)
+    False
+    """
+    return (
+        isinstance(outcome, VerificationAbort)
+        and outcome.reason is AbortReason.RECORD_ALREADY_VERIFIED
+    )
+
+
 def _signed_round(
     params: ProtocolParams, message_bit: int, rng: np.random.Generator
 ) -> tuple[Signature, dict[Party, RecipientRecord]]:
@@ -1535,10 +1643,21 @@ def measure_ledger_denial_of_service(
     where Bob counts against a declaration he is not the one who will forward,
     and a dishonest Bob has no reason to cooperate with it.
 
-    **Success is that the honest declaration failed to be accepted**, which is
-    the adversary's goal here -- not acceptance of anything of his. That
-    inversion is why :class:`AttackOutcome` names the goal in each function
-    rather than assuming one.
+    **Success is that the honest declaration was refused as
+    :attr:`~sih141.protocol.verify.AbortReason.RECORD_ALREADY_VERIFIED`** --
+    the round spent by the forgery -- and not acceptance of anything of the
+    adversary's. That inversion is why :class:`AttackOutcome` names the goal in
+    each function rather than assuming one.
+
+    It is deliberately the *mechanism* and not the looser "the honest
+    declaration was not accepted", which is what this counted until the Phase 3
+    audit. The two agree on every healthy trial and come apart on a degenerate
+    one: below ``L = 140`` both matched-count floors degenerate, an honest run
+    can fail on its own, and the loose reading scores that as the adversary
+    burning a round he never touched. A ``0/300`` produced that way is a
+    statement about the seed that happened to contain no such trial, not about
+    the attack. Trials of that kind are now refused outright, loudly, rather
+    than folded into either column -- see the :exc:`ValueError` below.
 
     What this does *not* say: the ledger is still unpoisonable from outside
     (:func:`measure_ledger_poisoning`), the round identifier is still
@@ -1559,7 +1678,7 @@ def measure_ledger_denial_of_service(
     rng : numpy.random.Generator
         Keyword-only. The world's generator, which builds the rounds.
     attack_rng : numpy.random.Generator
-        Keyword-only, and a **different object** (D6): the adversary's own,
+        Keyword-only, and a **different stream** (D6): the adversary's own,
         from which the forged key is drawn.
     defended : bool
         Keyword-only. ``True`` gives Charlie the ledger and the stamped log.
@@ -1590,8 +1709,10 @@ def measure_ledger_denial_of_service(
     Returns
     -------
     AttackOutcome
-        ``successes`` counts trials where the honest declaration was not
-        accepted.
+        ``successes`` counts trials where the honest declaration was refused
+        because the round had already been spent; ``refusals`` counts every
+        no-verdict, so the two are equal exactly when the ledger was the only
+        thing refusing.
 
     Raises
     ------
@@ -1601,7 +1722,10 @@ def measure_ledger_denial_of_service(
         not one.
     ValueError
         If ``trials`` is not positive, ``defended`` is not a bool, ``counts``
-        names no ordering, or the two generators are the same object.
+        names no ordering, the two generators are the same stream (D6), or a
+        trial's honest declaration was neither accepted nor denied by the
+        ledger -- a trial in which this attack was not measured, and which must
+        not be silently scored either way.
 
     Examples
     --------
@@ -1649,7 +1773,7 @@ def measure_ledger_denial_of_service(
 
     successes = 0
     refusals = 0
-    for _ in range(count):
+    for trial in range(count):
         signature, records = _signed_round(checked, 0, world)
         record = _present(records[Party.CHARLIE], defended=defended)
         ledger = _ledger(Party.CHARLIE, defended=defended)
@@ -1684,8 +1808,27 @@ def measure_ledger_denial_of_service(
         )
         if _refused(honest):
             refusals += 1
-        if not _accepted(honest):
+        if _round_already_spent(honest):
             successes += 1
+        elif not _accepted(honest):
+            # Neither burned nor accepted. The attack was not measured on this
+            # trial, and scoring it as a success -- which "not accepted" did --
+            # is what made a published 0/N a statement about the seed.
+            raise ValueError(
+                f"trial {trial} of {count}: the honest declaration was neither "
+                f"accepted nor denied by the ledger. It came back as "
+                f"{_describe(honest)}, which is not this attack's mechanism: "
+                f"success here is the round having been *spent* by the "
+                f"forgery, so a trial whose honest declaration would not have "
+                f"been accepted anyway measures nothing at all. Counting such "
+                f"a trial as a success -- which scoring on 'not accepted' did "
+                f"-- turns a published rate into a statement about this seed "
+                f"rather than about the attack, and counting it as a failure "
+                f"would understate a defence that never got to act.\n"
+                f"L = {checked.key_length}: below 140 both matched-count "
+                f"floors degenerate and an honest run can fail on its own. "
+                f"Raise the key length, or investigate the reason above."
+            )
     return AttackOutcome(
         label=(
             f"hop burns Charlie's round before the genuine declaration "

@@ -65,6 +65,18 @@ The two things every one of them has to satisfy
     that module -- and publishes repudiation rates that are fiction while
     leaving the transcript, the seams and the printed bound looking normal.
 
+    The first half of that check was inert until the Phase 3 audit: every probe
+    deleted the session seed and no shipped adversary could receive it, so all
+    fourteen rows passed a check none of them could fail. The seed now reaches
+    the candidate through a :class:`~sih141.attacks.isolation.SessionEnvironment`
+    installed around every probe call, and ``test_the_session_channel_is_live_
+    on_every_row`` re-runs each shipped adversary with the session's own seed
+    folded into its generator to show, per row, that the check catches it. The
+    guards on the measurement entry points changed with it: two generators built
+    from one seed are one stream
+    (:func:`~sih141.attacks.isolation.same_stream`), and an object-identity test
+    never saw the difference.
+
 :mod:`sih141.attacks.statistics`
     One Wilson interval and one agreement test for the whole suite. The
     agreement band is computed from the sampling standard error at the
@@ -144,17 +156,25 @@ from sih141.attacks.isolation import (
     MIN_JUSTIFICATION,
     SCENARIO_PARAMS,
     SCENARIO_SEED,
+    SESSION_MATERIAL_BYTES,
     AttackBuilder,
     AttackIsolationError,
     DecisionProbe,
     IsolationReport,
+    SessionEnvironment,
     SignerScenario,
+    active_session,
     assert_attack_isolated,
     canonical,
     check_attack_isolation,
+    derived_from_seed,
     forwarder_probe,
+    require_distinct_streams,
+    same_stream,
+    session_environment,
     signer_probe,
     signer_scenario,
+    stream_fingerprint,
 )
 from sih141.attacks.replay import (
     COUNTS_AS_RECEIVED,
@@ -206,15 +226,24 @@ __all__ = [
     "MIN_JUSTIFICATION",
     "SCENARIO_PARAMS",
     "SCENARIO_SEED",
+    "SESSION_MATERIAL_BYTES",
     "AttackBuilder",
     "AttackIsolationError",
     "DecisionProbe",
     "IsolationReport",
+    "SessionEnvironment",
     "SignerScenario",
+    "active_session",
     "assert_attack_isolated",
     "canonical",
     "check_attack_isolation",
+    "session_environment",
     "signer_scenario",
+    # -- ... and the stream identity its guards are built on ------------------ #
+    "derived_from_seed",
+    "require_distinct_streams",
+    "same_stream",
+    "stream_fingerprint",
     # -- the ready-made probes, one per seam ---------------------------------- #
     "distributor_probe",
     "forwarder_probe",

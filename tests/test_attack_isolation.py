@@ -37,6 +37,7 @@ will point at it, one line per adversary.
 from __future__ import annotations
 
 import dataclasses
+import random
 
 import numpy as np
 import pytest
@@ -54,6 +55,16 @@ from sih141.attacks import (
     check_attack_isolation,
     signer_probe,
     signer_scenario,
+)
+from sih141.attacks.isolation import (
+    SESSION_MATERIAL_BYTES,
+    SessionEnvironment,
+    active_session,
+    derived_from_seed,
+    require_distinct_streams,
+    same_stream,
+    session_environment,
+    stream_fingerprint,
 )
 from sih141.protocol import (
     KeyElement,
@@ -200,6 +211,149 @@ class SessionSeedForger:
         declared = key_from_record(predicted, message_bit=message_bit)
         hedged = self._rng.choice(len(declared), size=2, replace=False)
         return _perturb(declared, [int(index) for index in hedged], message_bit)
+
+
+class AmbientSessionForger:
+    """**DELIBERATELY BROKEN.** The control for the route nothing was watching.
+
+    The permanent negative control the Phase 3 audit's first finding needed.
+    :class:`SessionSeedForger` reads the seed through its **constructor**, which
+    was the one channel the check ever had live; every ready-made probe wrote
+    ``del session_seed`` on its first line, so an adversary that took the seed
+    at *call* time -- the way an attack defined in the same module as the
+    harness's ``SEED`` constant does, without declaring anything -- was invisible
+    to check (a), and all fourteen shipped rows passed a check none of them
+    could fail.
+
+    This is that adversary. Its constructor is
+    :class:`OutsideForger`-shaped and takes ``rng`` alone, so
+    :attr:`~sih141.attacks.isolation.IsolationReport.session_seed_offered` is
+    ``False`` for it exactly as it is for every shipped attack. It reaches the
+    session through :func:`~sih141.attacks.isolation.active_session` while it is
+    being called, which is the check's stand-in for that module-level constant.
+
+    It draws from its own generator as well, so it fails check (a) and passes
+    check (b) -- a control that failed both would not tell the halves apart.
+    """
+
+    def __init__(self, *, rng: np.random.Generator) -> None:
+        self._rng = rng
+
+    def __call__(
+        self,
+        message_bit: int,
+        keys: tuple[PrivateKey, PrivateKey],
+        params: ProtocolParams,
+        *,
+        records: object,
+    ) -> Signature:
+        """Take the session seed at call time and hedge according to it.
+
+        One position, offset by the stolen seed, rather than an extra position
+        beside its own: two flips at one index cancel, and a control whose
+        defect can cancel is a control that reports a pass it did not earn.
+        """
+        del keys
+        own = records[message_bit][Party.BOB]  # type: ignore[index]
+        declared = key_from_record(own, message_bit=message_bit)
+        environment = active_session()
+        stolen = 0 if environment is None else environment.seed
+        mine = int(self._rng.integers(len(declared)))
+        return _perturb(
+            declared, [(mine + stolen) % len(declared)], message_bit
+        )
+
+
+class GlobalRandomnessForger:
+    """**DELIBERATELY BROKEN.** The control for the ambient-randomness route.
+
+    Draws its hedge from :mod:`numpy.random`'s process-global stream instead of
+    from the generator it was handed, which convention **D3** forbids.
+
+    Note what the :class:`~sih141.attacks.isolation.SessionEnvironment` changes
+    here, because it is not "caught rather than missed". Without one this
+    candidate is *also* flagged -- the global stream simply advances from call to
+    call, so its five decisions differ -- but it is flagged for being
+    nondeterministic rather than for being correlated, and that verdict depends
+    on whatever else in the process happened to touch the global stream. With
+    the environment the global stream is a deterministic function of the session
+    seed, exactly as it is in a harness that seeds it from the same constant it
+    gives the session, so the failure means what the report says it means: this
+    adversary's choices move with the session's randomness.
+    """
+
+    def __init__(self, *, rng: np.random.Generator) -> None:
+        del rng  # It has one and does not use it. That is half the defect.
+
+    def __call__(
+        self,
+        message_bit: int,
+        keys: tuple[PrivateKey, PrivateKey],
+        params: ProtocolParams,
+        *,
+        records: object,
+    ) -> Signature:
+        """Hedge from the global stream -- nobody's own randomness."""
+        del keys
+        own = records[message_bit][Party.BOB]  # type: ignore[index]
+        declared = key_from_record(own, message_bit=message_bit)
+        where = int(np.random.randint(len(declared)))  # noqa: NPY002
+        return _perturb(declared, [where], message_bit)
+
+
+class SessionStreamForger:
+    """**DELIBERATELY BROKEN.** The control for one seed used twice.
+
+    The defect :func:`~sih141.attacks.isolation.same_stream` refuses at the
+    measurement entry points, seen from the other side. The harness folds the
+    session's own seed into this adversary's generator -- the "let us make each
+    trial reproducible" line that a real experiment writes without noticing --
+    so its stream is a function of the 32 bytes the session derived all three of
+    *its* streams from.
+
+    The class itself is written exactly as an honest adversary would be, and
+    that is the point: the defect is in :func:`build_from_the_session_stream`,
+    not here. Its decisions do move with the generator it was handed, so it
+    passes check (b) and fails check (a) alone -- a control that failed both
+    would not tell the two halves apart.
+    """
+
+    def __init__(self, *, rng: np.random.Generator) -> None:
+        self._rng = rng
+
+    def __call__(
+        self,
+        message_bit: int,
+        keys: tuple[PrivateKey, PrivateKey],
+        params: ProtocolParams,
+        *,
+        records: object,
+    ) -> Signature:
+        """Declare his own log with a few positions redrawn from his stream."""
+        del keys
+        own = records[message_bit][Party.BOB]  # type: ignore[index]
+        declared = key_from_record(own, message_bit=message_bit)
+        hedged = self._rng.choice(len(declared), size=2, replace=False)
+        return _perturb(declared, [int(index) for index in hedged], message_bit)
+
+
+def build_from_the_session_stream(
+    *, rng: np.random.Generator
+) -> SessionStreamForger:
+    """Build a :class:`SessionStreamForger` with the session's seed mixed in.
+
+    The harness half of the defect, isolated into one function so the adversary
+    class can stay honest. This is the line a real experiment writes without
+    noticing: one ``SEED``, folded into everything so that "the run reproduces".
+
+    The adversary's own seed is kept as well, so the candidate still passes
+    check (b) and check (a) is the only half that fires.
+    """
+    environment = active_session()
+    seed = SCENARIO_SEED if environment is None else environment.seed
+    material = int.from_bytes(rng.bytes(8), "big")
+    mixed = np.random.SeedSequence([material, seed])
+    return SessionStreamForger(rng=np.random.default_rng(mixed))
 
 
 class DeafForger:
@@ -376,6 +530,265 @@ def test_the_negative_control_really_does_predict_the_private_coins() -> None:
     assert len(actual) == 2 * COIN_PREDICTION_LENGTH == 120
     assert int((predicted == actual).sum()) == 120
     assert np.array_equal(predicted, actual)
+
+
+# --------------------------------------------------------------------------- #
+# The route nothing was watching, and the proof that it is watched now
+# --------------------------------------------------------------------------- #
+
+
+def test_check_a_is_not_vacuous_it_catches_a_call_time_reader() -> None:
+    """The regression test for the Phase 3 audit's first finding.
+
+    Every ready-made probe wrote ``del session_seed``, no shipped adversary
+    declared a ``session_seed`` constructor argument, and so nothing whatsoever
+    varied between the five calls check (a) compares. Fourteen adversaries
+    passed a check none of them could fail.
+
+    :class:`AmbientSessionForger` is that gap made concrete: a constructor
+    taking ``rng`` alone -- so ``session_seed_offered`` is ``False``, exactly as
+    for every shipped attack -- which nonetheless takes the seed while it is
+    being called. Under the shipped check it passed. It must not now.
+    """
+    report = check_attack_isolation(AmbientSessionForger, signer_probe())
+    assert report.session_seed_offered is False, (
+        "the point of this control is that it dodges the constructor channel"
+    )
+    assert report.reads_the_session is True, report.summary()
+    assert report.uses_its_own_generator is True  # ... so it is (a) that fired
+    assert report.isolated is False
+    assert set(report.offending_session_seeds) <= set(DEFAULT_SESSION_SEEDS[1:])
+    assert report.offending_session_seeds != ()
+    with pytest.raises(AttackIsolationError, match="reads the session"):
+        assert_attack_isolated(AmbientSessionForger, signer_probe())
+
+
+def test_an_adversary_drawing_from_global_randomness_is_caught() -> None:
+    """D3's ban on global randomness, enforced by check (a) rather than asked for.
+
+    A harness written for reproducibility seeds the process-global stream from
+    the same constant it gives the session. An adversary drawing there is
+    therefore correlated with the run it is attacking, and its rate is fiction
+    for the same reason a seed-reader's is.
+
+    The environment also makes the verdict *reproducible*: the global stream is
+    now a deterministic function of the session seed, so the same candidate
+    fails the same way on every run of this suite rather than depending on what
+    else in the process last touched that stream.
+    """
+    report = check_attack_isolation(GlobalRandomnessForger, signer_probe())
+    assert report.reads_the_session is True, report.summary()
+    assert report.isolated is False
+    again = check_attack_isolation(GlobalRandomnessForger, signer_probe())
+    assert (
+        again.decisions_across_session_seeds
+        == report.decisions_across_session_seeds
+    )
+
+
+def test_an_adversary_seeded_from_the_session_is_caught() -> None:
+    """One seed used twice, seen from the adversary's side.
+
+    The measurement entry points refuse this at the door
+    (:func:`~sih141.attacks.isolation.same_stream`); an attack wired up by hand
+    can still arrive at it, and check (a) is the second line of defence.
+    """
+    report = check_attack_isolation(
+        build_from_the_session_stream, signer_probe(), name="SessionStream"
+    )
+    assert report.reads_the_session is True, report.summary()
+    assert report.uses_its_own_generator is True  # (b) still passes: (a) fired
+    assert report.isolated is False
+
+
+def test_the_three_routes_are_the_only_ones_that_move_a_clean_adversary() -> None:
+    """The routes are open; an isolated adversary is untouched by them.
+
+    A check that offers a leak has to be shown not to *create* one: the honest
+    candidates must still pass with the environment installed, or the suite
+    would have traded a vacuous check for a false-failure machine.
+    """
+    for build in (IsolatedForger, build_view_forger, DrawsAtCallTime):
+        report = check_attack_isolation(build, signer_probe())
+        assert report.isolated, report.summary()
+        assert report.offending_session_seeds == ()
+
+
+def test_the_environment_reproduces_the_session_s_own_material() -> None:
+    """Faithfulness: the leak the environment offers is the real one.
+
+    A control that merely produced different output per seed would catch a
+    defect without standing for *this* one. What makes the session seed a
+    catastrophe is that it reconstructs both recipients' private symmetrisation
+    coins exactly, and it does so because ``QDSSession`` draws its whole seed
+    material -- all three streams -- from one ``rng.bytes(32)`` off the
+    generator it is given. :meth:`SessionEnvironment.stream_material` is that
+    draw, and this pins the two together.
+    """
+    environment = SessionEnvironment(seed=SCENARIO_SEED)
+    assert len(environment.stream_material()) == SESSION_MATERIAL_BYTES
+    assert environment.stream_material() == np.random.default_rng(
+        SCENARIO_SEED
+    ).bytes(SESSION_MATERIAL_BYTES)
+
+    # And a session built from that seed is reproducible from it, coin for coin.
+    params = ProtocolParams(key_length=COIN_PREDICTION_LENGTH)
+    honest = QDSSession(params, rng=np.random.default_rng(SCENARIO_SEED))
+    honest.distribute()
+    rebuilt = QDSSession(params, rng=environment.session_rng())
+    rebuilt.distribute()
+    assert rebuilt.records == honest.records
+    assert rebuilt.raw_records == honest.raw_records
+
+
+def test_the_environment_restores_everything_it_touched() -> None:
+    """A check must leave no trace on the process it ran in.
+
+    Global state written and not handed back is how one test starts depending
+    on the order the suite happens to run in.
+    """
+    numpy_before = np.random.get_state()
+    stdlib_before = random.getstate()
+    assert active_session() is None
+    with session_environment(904) as environment:
+        assert active_session() is environment
+        _ = np.random.random()
+        _ = random.random()
+    assert active_session() is None
+    after = np.random.get_state()
+    assert after[0] == numpy_before[0]
+    assert np.array_equal(after[1], numpy_before[1])
+    assert after[2:] == numpy_before[2:]
+    assert random.getstate() == stdlib_before
+
+
+def test_nested_environments_hand_the_outer_one_back_intact() -> None:
+    """The docstring claims nesting is safe, so nesting is pinned.
+
+    It happens for real: a probe that runs a whole session inside the
+    environment -- the channel and distributor probes both do -- could one day
+    want an environment of its own, and an inner one that clobbered the outer
+    stream would silently change what check (a) was comparing.
+    """
+    before = np.random.get_state()
+    with session_environment(901) as outer:
+        first = float(np.random.random())
+        with session_environment(902) as inner:
+            assert active_session() is inner
+        assert active_session() is outer
+    with session_environment(901):
+        again = float(np.random.random())
+    assert first == again
+    assert np.array_equal(np.random.get_state()[1], before[1])
+
+
+def test_the_environment_is_restored_even_when_the_probe_raises() -> None:
+    """A probe that blows up must not leave the globals seeded behind it."""
+    before = np.random.get_state()
+    with pytest.raises(RuntimeError, match="probe exploded"):
+        with session_environment(905):
+            raise RuntimeError("probe exploded")
+    assert active_session() is None
+    assert np.array_equal(np.random.get_state()[1], before[1])
+
+
+def test_the_environment_validates_its_seed() -> None:
+    """It is the integer a harness hands default_rng, and nothing else."""
+    with pytest.raises(TypeError, match="seed must be an int"):
+        SessionEnvironment(seed="901")  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="seed must be an int"):
+        SessionEnvironment(seed=True)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="non-negative"):
+        SessionEnvironment(seed=-1)
+
+
+# --------------------------------------------------------------------------- #
+# Stream identity: what the guards were comparing, and what they compare now
+# --------------------------------------------------------------------------- #
+
+
+def test_two_generators_from_one_seed_are_one_stream() -> None:
+    """The Phase 3 audit's second finding, stated as the property it needs.
+
+    The shipped guards refused only the same *object*, which is the form of the
+    mistake nobody makes. Everybody writes one ``SEED`` constant and two
+    ``default_rng(SEED)`` calls, and those are one stream byte for byte -- which
+    is the whole leak, since a session's three streams come out of one 32-byte
+    draw off the generator it is handed.
+    """
+    left, right = np.random.default_rng(7), np.random.default_rng(7)
+    assert left is not right
+    assert same_stream(left, right)
+    assert left.bytes(32) == np.random.default_rng(7).bytes(32)
+    assert not same_stream(np.random.default_rng(7), np.random.default_rng(8))
+
+
+def test_an_advanced_generator_is_still_the_same_stream() -> None:
+    """Consuming from one of them does not make it independent of the other."""
+    advanced = np.random.default_rng(7)
+    _ = advanced.random(1000)
+    fresh = np.random.default_rng(7)
+    # Its position has moved, so the state half of the fingerprint differs ...
+    assert stream_fingerprint(advanced)[1] != stream_fingerprint(fresh)[1]
+    # ... and its derivation has not, which is what makes it the same stream.
+    assert stream_fingerprint(advanced)[0] == stream_fingerprint(fresh)[0]
+    assert same_stream(advanced, fresh)
+
+
+def test_spawned_children_are_independent_and_are_not_refused() -> None:
+    """The guard must not refuse the one correct way to split a generator.
+
+    ``parent.spawn(2)`` is what a caller who wants two reproducible, genuinely
+    independent streams should reach for, so refusing it would push people back
+    towards two ``default_rng`` calls on one seed.
+    """
+    parent = np.random.default_rng(7)
+    first, second = parent.spawn(2)
+    assert not same_stream(first, second)
+    assert not same_stream(first, np.random.default_rng(7))
+    require_distinct_streams(
+        first, second, left_name="rng", right_name="attack_rng"
+    )
+
+
+def test_derived_from_seed_is_the_seed_shaped_half_of_the_same_test() -> None:
+    """The seed-shaped half, for the entry points that take a seed and an rng.
+
+    :func:`~sih141.attacks.impersonation.run_impersonation` and
+    :func:`~sih141.attacks.starvation.measure_starvation` take a session *seed*
+    for one role and a *generator* for the other, so the two-generator guard
+    does not fit them; before the audit they had no guard at all.
+    """
+    assert derived_from_seed(np.random.default_rng(500_000), 500_000)
+    assert not derived_from_seed(np.random.default_rng(4242), 500_000)
+    used = np.random.default_rng(500_000)
+    _ = used.integers(0, 2, size=64)
+    assert derived_from_seed(used, 500_000)
+
+
+def test_require_distinct_streams_explains_the_leak_and_names_a_fix() -> None:
+    """"Refused" is not actionable; the mechanism and the repair are."""
+    with pytest.raises(ValueError) as excinfo:
+        require_distinct_streams(
+            np.random.default_rng(9),
+            np.random.default_rng(9),
+            left_name="rng",
+            right_name="session_rng",
+            detail="rng is the forger's own.",
+        )
+    message = str(excinfo.value)
+    assert "rng and session_rng are the same stream (D6)" in message
+    assert "symmetrisation coin" in message
+    assert "rng is the forger's own." in message
+    assert "spawn(2)" in message
+
+
+def test_stream_helpers_refuse_a_non_generator() -> None:
+    """A seed is not a generator, and the message says so throughout D3."""
+    with pytest.raises(TypeError, match="numpy.random.Generator"):
+        stream_fingerprint(7)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="numpy.random.Generator"):
+        same_stream(np.random.default_rng(1), 1)  # type: ignore[arg-type]
 
 
 def test_the_deaf_forger_is_caught_by_check_b() -> None:

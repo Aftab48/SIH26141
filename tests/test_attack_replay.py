@@ -6,9 +6,10 @@ get wrong.
 **D6.** :class:`~sih141.attacks.replay.ReplayingForwarder` is put through
 :func:`~sih141.attacks.isolation.assert_attack_isolated`, in both directions,
 and the measurement functions are shown to refuse the two generators being the
-same object. An adversary correlated with the session it attacks publishes rates
-that are fiction while looking entirely legitimate, and every Phase 5 figure
-would inherit the lie.
+same *stream* -- the same object, or two generators built from one seed, which
+is one stream byte for byte and is how the defect actually arrives. An adversary
+correlated with the session it attacks publishes rates that are fiction while
+looking entirely legitimate, and every Phase 5 figure would inherit the lie.
 
 **The before/after.** Every attack is measured with the defence enabled and with
 it disabled, and the tests assert the *gap* rather than only the defended
@@ -165,8 +166,42 @@ def test_measurements_refuse_one_generator_for_both_roles(call) -> None:
     session seam.
     """
     shared = world(7)
-    with pytest.raises(ValueError, match="different generators"):
+    with pytest.raises(ValueError, match="the same stream"):
         call(shared)
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda a, b: measure_ledger_denial_of_service(
+            params=TINY, trials=1, rng=a, attack_rng=b, defended=True
+        ),
+        lambda a, b: measure_ledger_poisoning(
+            params=TINY, trials=1, rng=a, attack_rng=b
+        ),
+        lambda a, b: measure_shared_identifier(
+            params=TINY, trials=1, rng=a, attack_rng=b
+        ),
+        lambda a, b: measure_shared_identifier_self_denial(
+            params=TINY, trials=1, rng=a, attack_rng=b
+        ),
+    ],
+)
+def test_measurements_refuse_two_generators_built_from_one_seed(call) -> None:
+    """The form of the defect that the object test used to wave through.
+
+    Nobody passes the same object twice by accident. What everybody does write
+    is one ``SEED`` constant and two ``default_rng(SEED)`` calls -- and those
+    two generators are one stream, byte for byte, for ever. The adversary can
+    then reproduce the session's 32-byte material and with it every private
+    symmetrisation coin, which is the whole subject of
+    :mod:`sih141.attacks.isolation`.
+    """
+    with pytest.raises(ValueError, match="the same stream"):
+        call(world(7), world(7))
+    # And two unrelated seeds are accepted, so the guard is not refusing
+    # everything.
+    call(world(7), adversary(8))
 
 
 def test_forwarder_ignores_the_view_it_is_offered() -> None:
@@ -451,6 +486,49 @@ def test_denial_of_service_turns_on_which_declaration_was_counted(
         counts=counts,
     )
     assert outcome.successes == expected_successes
+
+
+def test_denial_of_service_scores_the_mechanism_not_merely_a_failed_run() -> None:
+    """The Phase 3 audit's third finding, pinned in the arm that exposes it.
+
+    Success used to be ``not _accepted(honest)`` -- the adversary's *goal*, but
+    not his *mechanism*. The two come apart below ``L = 140``, where both
+    matched-count floors degenerate and an honest declaration can fail entirely
+    on its own: at ``L = 12`` and these seeds, three trials in a hundred and
+    twenty end with the honest declaration refused as ``empty-matched-set``,
+    with no ledger present and nothing spent. The old reading scored all three
+    as burned rounds, so the *undefended* arm -- where the attack provably
+    achieves nothing that lasts -- would have reported ``3/120``, and the
+    published ``0/300`` at ``L = 24`` was a fact about a seed that happened to
+    contain no such trial rather than a rule.
+
+    Such a trial is now refused outright: it is neither a success nor a clean
+    failure, because the attack was never measured in it.
+    """
+    with pytest.raises(ValueError) as excinfo:
+        measure_ledger_denial_of_service(
+            params=TINY,
+            trials=120,
+            rng=np.random.default_rng(1),
+            attack_rng=np.random.default_rng(2),
+            defended=False,
+        )
+    message = str(excinfo.value)
+    assert "neither accepted nor denied by the ledger" in message
+    assert "empty-matched-set" in message
+    assert "this attack's mechanism" in message
+    assert "trial 47 of 120" in message
+
+    # And at the length the results are published at, nothing changes: every
+    # success is the ledger refusing a spent round, so the two columns agree.
+    outcome = measure_ledger_denial_of_service(
+        params=SMALL,
+        trials=24,
+        rng=world(17),
+        attack_rng=adversary(17),
+        defended=True,
+    )
+    assert outcome.successes == outcome.refusals == outcome.trials
 
 
 def test_denial_of_service_refuses_an_unnamed_ordering() -> None:

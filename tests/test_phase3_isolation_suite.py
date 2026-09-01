@@ -38,10 +38,31 @@ What each row carries, and why the last two fields exist
 The negative controls are not optional
 --------------------------------------
 A check that has never failed is not known to work, so this module also runs the
-two deliberately-defective adversaries from
-:mod:`tests.test_attack_isolation` and asserts that each is still caught by the
-half it was built to fail. If those two ever pass, every row above them is
-worthless and this file says so first.
+deliberately-defective adversaries from :mod:`tests.test_attack_isolation` and
+asserts that each is still caught by the half it was built to fail. If those ever
+pass, every row above them is worthless and this file says so first.
+
+Why a shared control is not enough, and what replaced "14/14"
+-------------------------------------------------------------
+The Phase 3 audit found this file publishing "14/14 pass check (a)" over a check
+no row could fail. Every ready-made probe wrote ``del session_seed``, no shipped
+adversary declared a ``session_seed`` constructor argument, and so nothing varied
+between the five calls check (a) compares. The controls kept working the whole
+time -- they read the seed through the *builder*, which was the one channel that
+was live -- and that is exactly why nobody noticed.
+
+A control passing through :func:`~sih141.attacks.isolation.signer_probe` says
+that *that* probe's channel is live. It says nothing about
+:func:`~sih141.attacks.starvation.starvation_probe`, or about the two channel
+probes, or about any probe added next year. So the evidence is now produced per
+row: :func:`test_the_session_channel_is_live_on_every_row` rebuilds each shipped
+adversary with the session's own seed folded into its generator, through the
+row's own probe, and requires check (a) to catch it. Thirteen of the fourteen
+rows are covered directly; the fourteenth is the deterministic recipient forger,
+whose decisions move with nothing at all, and whose randomised sibling is
+covered -- which is the same argument
+:func:`test_every_waiver_has_a_randomised_sibling` already makes and is why the
+waiver is only sound beside one.
 """
 
 from __future__ import annotations
@@ -71,9 +92,14 @@ from sih141.attacks import (
     starvation_probe,
 )
 from sih141.attacks.channel import ChannelAttack
+from sih141.attacks.isolation import active_session
 from sih141.protocol.params import Party, ProtocolParams
 from sih141.protocol.session import QDSSession
-from tests.test_attack_isolation import DeafForger, SessionSeedForger
+from tests.test_attack_isolation import (
+    AmbientSessionForger,
+    DeafForger,
+    SessionSeedForger,
+)
 
 RECIPIENT_FORGER_DETERMINISM = (
     "the optimal recipient forger declares his own raw log, which strictly "
@@ -255,6 +281,118 @@ def test_every_unwaived_adversary_really_draws_from_its_generator(
     assert report.distinct_decisions > 1
 
 
+def seeded_from_the_session(build, label):
+    """Return ``build`` rewired to fold the session's own seed into the adversary.
+
+    The D6 defect as a harness writes it: one ``SEED``, given to the session and
+    then mixed into the attack "so the run reproduces". The adversary class is
+    untouched -- same constructor, same ``__call__``, same seam -- and the only
+    thing that changed is whose randomness it was handed. It should therefore be
+    caught by check (a) and by nothing else, on every row where the probe can see
+    the candidate's own stream at all, which is precisely what check (b) has
+    already established for that row.
+
+    Parameters
+    ----------
+    build : callable
+        The row's builder, taking a keyword-only ``rng``.
+    label : str
+        The row's id, used to name the report.
+
+    Returns
+    -------
+    callable
+        A builder of the same shape, defective in one line.
+    """
+
+    def build_from_the_session(*, rng):
+        """Build the row's adversary from a stream the session controls."""
+        environment = active_session()
+        assert environment is not None, (
+            "check_attack_isolation must install a SessionEnvironment around "
+            "every build; without one this control cannot reach the seed and "
+            "the test below would pass for the wrong reason"
+        )
+        own = int.from_bytes(rng.bytes(8), "big")
+        mixed = np.random.SeedSequence([own, environment.seed])
+        return build(rng=np.random.default_rng(mixed))
+
+    build_from_the_session.__name__ = f"session-seeded {label}"
+    return build_from_the_session
+
+
+@pytest.mark.parametrize(
+    ("label", "build", "probe"),
+    [row[:3] for row in ADVERSARIES if row[3] is None],
+    ids=[row[0] for row in ADVERSARIES if row[3] is None],
+)
+def test_the_session_channel_is_live_on_every_row(label, build, probe):
+    """Per row, the evidence that ``14/14 pass check (a)`` did not carry.
+
+    The audit's first finding was that check (a) was inert: every probe deleted
+    the session seed, no shipped adversary could receive it through its
+    constructor, and so the five decisions check (a) compares were five runs of
+    an identical experiment. Every row passed a check no row could fail.
+
+    A shared control cannot fix that, because a control run through one probe
+    proves only that *that* probe's channel is live. So this runs the row's own
+    adversary, through the row's own probe, with the session's seed folded into
+    the generator the harness hands it -- one line of defect, nothing else
+    changed -- and requires check (a) to catch it. Together with
+    :func:`test_every_adversary_owns_its_randomness` above, which requires the
+    unmodified row to pass, that is a two-sided statement: this probe can see a
+    session-reading adversary, and this adversary is not one.
+
+    A failure here does **not** mean the shipped adversary is broken. It means
+    the check has gone blind on this row, and every number that row's attack
+    publishes is once again unevidenced.
+    """
+    report = check_attack_isolation(
+        seeded_from_the_session(build, label), probe, name=label
+    )
+    assert report.reads_the_session, (
+        f"check (a) did not notice that {label} was built from the session's "
+        f"own seed, so it cannot notice a real one either.\n"
+        f"{report.summary()}"
+    )
+    assert report.uses_its_own_generator, (
+        f"{label} stopped drawing from its generator under this control, so "
+        f"the row above is now the one carrying the weight.\n"
+        f"{report.summary()}"
+    )
+    assert not report.isolated
+
+
+def test_the_one_row_the_channel_test_cannot_cover_is_the_waived_one():
+    """And it is covered by its randomised sibling, which is why one is required.
+
+    The deterministic recipient forger's declaration is a fixed function of his
+    view: it moves with nothing, so no defect in *whose* randomness he was given
+    can make it move, and no control of this shape can catch him. That is not a
+    hole in the evidence -- it is the same fact the waiver rests on, and the
+    sibling row exercising the identical ``__call__`` is what closes it.
+    """
+    uncovered = {label for label, _, _, reason in ADVERSARIES if reason}
+    assert uncovered == {"recipient-forger/forwarder"}
+    label, build, probe, _ = next(
+        row for row in ADVERSARIES if row[0] in uncovered
+    )
+    report = check_attack_isolation(
+        seeded_from_the_session(build, label), probe, name=label
+    )
+    assert not report.uses_its_own_generator, (
+        "this row was waived because it is deterministic; if it has grown "
+        "randomness, drop the waiver and add it to the channel test above"
+    )
+    assert not report.reads_the_session
+    covered = {
+        row_label.split("/")[0]
+        for row_label, _, _, reason in ADVERSARIES
+        if reason is None
+    }
+    assert {name.split("/")[0] for name in uncovered} <= covered
+
+
 def test_every_waiver_has_a_randomised_sibling():
     """A deterministic waiver is only sound beside a checked randomised twin.
 
@@ -345,6 +483,25 @@ def test_the_session_seed_control_is_still_caught_by_check_a():
     assert len(report.offending_session_seeds) >= 1
     with pytest.raises(AttackIsolationError) as caught:
         assert_attack_isolated(SessionSeedForger, signer_probe())
+    assert "reads the session's randomness" in str(caught.value)
+
+
+def test_the_call_time_control_is_caught_by_check_a():
+    """The control the shipped check had no channel for.
+
+    :class:`tests.test_attack_isolation.AmbientSessionForger` takes only ``rng``
+    in its constructor, exactly as every adversary in :data:`ADVERSARIES` does,
+    and reads the session while it is being called. Under the check as shipped
+    it passed, because the probe deleted the seed and the builder was never
+    offered it. It is the control that would have caught the vacuous check, and
+    it is kept here permanently for the same reason the other two are.
+    """
+    report = check_attack_isolation(AmbientSessionForger, signer_probe())
+    assert report.session_seed_offered is False
+    assert report.reads_the_session
+    assert not report.isolated
+    with pytest.raises(AttackIsolationError) as caught:
+        assert_attack_isolated(AmbientSessionForger, signer_probe())
     assert "reads the session's randomness" in str(caught.value)
 
 

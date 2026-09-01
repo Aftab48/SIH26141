@@ -204,12 +204,25 @@ runs under. Three separate statements, which are easy to run together and mean
 different things:
 
 * **The channel adversary must not know the check set while attacking.** This is
-  the property the estimate rests on, and it is bought by *timing*: the resource
-  factory is called for a check round exactly as for a key round -- same call,
-  same :class:`~sih141.protocol.distribute.ResourceContext`, in the same order --
-  so nothing on the wire distinguishes them.
-  ``test_the_factory_cannot_tell_a_check_round_from_a_key_round`` is the test,
-  and it is the load-bearing one.
+  the property the estimate rests on, and it is bought by *timing*: every seam
+  the channel-side adversary holds is called for a check round exactly as for a
+  key round -- same call, same
+  :class:`~sih141.protocol.distribute.ResourceContext`, in the same order -- so
+  nothing on the wire distinguishes them. That is all three of them together,
+  and the "together" is load-bearing: the ``resource_factory`` alone satisfied
+  this while the ``payload_map`` was called on key rounds only and the
+  ``channel_monitor`` on check rounds only, so the check set was published
+  twice over, whole, by seams the same adversary holds.
+  ``test_the_factory_cannot_tell_a_check_round_from_a_key_round`` drives all
+  three and is the load-bearing test;
+  ``test_no_seam_narrows_the_check_set_below_the_prior`` states what it buys as
+  a number.
+* **Recovering one link's check set must not hand over the other's.** The
+  second line of defence, and the reason a plan deals its reserved rounds
+  between the links rather than running the same set on both
+  (:ref:`check-round-links`): the two links run back to back, so a shared check
+  set would make a single recovery on the first link enough to spare exactly
+  the watched positions on the second.
 * **Alice must know it at measurement time**, because a check round asks her to
   measure her half at an announced angle instead of Bell-measuring it against a
   payload, and one qubit cannot do both. This is the structural price of a
@@ -359,7 +372,7 @@ from __future__ import annotations
 import enum
 import math
 import numbers
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, Literal, TypeAlias
 
@@ -372,6 +385,7 @@ from sih141.core.rng import resolve_rng
 from sih141.core.states import StateLike, as_density
 from sih141.protocol.keys import PrivateKey
 from sih141.protocol.params import (
+    VERIFIERS,
     Party,
     ProtocolParams,
     _as_message_bit,
@@ -833,6 +847,13 @@ class CheckRoundBudget:
     (6688, 6795, 13483)
     >>> f"{budget.fraction:.4f}"
     '0.1170'
+
+    :attr:`total` is the sample **one link** needs, and each link measures half
+    the reserved positions (:ref:`check-round-links`), so the fraction that
+    actually delivers it is twice as big:
+
+    >>> f"{budget.reserved_fraction:.4f}"
+    '0.2341'
     """
 
     qber_rounds: int
@@ -842,18 +863,48 @@ class CheckRoundBudget:
 
     @property
     def total(self) -> int:
-        """int: ``qber_rounds + chsh_rounds``, the whole check sample."""
+        """int: ``qber_rounds + chsh_rounds``, the whole check sample.
+
+        **Per link.** Both requirements size an estimate of *one* channel, and
+        Bob's link and Charlie's are two channels: pooling them reports the
+        average of two things and detects neither, which is the shape of a
+        one-sided attack.
+        """
         return self.qber_rounds + self.chsh_rounds
 
     @property
     def fraction(self) -> float:
         """float: :attr:`total` as a fraction of :attr:`key_length`.
 
-        The *minimum* usable
-        :attr:`~sih141.protocol.params.ProtocolParams.check_fraction` at this
-        ``L``; round **up** to a value that is convenient to divide, never down.
+        The share of the key one link's sample is worth. It is **not** the
+        :attr:`~sih141.protocol.params.ProtocolParams.check_fraction` to
+        deploy -- see :attr:`reserved_fraction`, which is the one that delivers
+        this many rounds per link.
         """
         return self.total / self.key_length
+
+    @property
+    def reserved_fraction(self) -> float:
+        """float: The ``check_fraction`` that delivers :attr:`total` per link.
+
+        Twice :attr:`fraction`, and the number to deploy. A plan reserves
+        ``check_fraction * L`` positions and deals them between the two links
+        (:ref:`check-round-links`), so each link publishes half of them; a
+        deployment that set ``check_fraction`` to :attr:`fraction` would get
+        half the sample it sized for and intervals wider by ``sqrt(2)``.
+
+        The doubling is the exact price of the two links not watching the same
+        positions, and it is not avoidable: the signing key is shared, so the
+        positions it excludes are the *union* of the two check sets, and two
+        different sets of ``n`` inside a union of ``2n`` is the only way to
+        have both. The alternative is
+        ``draw_check_plan(..., parties=None)``, which restores the shared plan
+        at :attr:`fraction` and re-couples the links.
+
+        The *minimum* usable value at this ``L``; round **up** to something
+        convenient to divide, never down.
+        """
+        return 2.0 * self.total / self.key_length
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serialisable view of the budget.
@@ -862,13 +913,15 @@ class CheckRoundBudget:
         -------
         dict
             Keys ``"qber_rounds"``, ``"chsh_rounds"``, ``"total"``,
-            ``"fraction"``, ``"confidence"``, ``"key_length"``.
+            ``"fraction"``, ``"reserved_fraction"``, ``"confidence"``,
+            ``"key_length"``.
         """
         return {
             "qber_rounds": self.qber_rounds,
             "chsh_rounds": self.chsh_rounds,
             "total": self.total,
             "fraction": self.fraction,
+            "reserved_fraction": self.reserved_fraction,
             "confidence": self.confidence,
             "key_length": self.key_length,
         }
@@ -1097,6 +1150,107 @@ class CheckRole(enum.StrEnum):
     CHSH = "chsh"
 
 
+def _as_links(parties: Any) -> tuple[Party, ...] | None:
+    """Validate the links a plan's reserved rounds are to be dealt between.
+
+    Parameters
+    ----------
+    parties : sequence of Party or str, or None
+        The recipients. ``None`` asks for the shared plan every link measures
+        in full (:ref:`check-round-links`).
+
+    Returns
+    -------
+    tuple of Party or None
+        The resolved links in the order given, or ``None``.
+
+    Raises
+    ------
+    TypeError
+        If ``parties`` is a string, or is not a sequence.
+    ValueError
+        If it is empty, repeats a link, or names Alice.
+    """
+    if parties is None:
+        return None
+    if isinstance(parties, (str, bytes)) or not isinstance(parties, Sequence):
+        raise TypeError(
+            f"parties must be a sequence of Party members or None, got "
+            f"{type(parties).__name__}; the default is VERIFIERS, "
+            f"(Party.BOB, Party.CHARLIE), and None draws the shared plan."
+        )
+    resolved: list[Party] = []
+    for party in parties:
+        if party is None:
+            raise ValueError(
+                "parties must name links, and None is not one of them: it is "
+                "the spelling of 'no split at all'. Pass parties=None -- the "
+                "whole sequence, not an element of it -- for the shared plan."
+            )
+        # _as_party rather than _as_round_party: an element of this sequence is
+        # never the "every link" tag, and the None case is refused above.
+        link = _as_party(party)
+        if link is Party.ALICE:
+            raise ValueError(
+                "parties names the recipients whose links measure the check "
+                "rounds, and Alice is the common endpoint of both rather than "
+                "a link of her own. Pass Party.BOB and Party.CHARLIE."
+            )
+        resolved.append(link)
+    if not resolved:
+        raise ValueError(
+            "parties must name at least one link to deal the check rounds "
+            "between; an empty sequence would leave every reserved position "
+            "measured by nobody, so the run would spend a share of its key on "
+            "statistics it never publishes. Pass None for the shared plan."
+        )
+    if len(set(resolved)) != len(resolved):
+        raise ValueError(
+            f"parties must be distinct, got "
+            f"{[party.value for party in resolved]}. A repeated link would "
+            f"take a double share of the reserved positions and the other "
+            f"link's sample would shrink to match."
+        )
+    return tuple(resolved)
+
+
+def _as_round_party(party: Any) -> Party | None:
+    """Coerce a planned round's link tag, or pass ``None`` through.
+
+    Parameters
+    ----------
+    party : Party, str or None
+        Which link measures this round. ``None`` means *every* link does, which
+        is the untagged plan of :ref:`check-round-links`.
+
+    Returns
+    -------
+    Party or None
+        :attr:`~sih141.protocol.params.Party.BOB` or
+        :attr:`~sih141.protocol.params.Party.CHARLIE`, or ``None``.
+
+    Raises
+    ------
+    ValueError
+        If it names Alice, or names no party. A check round is a measurement of
+        **one link**; Alice is the common endpoint of both and holds no link of
+        her own, so tagging a round with her would name no channel.
+    TypeError
+        If it is neither a party nor a string.
+    """
+    if party is None:
+        return None
+    resolved = _as_party(party)
+    if resolved is Party.ALICE:
+        raise ValueError(
+            "a check round is measured on one recipient's link, and Alice is "
+            "the common endpoint of both, so she cannot be the link that "
+            "measures it. Tag the round with Party.BOB or Party.CHARLIE, or "
+            "leave it None for a round every link measures."
+        )
+    return resolved
+
+
 @dataclass(frozen=True)
 class QberRound:
     """One planned QBER check round: a position and the basis both wings use.
@@ -1109,10 +1263,15 @@ class QberRound:
         The basis **both** halves are measured in. Drawn uniformly from
         ``params.bases``, so the estimate averages over the same alphabet the
         key does.
+    party : Party or None, optional
+        Which recipient's link spends this position on the check. ``None`` --
+        the default and the historical shape -- means every link does. See
+        :ref:`check-round-links` for why the shipped plans tag it.
     """
 
     position: int
     basis: PauliBasis
+    party: Party | None = None
 
     def __post_init__(self) -> None:
         """Coerce the position and check the basis has a known ideal sign."""
@@ -1129,6 +1288,7 @@ class QberRound:
                 f"record, so a round in it could not be scored; expected one "
                 f"of {sorted(b.value for b in IDEAL_PAULI_CORRELATION)}."
             )
+        object.__setattr__(self, "party", _as_round_party(self.party))
 
     @property
     def role(self) -> CheckRole:
@@ -1157,11 +1317,16 @@ class ChshRound:
         ``0`` or ``1``, indexing :data:`CHSH_ALICE_ANGLES`.
     recipient_setting : int
         ``0`` or ``1``, indexing :data:`CHSH_RECIPIENT_ANGLES`.
+    party : Party or None, optional
+        Which recipient's link spends this position on the check. ``None`` --
+        the default and the historical shape -- means every link does. See
+        :ref:`check-round-links`.
     """
 
     position: int
     alice_setting: int
     recipient_setting: int
+    party: Party | None = None
 
     def __post_init__(self) -> None:
         """Coerce the position and check both settings index a shipped angle."""
@@ -1178,6 +1343,7 @@ class ChshRound:
             "recipient_setting",
             _as_setting(self.recipient_setting, "recipient_setting"),
         )
+        object.__setattr__(self, "party", _as_round_party(self.party))
 
     @property
     def role(self) -> CheckRole:
@@ -1208,14 +1374,45 @@ class CheckRoundPlan:
     """Which positions of a run are check rounds, and what each one measures.
 
     Drawn once per message bit by :func:`draw_check_plan` from the
-    **recipients'** stream, and **shared by both recipients**. Sharing is not an
-    optimisation: symmetrisation (:mod:`sih141.protocol.symmetrise`) exchanges
-    the two recipients' entries position by position, and verification scores
-    one declaration against both records, so Bob and Charlie must retain the
-    *same* positions or the two logs stop indexing the same key. The settings
-    are shared with them, which is harmless -- the two links carry independent
-    pairs, so the two logs are independent samples of two channels, and nothing
-    on the wire reveals a setting until the pairs are already through.
+    **recipients'** stream. One plan reserves one set of positions, and that set
+    is **shared by both recipients**: sharing is not an optimisation, because
+    symmetrisation (:mod:`sih141.protocol.symmetrise`) exchanges the two
+    recipients' entries position by position and verification scores one
+    declaration against both records, so Bob and Charlie must retain the *same*
+    positions or the two logs stop indexing the same key.
+
+    .. _check-round-links:
+
+    Which link measures which reserved position
+    -------------------------------------------
+    The reserved *set* is shared; **which link actually spends each reserved
+    position on a check round is not.** Every planned round carries a
+    :attr:`~QberRound.party` tag, and a link runs only the rounds tagged for it.
+    A reserved position tagged for the *other* link is an ordinary key round on
+    this one -- teleported, measured, and then dropped by
+    :meth:`sift_record` along with the rest of the reserved set, because it
+    carries no key.
+
+    The reason is that one plan run on both links back to back makes the two
+    links one target: an adversary who recovers the check positions on the
+    first link he sees knows exactly which positions are watched on the second,
+    and can leave those alone while corrupting the key. Tagging the rounds
+    means learning one link's check set does not hand over the other's -- what
+    it hands over is a set of positions that are watched *on the other link*,
+    so an attack aimed at the remaining positions still walks into them.
+
+    It is paid for, and the price is exact: with a shared signing key the
+    reserved set must be the union of the two links' check sets, so two links
+    with *different* check sets get half the reserved positions each. A
+    deployment that wants ``n`` published rounds per link reserves ``2n``
+    positions -- :func:`required_check_rounds` sizes ``n`` and
+    :attr:`CheckRoundBudget.reserved_fraction` is the fraction that delivers
+    it. ``draw_check_plan(params, rng=..., parties=None)`` restores the shared
+    plan, at full sample size and with the two links coupled again.
+
+    An untagged round (``party=None``) is measured by every link, which is the
+    historical shape and what a plan rebuilt from a pre-split
+    :meth:`to_dict` still means. Tagging is all-or-nothing within one plan.
 
     Frozen, so a plan cannot be edited between the two recipients' runs, and
     made of plain values, so it serialises.
@@ -1234,9 +1431,10 @@ class CheckRoundPlan:
     ------
     ValueError
         If a position is out of range ``0 .. key_length - 1``, if any position
-        appears twice (in either arm or across both), if the plan is empty, or
-        if it designates every position -- a run with no signing positions has
-        no key to sign with.
+        appears twice (in either arm or across both), if the plan is empty, if
+        it designates every position -- a run with no signing positions has no
+        key to sign with -- or if some rounds are tagged with a link and others
+        are not.
 
     See Also
     --------
@@ -1248,7 +1446,7 @@ class CheckRoundPlan:
     --------
     >>> import numpy as np
     >>> from sih141.protocol.checkrounds import draw_check_plan
-    >>> from sih141.protocol.params import ProtocolParams
+    >>> from sih141.protocol.params import Party, ProtocolParams
     >>> params = ProtocolParams(key_length=48, check_fraction=0.25)
     >>> plan = draw_check_plan(params, rng=np.random.default_rng(11))
     >>> plan.check_count, len(plan.signing_positions)
@@ -1257,6 +1455,15 @@ class CheckRoundPlan:
     True
     >>> set(plan.positions) & set(plan.signing_positions)
     set()
+
+    The reserved set is shared and its halves are not:
+
+    >>> bob = set(plan.positions_for(Party.BOB))
+    >>> charlie = set(plan.positions_for(Party.CHARLIE))
+    >>> len(bob), len(charlie), bob & charlie
+    (6, 6, set())
+    >>> bob | charlie == set(plan.positions)
+    True
     """
 
     key_length: int
@@ -1303,6 +1510,20 @@ class CheckRoundPlan:
                 f"{self.key_length}. Check positions are excluded from the key "
                 f"(see ProtocolParams.signing_length), so a plan that takes "
                 f"every position leaves nothing to sign."
+            )
+        tagged = [
+            round_.party is not None
+            for round_ in (*self.qber_rounds, *self.chsh_rounds)
+        ]
+        if any(tagged) and not all(tagged):
+            raise ValueError(
+                f"a check-round plan must tag every round with the link that "
+                f"measures it or none of them, got {sum(tagged)} of "
+                f"{len(tagged)} tagged. A half-tagged plan would run the "
+                f"untagged positions on both links and the tagged ones on "
+                f"one, so the two links' published samples would differ in "
+                f"size for no reason a reader could recover "
+                f"(:ref:`check-round-links`)."
             )
 
     # -- derived views ------------------------------------------------------ #
@@ -1388,7 +1609,9 @@ class CheckRoundPlan:
             )
         return self.rounds_by_position().get(index)
 
-    def rounds_by_position(self) -> dict[int, QberRound | ChshRound]:
+    def rounds_by_position(
+        self, party: Party | str | None = None
+    ) -> dict[int, QberRound | ChshRound]:
         """Return the plan indexed by position, for a single pass over the run.
 
         :meth:`round_at` builds this on every call, which is fine for a lookup
@@ -1397,18 +1620,102 @@ class CheckRoundPlan:
         :func:`~sih141.protocol.distribute.distribute_to_recipient_with_checks`
         does exactly that.
 
+        Parameters
+        ----------
+        party : Party, str or None, optional
+            Restrict to the rounds **this link** measures
+            (:ref:`check-round-links`). ``None``, the default, returns every
+            reserved round, which is what sifting is defined against and what a
+            caller that does not run a link wants. On an untagged plan a link
+            measures every reserved round, so both spellings agree.
+
         Returns
         -------
         dict
-            Position to planned round, for the check positions only. Key rounds
-            are absent rather than mapped to ``None``, so ``get(i)`` returning
-            ``None`` *is* the "this is a key round" test.
+            Position to planned round. Positions this call does not cover --
+            key rounds, and on a tagged plan the *other* link's reserved
+            positions -- are absent rather than mapped to ``None``, so
+            ``get(i)`` returning ``None`` *is* the "do not spend this position
+            on a check round" test.
+
+        Raises
+        ------
+        ValueError
+            If ``party`` is Alice or names no party.
+        TypeError
+            If ``party`` is neither a party, a string, nor ``None``.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from sih141.protocol.checkrounds import draw_check_plan
+        >>> from sih141.protocol.params import Party, ProtocolParams
+        >>> params = ProtocolParams(key_length=48, check_fraction=0.25)
+        >>> plan = draw_check_plan(params, rng=np.random.default_rng(11))
+        >>> mine = plan.rounds_by_position(Party.BOB)
+        >>> len(mine), len(plan.rounds_by_position())
+        (6, 12)
+        >>> all(round_.party is Party.BOB for round_ in mine.values())
+        True
         """
-        rounds: dict[int, QberRound | ChshRound] = {
-            round_.position: round_ for round_ in self.qber_rounds
-        }
-        rounds.update({round_.position: round_ for round_ in self.chsh_rounds})
+        wanted = _as_round_party(party)
+        rounds: dict[int, QberRound | ChshRound] = {}
+        for round_ in (*self.qber_rounds, *self.chsh_rounds):
+            if (
+                wanted is None
+                or round_.party is None
+                or round_.party is wanted
+            ):
+                rounds[round_.position] = round_
         return rounds
+
+    def positions_for(self, party: Party | str) -> tuple[int, ...]:
+        """Return the reserved positions ``party``'s link measures, ascending.
+
+        Parameters
+        ----------
+        party : Party or str
+            The recipient whose link is asked about.
+
+        Returns
+        -------
+        tuple of int
+            A subset of :attr:`positions`; the whole of it on an untagged plan.
+
+        Raises
+        ------
+        ValueError
+            If ``party`` is Alice or names no party.
+        TypeError
+            If ``party`` is neither a party nor a string.
+        """
+        return tuple(sorted(self.rounds_by_position(party)))
+
+    @property
+    def measured_by(self) -> tuple[Party, ...]:
+        """tuple of Party: The links this plan splits its rounds between.
+
+        Empty on an untagged plan, which every link measures in full. In
+        :data:`~sih141.protocol.params.VERIFIERS` order when non-empty, so it
+        reads the same way the distribution loop runs.
+        """
+        seen = {
+            round_.party
+            for round_ in (*self.qber_rounds, *self.chsh_rounds)
+            if round_.party is not None
+        }
+        return tuple(party for party in VERIFIERS if party in seen)
+
+    @property
+    def is_split(self) -> bool:
+        """bool: Whether the reserved positions are divided between the links.
+
+        ``True`` for a plan from :func:`draw_check_plan` with its default
+        ``parties``; ``False`` for the shared plan, in which both links measure
+        every reserved position and so learning one link's check set hands over
+        the other's (:ref:`check-round-links`).
+        """
+        return bool(self.measured_by)
 
     # -- sifting ------------------------------------------------------------ #
 
@@ -1532,7 +1839,10 @@ class CheckRoundPlan:
         dict
             Keys ``"key_length"``, ``"qber_rounds"`` and ``"chsh_rounds"``. The
             bases are :class:`~sih141.core.paulis.PauliBasis` members, which are
-            strings, so the result passes straight to :func:`json.dumps`.
+            strings, so the result passes straight to :func:`json.dumps`. Each
+            round additionally carries ``"party"``, the link that measures it,
+            written as ``None`` on an untagged plan
+            (:ref:`check-round-links`).
 
         Examples
         --------
@@ -1549,7 +1859,11 @@ class CheckRoundPlan:
         return {
             "key_length": self.key_length,
             "qber_rounds": [
-                {"position": round_.position, "basis": round_.basis}
+                {
+                    "position": round_.position,
+                    "basis": round_.basis,
+                    "party": round_.party,
+                }
                 for round_ in self.qber_rounds
             ],
             "chsh_rounds": [
@@ -1557,6 +1871,7 @@ class CheckRoundPlan:
                     "position": round_.position,
                     "alice_setting": round_.alice_setting,
                     "recipient_setting": round_.recipient_setting,
+                    "party": round_.party,
                 }
                 for round_ in self.chsh_rounds
             ],
@@ -1570,7 +1885,10 @@ class CheckRoundPlan:
         ----------
         data : mapping
             Must carry ``"key_length"``, ``"qber_rounds"`` and
-            ``"chsh_rounds"``.
+            ``"chsh_rounds"``. A round's ``"party"`` is optional and defaults
+            to ``None``: a plan written before the rounds were tagged is an
+            untagged plan, which is the truth about it
+            (:ref:`check-round-links`).
 
         Returns
         -------
@@ -1603,6 +1921,7 @@ class CheckRoundPlan:
                 QberRound(
                     position=entry["position"],
                     basis=PauliBasis(str(entry["basis"]).upper()),
+                    party=entry.get("party"),
                 )
                 for entry in data["qber_rounds"]
             ),
@@ -1611,6 +1930,7 @@ class CheckRoundPlan:
                     position=entry["position"],
                     alice_setting=entry["alice_setting"],
                     recipient_setting=entry["recipient_setting"],
+                    party=entry.get("party"),
                 )
                 for entry in data["chsh_rounds"]
             ),
@@ -1622,8 +1942,9 @@ def draw_check_plan(
     *,
     rng: np.random.Generator | None = None,
     chsh_weight: float = CHECK_CHSH_WEIGHT,
+    parties: Sequence[Party | str] | None = VERIFIERS,
 ) -> CheckRoundPlan:
-    """Draw the check positions, their roles and their settings.
+    """Draw the check positions, their roles, their settings and their links.
 
     **Give this the recipients' stream, never Alice's.** The whole value of a
     sampled estimate is that the party being estimated cannot steer the sample;
@@ -1644,24 +1965,33 @@ def draw_check_plan(
         Keyword-only. The share of check rounds spent on the CHSH arm; defaults
         to :data:`CHECK_CHSH_WEIGHT`. The CHSH arm takes the **floor**, so an
         odd check count spends its spare round on QBER.
+    parties : sequence of Party or str, or None, optional
+        Keyword-only. The links to deal the reserved rounds between, defaulting
+        to :data:`~sih141.protocol.params.VERIFIERS`; each arm is dealt
+        round-robin so the two links get equal shares of both. ``None`` draws
+        the **shared** plan every link measures in full -- full sample size,
+        and the two links coupled, so recovering one link's check set hands
+        over the other's. See :ref:`check-round-links`.
 
     Returns
     -------
     CheckRoundPlan
-        A plan for one message bit, to be shared by both recipients.
+        A plan for one message bit. Its reserved *set* is shared by both
+        recipients, because they must retain the same key positions; which link
+        measures which reserved position is not.
 
     Raises
     ------
     TypeError
         If ``params`` is not a
         :class:`~sih141.protocol.params.ProtocolParams`, ``chsh_weight`` is not
-        a real number, or ``rng`` is neither ``None`` nor a
-        :class:`numpy.random.Generator`.
+        a real number, ``rng`` is neither ``None`` nor a
+        :class:`numpy.random.Generator`, or ``parties`` is not a sequence.
     ValueError
         If ``params.check_fraction`` is ``0`` -- there is nothing to draw, and
         returning an empty plan would let a caller believe estimation was
-        happening when it was not -- or if ``chsh_weight`` is outside
-        ``[0, 1)``.
+        happening when it was not -- if ``chsh_weight`` is outside ``[0, 1)``,
+        or if ``parties`` is empty, repeats a link or names Alice.
 
     Notes
     -----
@@ -1671,11 +2001,18 @@ def draw_check_plan(
     repeated rejection sampling, so the count does not depend on how many
     collisions happen to occur and a seeded plan is reproducible.
 
+    **The link assignment consumes nothing more.** The permutation that chose
+    the positions is already a uniformly random *ordering* of them, and the
+    positions are only sorted afterwards for readability; dealing each arm in
+    that original order gives a uniformly random balanced split for free. A
+    second draw would have been variates spent on something one already in hand
+    decides.
+
     Examples
     --------
     >>> import numpy as np
     >>> from sih141.protocol.checkrounds import draw_check_plan
-    >>> from sih141.protocol.params import ProtocolParams
+    >>> from sih141.protocol.params import Party, ProtocolParams
     >>> params = ProtocolParams(key_length=120, check_fraction=0.125)
     >>> plan = draw_check_plan(params, rng=np.random.default_rng(7))
     >>> plan.check_count, len(plan.chsh_rounds), len(plan.qber_rounds)
@@ -1685,9 +2022,29 @@ def draw_check_plan(
     >>> other = draw_check_plan(params, rng=np.random.default_rng(7))
     >>> other == plan
     True
+
+    Both arms are dealt, so neither link's sample is all of one kind:
+
+    >>> plan.measured_by
+    (<Party.BOB: 'Bob'>, <Party.CHARLIE: 'Charlie'>)
+    >>> [len(plan.positions_for(party)) for party in plan.measured_by]
+    [8, 7]
+    >>> sum(1 for r in plan.chsh_rounds if r.party is Party.BOB)
+    4
+
+    The shared plan is still available, and says so:
+
+    >>> shared = draw_check_plan(
+    ...     params, rng=np.random.default_rng(7), parties=None
+    ... )
+    >>> shared.is_split, len(shared.positions_for(Party.BOB))
+    (False, 15)
+    >>> shared.positions == plan.positions
+    True
     """
     checked = _as_params(params)
     weight = _as_unit_interval(chsh_weight, "chsh_weight", strict=False)
+    links = _as_links(parties)
     if checked.check_count <= 0:
         raise ValueError(
             f"params.check_fraction is {checked.check_fraction!r}, which "
@@ -1700,16 +2057,41 @@ def draw_check_plan(
     generator = resolve_rng(rng)
 
     chosen = generator.permutation(checked.key_length)[: checked.check_count]
+    # The order the permutation put them in, kept before the sort: it is the
+    # only randomness the link assignment needs and it costs nothing.
+    drawn_order = {int(index): rank for rank, index in enumerate(chosen)}
     positions = sorted(int(index) for index in chosen)
     chsh_count = int(math.floor(weight * len(positions)))
     chsh_positions = positions[:chsh_count]
     qber_positions = positions[chsh_count:]
+
+    dealt = 0
+
+    def deal(arm: list[int]) -> dict[int, Party | None]:
+        """Assign one arm's positions to the links, round-robin, or to none.
+
+        The counter runs on across the two arms rather than restarting, so an
+        odd round count in each arm does not give both leftovers to the same
+        link: each arm is balanced to within one round and so is the total.
+        """
+        nonlocal dealt
+        if links is None:
+            return {position: None for position in arm}
+        assignment: dict[int, Party | None] = {}
+        for position in sorted(arm, key=lambda index: drawn_order[index]):
+            assignment[position] = links[dealt % len(links)]
+            dealt += 1
+        return assignment
+
+    chsh_links = deal(chsh_positions)
+    qber_links = deal(qber_positions)
 
     alphabet = checked.bases
     qber_rounds = tuple(
         QberRound(
             position=position,
             basis=alphabet[int(generator.integers(len(alphabet)))],
+            party=qber_links[position],
         )
         for position in qber_positions
     )
@@ -1718,6 +2100,7 @@ def draw_check_plan(
             position=position,
             alice_setting=int(generator.integers(2)),
             recipient_setting=int(generator.integers(2)),
+            party=chsh_links[position],
         )
         for position in chsh_positions
     )

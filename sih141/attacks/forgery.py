@@ -188,6 +188,7 @@ import numpy as np
 from sih141.attacks.isolation import (
     DecisionProbe,
     SignerScenario,
+    require_distinct_streams,
     signer_scenario,
 )
 from sih141.attacks.statistics import wilson_bounds
@@ -1289,13 +1290,20 @@ def forwarder_probe(scenario: SignerScenario | None = None) -> DecisionProbe:
 def _check_streams(
     rng: np.random.Generator | None, session_rng: np.random.Generator | None
 ) -> tuple[np.random.Generator, np.random.Generator]:
-    """Resolve the two generators and refuse a shared one (D6).
+    """Resolve the two generators and refuse a shared stream (D6).
 
     The defect this exists to catch is the one
     :mod:`sih141.attacks.isolation` was written about: an experiment that hands
-    the adversary the same generator it hands the session lets the adversary
+    the adversary the same randomness it hands the session lets the adversary
     rebuild every symmetrisation coin, and publishes rates that are fiction
     while looking entirely legitimate.
+
+    "The same randomness" is a statement about *streams*, not about objects, and
+    this once tested only the objects. Two generators built from one seed --
+    which is how the defect actually arrives, since nobody passes one object
+    twice but everybody writes a single ``SEED`` constant -- were waved through.
+    :func:`~sih141.attacks.isolation.same_stream` is the comparison that is
+    actually wanted, and :func:`require_distinct_streams` applies it.
 
     Parameters
     ----------
@@ -1312,19 +1320,32 @@ def _check_streams(
     Raises
     ------
     ValueError
-        If the two are the same object.
+        If the two are the same stream -- the same object, the same position in
+        one stream, or two generators derived from one seed.
     TypeError
         If either is neither ``None`` nor a generator.
+
+    Notes
+    -----
+    Resolved before compared: ``None`` means "give me a fresh one", and two
+    independently resolved generators are two independent streams, so a caller
+    passing neither is never refused.
     """
-    if rng is not None and rng is session_rng:
-        raise ValueError(
-            "rng and session_rng must be different generators (D6). An "
-            "adversary drawing from the generator the session was given can "
-            "rebuild the run and predict every private symmetrisation coin, "
-            "so the rate it reports is fiction while the transcript looks "
-            "entirely normal. Pass two independently seeded generators."
+    attack = _as_generator(rng, "rng")
+    session = _as_generator(session_rng, "session_rng")
+    if rng is not None and session_rng is not None:
+        require_distinct_streams(
+            attack,
+            session,
+            left_name="rng",
+            right_name="session_rng",
+            detail=(
+                "rng is the forger's own and session_rng builds the sessions "
+                "he is measured against; nothing about him may be a function "
+                "of the second."
+            ),
         )
-    return _as_generator(rng, "rng"), _as_generator(session_rng, "session_rng")
+    return attack, session
 
 
 def _as_trials(trials: Any) -> int:
@@ -1370,7 +1391,8 @@ def measure_outside_forgery(
     session_rng : numpy.random.Generator or None, optional
         Keyword-only. The harness's generator, from which each
         :class:`~sih141.protocol.session.QDSSession` draws its own material.
-        Must not be the same object as ``rng``.
+        Must not be the same stream as ``rng`` -- not the same object, and
+        not another generator built from the same seed (D6).
 
     Returns
     -------
@@ -1389,7 +1411,7 @@ def measure_outside_forgery(
         integer, or a generator argument is of the wrong type.
     ValueError
         If ``trials`` is not positive, or ``rng`` and ``session_rng`` are the
-        same object (D6).
+        same stream (D6): the same object, or two generators from one seed.
 
     Notes
     -----
@@ -1496,7 +1518,9 @@ def measure_recipient_forgery(
     rng : numpy.random.Generator or None, optional
         Keyword-only. **The adversary's** generator (D6).
     session_rng : numpy.random.Generator or None, optional
-        Keyword-only. The harness's. Must not be the same object as ``rng``.
+        Keyword-only. The harness's. Must not be the same stream as ``rng``
+        -- not the same object, and not another generator built from the
+        same seed (D6).
     symmetrised : bool, optional
         Keyword-only, default ``True``. ``False`` wires
         :func:`~sih141.protocol.symmetrise.no_symmetrisation` and runs the
@@ -1534,7 +1558,7 @@ def measure_recipient_forgery(
         or ``pooled_counts`` is not a bool.
     ValueError
         If ``trials`` is not positive, or ``rng`` and ``session_rng`` are the
-        same object (D6).
+        same stream (D6): the same object, or two generators from one seed.
 
     See Also
     --------

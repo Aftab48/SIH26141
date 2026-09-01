@@ -37,9 +37,10 @@ a new mechanism:
    Phase C′, not the ledger and not the round binding. §5.
 
 **What every adversary passed before its number was believed.** All fourteen
-adversary-and-seam pairs pass the D6 isolation check in `tests/test_phase3_isolation_suite.py`;
-both deliberately-defective controls are still caught. **No adversary failed, so no published
-rate changed on that account.** §7.
+adversary-and-seam pairs pass the D6 isolation check in `tests/test_phase3_isolation_suite.py`,
+and — since the audit — the check is separately shown to be *capable* of failing thirteen of
+them, one row at a time. Every deliberately-defective control is still caught. **No adversary
+failed, so no published rate changed on that account.** §7.
 
 ---
 
@@ -47,7 +48,7 @@ rate changed on that account.** §7.
 
 | Module | Adversary | Seams it mounts on | Public surface |
 | --- | --- | --- | --- |
-| `isolation.py` | — (the check) | — | `check_attack_isolation`, `assert_attack_isolated`, `IsolationReport`, `AttackIsolationError`, `AttackBuilder`, `DecisionProbe`, `SignerScenario`, `signer_scenario`, `signer_probe`, `forwarder_probe`, `canonical`, `MIN_JUSTIFICATION`, `DEFAULT_*_SEEDS`, `SCENARIO_*` |
+| `isolation.py` | — (the check) | — | `check_attack_isolation`, `assert_attack_isolated`, `IsolationReport`, `AttackIsolationError`, `AttackBuilder`, `DecisionProbe`, `SignerScenario`, `signer_scenario`, `signer_probe`, `forwarder_probe`, `canonical`, `SessionEnvironment`, `active_session`, `session_environment`, `same_stream`, `stream_fingerprint`, `derived_from_seed`, `require_distinct_streams`, `MIN_JUSTIFICATION`, `DEFAULT_*_SEEDS`, `SCENARIO_*`, `SESSION_MATERIAL_BYTES` |
 | `statistics.py` | — (the arithmetic) | — | `wilson_bounds`, `agrees_within`, `AgreementVerdict`, `sigma_tolerance`, `binomial_standard_error`, `two_sided_z`, `Z_90`/`Z_95`/`Z_99` |
 | `forgery.py` | `OutsideForger`, `RecipientForger` | `signer`, `forwarder` | `measure_outside_forgery`, `measure_recipient_forgery`, `ForgeryMeasurement`, `wilson_interval`, `forwarder_probe`, three floor constants |
 | `impersonation.py` | `Impersonator` | `distributor`, `signer` | `ImpersonationScope`, `impersonation_seams`, `measure_impersonation`, `run_impersonation`, `matched_sets_identical`, `MEASURED`, `shipped_summary`, `detector_signals`, `signing_probe`, `distributor_probe` |
@@ -195,6 +196,16 @@ which for the shipped choice lie in the x-z plane), and
 `params.sifted()` reduces the signing length accordingly, so the floors and bounds of Phase 2
 apply to what is left rather than to the nominal `L`.
 
+The reserved *set* is shared by the two links, because both records must index the same key,
+but the rounds are **dealt between them**: Bob measures half the reserved positions and
+Charlie the other half, and the half a link does not measure it runs as an ordinary key round
+and then drops. A run distributes to Bob and then to Charlie, so a check set both links shared
+would mean one recovery bought the second link outright. The price is exact and worth stating:
+each link publishes `check_count / 2` rounds, so a deployment that wants `n` rounds per link
+reserves `2n` positions — `CheckRoundBudget.reserved_fraction` is that number, and
+`draw_check_plan(..., parties=None)` restores the shared plan at full sample size and
+re-couples the links.
+
 **Intervals.** QBER is reported as a Wilson score interval at **99%** — Wilson because a clean
 link measures exactly `0/n`, where the Wald interval collapses to the single point `0` and
 claims certainty from a finite experiment; 99% rather than 95% because a channel campaign
@@ -319,6 +330,18 @@ What closes it is the **provenance half of the count exchange, under one orderin
 | `no_count_exchange` | 300/300 |
 | counts taken as received (`COUNTS_AFTER_FORWARDING`) | 300/300 |
 | counts taken as signed (`COUNTS_BEFORE_FORWARDING`, the shipped default) | 0/300 |
+
+**What counts as a burned round.** Success here is the honest declaration being refused as
+`RECORD_ALREADY_VERIFIED` — the mechanism — and not the looser "the honest declaration was not
+accepted", which is what `measure_ledger_denial_of_service` scored until the audit. The two
+agree on every healthy trial and come apart on a degenerate one: below `L = 140` both
+matched-count floors degenerate and an honest run can fail entirely on its own, and the loose
+reading counted that as the adversary burning a round he never touched. At `L = 12` it does:
+three trials in a hundred and twenty end `empty-matched-set` with no ledger present, so the
+*undefended* arm — where the attack provably achieves nothing that lasts — would have reported
+`3/120`. Every figure in the table above was re-measured under the corrected definition and is
+unchanged; what changed is that they are now rules rather than facts about a kind seed. A trial
+in which the attack was not measured at all is refused outright rather than scored either way.
 
 **Honest pricing.** The residual denial-of-service surface is one burned round per verifier
 per presentation channel the adversary controls, and it is closed only when every such channel
@@ -448,7 +471,29 @@ A sixth adversary is one row.
 | kept-share-swap × {resource, payload} | `KeptShareSwap` | resource / payload probes | passes |
 | count-starver/count-exchange | `CountStarver` | `starvation_probe()` | passes |
 
-**Result: 14/14 pass check (a). No adversary failed, so no published rate changed.**
+**Result: 14/14 pass check (a), and the pass is now evidenced.** No adversary failed, so no
+published rate changed.
+
+That sentence used to be the whole of the result, and it carried nothing. The audit found
+check (a) **inert on all fourteen rows**: every ready-made probe opened with `del
+session_seed`, no shipped adversary declares a `session_seed` constructor argument, so nothing
+varied between the five calls check (a) compares and no row *could* fail. The two negative
+controls kept working throughout — they read the seed through the builder, the one channel that
+was live — which is exactly why it went unnoticed for the whole phase.
+
+`check_attack_isolation` now installs a `SessionEnvironment` around every build and every probe
+call and varies it with the session seed, opening the three routes a real experiment leaks
+through: the harness's module-level seed constant (`active_session()`), ambient global
+randomness (`numpy.random` and stdlib `random`, which D3 forbids drawing from and which a
+reproducible harness seeds), and an adversary generator the harness derived from the session's
+own seed. The routes are open on purpose: a check that offers no leak detects no theft.
+
+`test_the_session_channel_is_live_on_every_row` is the evidence. Per row it rebuilds *that*
+adversary with the session's seed folded into its generator — one line of defect, same class,
+same `__call__`, same probe — and requires check (a) to catch it. Thirteen of fourteen rows are
+covered directly. The fourteenth is the deterministic recipient forger, whose decisions move
+with nothing at all and so cannot be moved by a defect in whose randomness he was handed; that
+is the same fact the waiver rests on, and his randomised sibling is covered.
 
 ### The one waiver, and why it is not a loophole
 
@@ -480,12 +525,24 @@ The waiver is only sound **alongside** response 2, and the suite enforces that:
 
 ### The negative controls
 
-A check that has never failed is not known to work. Both defective toys in
+A check that has never failed is not known to work. The defective toys in
 `tests/test_attack_isolation.py` are re-run here and must still be caught: `SessionSeedForger`
 by check (a) (`reads the session's randomness`), `DeafForger` by check (b) (`ignored the
 generator it was handed`). The (b) failure message now also names the deterministic escape
 hatch and warns when it is *not* the right answer, so the next author does not reach for the
 waiver to paper over a broken probe.
+
+A third control came out of the audit, and it is the one that would have caught the vacuous
+check: `AmbientSessionForger` takes only `rng` in its constructor — so `session_seed_offered`
+is `False` for it, exactly as for every shipped adversary — and reads the session while it is
+being *called*, the way an attack defined in the same module as the harness's `SEED` constant
+does without declaring anything. Under the check as shipped it passed. `GlobalRandomnessForger`
+covers the ambient route and `build_from_the_session_stream` the one-seed-used-twice route.
+
+A shared control is not by itself enough, and that is the lesson of the finding: a control run
+through `signer_probe()` establishes that *that* probe's channel is live and says nothing about
+`starvation_probe()`, the two channel probes, or a probe added next year. Hence the per-row
+test above.
 
 ### Two ways to write a probe that blames the adversary for your bug
 
@@ -496,11 +553,13 @@ cheat. They are now documented in `isolation.py` under `:ref:`probe-traps``.
   The obvious probe returns the records — which are a function of the session's Alice-side
   stream *by construction*, for every honest implementation. Return the key the impersonator
   substituted instead.
-* **A `payload_map` probe must run with `check_fraction = 0`.** `payload_map` is called on key
-  rounds only, and which positions are key rounds comes from the session's generator, so the
-  *set of occasions the adversary is consulted* moves with the seed even for a perfect
-  adversary. `resource_factory` has no such problem — check-round lockstep calls it at every
-  position identically.
+* **A `payload_map` probe used to need `check_fraction = 0`, and the reason was a defect.**
+  `payload_map` was called on key rounds only, so the *set of occasions the adversary is
+  consulted* moved with the seed even for a perfect adversary — and the same fact let any
+  adversary holding the seam read the check set off the gaps in its own call sequence. The
+  seam is now called on every position and its result discarded on a check round, so the probe
+  no longer needs the workaround and the leak is gone with it. `resource_factory` never had
+  the problem; `channel_monitor` had the mirror image of it and is fixed the same way.
 
 The rule both are instances of: everything the adversary legitimately observes, *including the
 set of occasions on which it is consulted*, must be identical across probe calls.
@@ -575,11 +634,12 @@ Three requests could not be made reachable, and each is a design fact rather tha
    is what excludes her, and only (AUTH). This is a Phase 4 blocker for that scope and is
    inherent to measurement-based QDS, not to this implementation.
 2. **The payload line is invisible to both check arms, and totally.** Same `InterceptResend`
-   on the two seams under identical seeds: resource line QBER `0.3177` / CHSH `0.8813`; payload
-   line QBER **exactly `0.0000`** / CHSH `2.7561`, with comparable key damage (mean matched
-   mismatch `0.3613` vs `0.3535`). A check round prepares no payload, so the arm is blind by
-   construction — no partial visibility and no residual to threshold on. The signal that
-   survives is the verifiers' own mismatch rate.
+   on the two seams under identical seeds: resource line QBER `0.3104` / CHSH `0.9686`; payload
+   line QBER **exactly `0.0000`** / CHSH `2.7993`, with equal key damage (mean matched mismatch
+   `0.3535` on both). A check round teleports no payload — the seam is consulted there, as it
+   is everywhere, and what it returns is discarded — so the arm is blind by construction: no
+   partial visibility and no residual to threshold on. The signal that survives is the
+   verifiers' own mismatch rate.
 3. **`ChannelSample.wings_agree` detects none of these attacks.** No trace-preserving map on
    one half of a maximally entangled pair can change only that half's marginal, so all three
    channel adversaries act on one leg and leave it `True` on every round. It is a detector for
@@ -644,9 +704,10 @@ defence off surgically, runs its tests, and restores the file from a scratchpad 
 | --- | --- | --- |
 | the consumed-records ledger | `verify()` no longer consults `ledger.is_spent(record)` | **RED** — 12 failures across `test_protocol_replay.py` (5) and `test_attack_replay.py` (7), including `test_after_a_captured_signature_is_refused_every_time_it_is_re_presented` and `test_a_rejection_spends_the_round_and_this_is_the_denial_of_service_price` |
 | the declaration binding | `_evidence_refusal` no longer compares the counterpart's digest with the scored declaration's | **RED** — 4 failures, and *only* those four: `test_a_count_against_another_declaration_is_refused_not_pooled`, `test_a_hop_that_alters_the_declaration_stops_the_pooled_floor_passing`, `test_a_seam_that_drops_the_binding_reaches_no_verdict`, and `test_the_shipped_ordering_denies_the_transfer_instead_of_detecting_it`. Honest runs are untouched, which is what a fail-*open* mutation should look like |
-| check (a) of the isolation check | `IsolationReport.reads_the_session` returns `False` | **RED** — 6 failures, including both negative controls: `test_the_seed_peeking_forger_is_caught_by_check_a` and `test_the_session_seed_control_is_still_caught_by_check_a` |
+| check (a) of the isolation check | `IsolationReport.reads_the_session` returns `False` | **RED** — 24 failures, including every negative control and all thirteen rows of `test_the_session_channel_is_live_on_every_row`. The same mutation applied to a clean checkout of the pre-audit code costs **7** (this document previously said 6, which was wrong; the 7 are all controls) |
+| the channel check (a) reaches the candidate by | `observe()` no longer installs the `SessionEnvironment` | **RED** — 18 failures, and this is the shape of the original defect reproduced on demand: every shipped negative control still passes, because each reads the seed through the builder, and only the per-row channel evidence goes red |
 
-All three sites verified byte-identical to their originals afterwards.
+All four sites verified byte-identical to their originals afterwards.
 
 ---
 
@@ -661,9 +722,14 @@ no state-vector representation, so the convention is load-bearing rather than st
 asymmetric collapse tensors.
 
 **D3 — injected generators throughout.** Every adversary takes its own
-`numpy.random.Generator`; no module reaches for global `numpy.random` or stdlib `random`. The
+`numpy.random.Generator`; no module reaches for global `numpy.random` or stdlib `random`, and
+an adversary that does is now caught by check (a) rather than merely asked not to. The
 `measure_*` functions take the world's generator and the adversary's separately and **refuse
-the same object for both**.
+the same *stream* for both** — the same object, the same position in one stream, or two
+generators built from one seed, which is one stream byte for byte and is the form the mistake
+actually takes. `run_impersonation`, `measure_impersonation` and `measure_starvation` take a
+session *seed* and an adversary *generator*, and now refuse the seed-shaped version of the same
+collision; before the audit those three had no guard at all.
 
 **D4 — no AI/ML.** Correlation tensors, binomial sums, Wilson intervals, one Chernoff tail and
 one bisection on `math.erf`. Nothing is learned, fitted or thresholded from data; every cut
@@ -689,9 +755,10 @@ one the whole phase's arithmetic rests on.
 | one `L = 192` session | ~0.36 s |
 | one standalone check round | ~0.3 ms |
 | `tests/test_phase3_integration.py` | 40 tests, **~3 min 40 s** |
-| `tests/test_phase3_isolation_suite.py` | 35 tests, **10 s** |
+| `tests/test_phase3_isolation_suite.py` | 50 tests, **16 s** |
+| `tests/test_attack_isolation.py` | 48 tests, **3 s** |
 | one `DEFAULT_PARAMS` session | minutes — out of reach for any repeated-trials measurement |
-| the **whole suite** (`python -m pytest`) | **2098 passed in 759.49s (0:12:39)** |
+| the **whole suite** (`python -m pytest`) | **2166 passed in 765.56s (0:12:45)** |
 
 The heavy shipped tables (800 impersonation sessions at `L = 192`, 8 minutes; 2000 outside
 forgeries at `L = 30`) are **not** in the unit suite. What is in the suite is a smaller live

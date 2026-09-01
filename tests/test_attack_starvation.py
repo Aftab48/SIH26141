@@ -116,6 +116,35 @@ def test_starver_refuses_a_generator_it_was_not_given():
         CountStarver(rng=12345)  # type: ignore[arg-type]
 
 
+def test_an_arm_refuses_a_starver_seeded_from_one_of_its_session_seeds():
+    """The guard this module had none of, on the collision it can actually have.
+
+    ``session_seed_start`` and the starver's generator are separate arguments so
+    that a caller cannot pass one number and get both -- and until this guard
+    existed, passing ``500_000`` beside
+    ``CountStarver(rng=default_rng(500_001))`` did exactly that for the arm's
+    second trial and nothing said so. Two generators from one seed are one
+    stream, and a starver holding the session's stream holds both recipients'
+    private symmetrisation coins, so its denial rate would describe a
+    correlation rather than the attack.
+    """
+    with pytest.raises(ValueError, match="the stream session seed 500001"):
+        measure_starvation(
+            DEMO_PARAMS,
+            3,
+            label="collides",
+            starver=CountStarver(rng=np.random.default_rng(500_001)),
+        )
+    # An unrelated seed is accepted, so the guard is not refusing everything.
+    arm = measure_starvation(
+        DEMO_PARAMS,
+        3,
+        label="clean",
+        starver=CountStarver(rng=np.random.default_rng(11)),
+    )
+    assert arm.denied == 3
+
+
 # --------------------------------------------------------------------------- #
 # The headroom, checked against verify() rather than against its own formula
 # --------------------------------------------------------------------------- #

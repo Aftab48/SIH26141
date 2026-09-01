@@ -2139,14 +2139,15 @@ def test_the_default_payload_line_sends_the_eigenstate_unaltered() -> None:
     assert explicit == default
 
 
-def test_the_payload_seam_sees_every_key_round_and_no_check_round() -> None:
-    """A check round prepares no payload, so the seam cannot reach one.
+def test_the_payload_seam_sees_every_position_and_locates_no_check_round() -> None:
+    """The seam is offered every position, so its call sequence says nothing.
 
-    The mirror image of the channel monitor, which sees check rounds and no key
-    round. Together they say that neither seam can be used to do the other's
-    job -- and in particular that a payload attack will not move the QBER or the
-    CHSH estimate, because it never touches the rounds those are computed from.
-    What it moves is the verification rate.
+    It used to be offered key rounds only, which made the *gaps* in its call
+    sequence the check set exactly -- recovered whole, in one pass, by a seam
+    that did nothing but append to a list. What it returns on a check round is
+    still discarded, so a payload attack still cannot move the QBER or the CHSH
+    estimate; what it moves is the verification rate, as before. The difference
+    is that it can no longer tell which rounds those are.
     """
     seen: list[tuple[Party, int, int]] = []
 
@@ -2160,15 +2161,16 @@ def test_the_payload_seam_sees_every_key_round_and_no_check_round() -> None:
 
     for bit in MESSAGE_BITS:
         plan = session.check_plans[bit]
+        assert set(plan.positions), "there must be something to hide"
         for party in VERIFIERS:
             touched = {
                 position
                 for seen_party, seen_bit, position in seen
                 if seen_party is party and seen_bit == bit
             }
-            assert touched == set(plan.signing_positions)
-            assert not touched & set(plan.positions)
-    assert len(seen) == len(MESSAGE_BITS) * len(VERIFIERS) * params.signing_length
+            assert touched == set(range(params.key_length))
+            assert touched > set(plan.positions)
+    assert len(seen) == len(MESSAGE_BITS) * len(VERIFIERS) * params.key_length
 
 
 def test_a_non_callable_payload_map_is_refused_at_construction() -> None:
@@ -2469,7 +2471,7 @@ def test_the_shipped_checked_parameter_set_runs_end_to_end() -> None:
     assert transcript.transferable
     assert transcript.bob.key_length == DEMO_CHECKED_PARAMS.signing_length
     assert len(transcript.channel) == (
-        len(MESSAGE_BITS) * len(VERIFIERS) * DEMO_CHECKED_PARAMS.check_count
+        len(MESSAGE_BITS) * DEMO_CHECKED_PARAMS.check_count
     )
     assert SessionTranscript.from_json(transcript.to_json()) == transcript
     # The security-grade set is far too large to run here; what is checked is
@@ -2514,20 +2516,30 @@ def test_the_channel_samples_are_exactly_the_check_positions(
     log, which is what a Phase 4 detector will join the samples to.
     """
     assert checked_run.channel_monitored
+    # check_count positions are reserved per bit and dealt between the two
+    # links, so the samples total check_count per bit and not twice that.
     assert len(checked_run.channel) == (
-        len(MESSAGE_BITS) * len(VERIFIERS) * checked_run.params.check_count
+        len(MESSAGE_BITS) * checked_run.params.check_count
     )
     for bit in MESSAGE_BITS:
+        watched: set[int] = set()
         for party in VERIFIERS:
             log = checked_run.check_log_for(party, bit)
             samples = checked_run.channel_for(party, bit)
             assert tuple(sample.position for sample in samples) == log.positions
-            assert log.round_count == checked_run.params.check_count
+            # Dealt round-robin, so each link takes half the reserved set to
+            # within one round, and the two halves are disjoint.
+            assert abs(
+                2 * log.round_count - checked_run.params.check_count
+            ) <= 1
+            assert watched.isdisjoint(log.positions)
+            watched |= set(log.positions)
             qber = {entry.position for entry in log.qber}
             for sample in samples:
                 assert (sample.role is CheckRole.QBER) == (
                     sample.position in qber
                 )
+        assert len(watched) == checked_run.params.check_count
 
 
 def test_an_ideal_channel_summarises_as_an_ideal_pair(
@@ -2693,8 +2705,19 @@ def test_the_channel_seam_is_still_called_on_every_position() -> None:
     assert plain.run(0) == session.transcript()
 
 
-def test_the_channel_monitor_is_called_on_check_rounds_only() -> None:
-    """And is handed the resource that was delivered, not a copy of the ideal."""
+def test_the_channel_monitor_is_called_on_every_position() -> None:
+    """Called on every position; recorded only where the plan says.
+
+    Being called used to be the entire signal -- the seam was invoked at check
+    positions and nowhere else, so whoever held it read the check set straight
+    off its own call sequence. It is now invoked everywhere, which is what
+    closes that; what must not change is that nothing is *recorded* at a key
+    position, because a per-position statement about the rounds the key is made
+    of would stop the sampled estimate being a sample of anything.
+
+    Also that it is handed the resource that was delivered, not a copy of the
+    ideal.
+    """
     params = _checked()
     seen: list[tuple[Party, int, int]] = []
 
@@ -2713,8 +2736,15 @@ def test_the_channel_monitor_is_called_on_check_rounds_only() -> None:
                 for seen_party, seen_bit, position in seen
                 if seen_party is party and seen_bit == bit
             )
-            assert tuple(positions) == plan.positions
-            assert not set(positions) & set(plan.signing_positions)
+            assert positions == list(range(params.key_length))
+            # ... and published only at this link's own reserved positions.
+            published = transcript.channel_for(party, bit)
+            assert tuple(
+                sample.position for sample in published
+            ) == plan.positions_for(party)
+            assert not {sample.position for sample in published} & set(
+                plan.signing_positions
+            )
     assert all(
         sample.extra["trace"] == pytest.approx(1.0)
         for sample in transcript.channel

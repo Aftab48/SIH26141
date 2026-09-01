@@ -36,13 +36,20 @@ classes saying three things.
 
 The two lines are not equally visible, and that is structural
 -------------------------------------------------------------
-A check round spends its pair on measuring the channel, so the resource seam is
-called on it. A check round prepares no payload, so the payload seam is **not**
-(:ref:`sih141.protocol.distribute <payload-seam>`). The consequence is worth
-stating as a number rather than a sentiment: at equal damage to the key, a
-resource-line attack moves the published QBER and CHSH estimates and a
-payload-line attack moves neither. See :func:`payload_line_is_unwatched` for the
-measured version and the module's Phase 4 notes below.
+A check round spends its pair on measuring the channel, so what the resource
+seam returns on it is what gets measured. A check round prepares no payload, so
+what the payload seam returns on it is **discarded**
+(:ref:`sih141.protocol.distribute <payload-seam>`). The payload seam is still
+*called* there -- at every position, key round or check round, and its own
+generator therefore advances at every position; a seam consulted on key rounds
+only would have carried the check set out in the gaps between its calls. What it
+returns is what does not reach the published statistics.
+
+The consequence is worth stating as a number rather than a sentiment: at equal
+damage to the key, a resource-line attack moves the published QBER and CHSH
+estimates and a payload-line attack moves neither. See
+:func:`payload_line_is_unwatched` for the measured version and the module's
+Phase 4 notes below.
 
 .. _channel-tensor:
 
@@ -109,6 +116,9 @@ concurrence                 :class:`~sih141.protocol.session.ChannelSample` per
                             check round. Recorded on every **checked** run, with
                             or without a ``channel_monitor``; the monitor only
                             adds :attr:`~sih141.protocol.session.ChannelSample.extra`.
+                            The reserved positions are dealt between the two
+                            links, so a run publishes ``check_count`` samples per
+                            message bit and each link watches its own half.
                             A run with ``check_fraction = 0`` publishes none.
 verification rate           :attr:`~sih141.protocol.verify.VerificationResult.rate`,
                             always present.
@@ -872,9 +882,13 @@ class ChannelAttack:
     def payload(self, state: StateLike, context: ResourceContext) -> StateLike:
         """Mount the attack on the payload line. A ``PayloadMap``.
 
-        Called once per **key round** and never on a check round, so an attack
-        mounted here is invisible to both published statistics
-        (:ref:`channel-two-lines`).
+        Called once at **every** position, key round and check round alike --
+        so this seam's own generator advances identically whatever the plan
+        reserved, which is what stops the call pattern leaking the check set.
+        What it returns on a check round is discarded, so an attack mounted
+        here is still invisible to both published statistics
+        (:ref:`channel-two-lines`); it is the *result* that never reaches them,
+        not the call.
 
         Parameters
         ----------
@@ -1858,7 +1872,7 @@ def attribution_survives_symmetrisation(
     intervals do not overlap:
 
     >>> f"{outcome.check_qber[outcome.target]:.4f}"
-    '0.0708'
+    '0.0542'
     >>> f"{min(outcome.check_qber.values()):.4f}"
     '0.0000'
     >>> outcome.attributable(margin=0.02), outcome.intervals_disjoint()
@@ -1944,8 +1958,8 @@ def payload_line_is_unwatched(
     thing in this module -- is mounted twice under identical seeds: once on the
     ``resource_factory`` seam and once on ``payload_map``. Both wreck the key.
     Only the first is visible to the published channel statistics, because a
-    check round prepares no payload and the payload seam is therefore never
-    called on one (:ref:`channel-two-lines`).
+    check round prepares no payload and what the payload seam returns on one is
+    therefore discarded (:ref:`channel-two-lines`).
 
     This is a *consequence* of the seam design and is documented as one in
     :mod:`sih141.protocol.distribute`; what is added here is the measurement,
@@ -1985,17 +1999,24 @@ def payload_line_is_unwatched(
     tensor predicts:
 
     >>> f"{seen['resource_qber']:.4f}", f"{seen['resource_chsh']:.4f}"
-    ('0.3177', '0.8813')
+    ('0.3104', '0.9686')
 
     On the payload line, at a comparable rate of damage to the key, they are
     pristine -- a perfect QBER and a Tsirelson-grade Bell violation:
 
     >>> f"{seen['payload_qber']:.4f}", f"{seen['payload_chsh']:.4f}"
-    ('0.0000', '2.7561')
+    ('0.0000', '2.7993')
     >>> f"{seen['resource_record_rate']:.4f}"
     '0.3535'
     >>> f"{seen['payload_record_rate']:.4f}"
-    '0.3613'
+    '0.3535'
+
+    Those two are now *equal*, and that is a consequence rather than a
+    coincidence: ``payload_map`` is consulted at every position -- its result
+    discarded on a check round -- so a payload adversary is offered the same
+    hops in the same order as a resource one and the same adversary seed draws
+    the same sequence. When ``payload_map`` was called on key rounds only, its
+    own stream advanced only there, which carried the check set out with it.
     """
     from sih141.protocol.session import QDSSession
 

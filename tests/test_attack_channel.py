@@ -118,14 +118,17 @@ def _resource_probe(attack: ChannelAttack, session_seed: int) -> object:
 def _payload_probe(attack: ChannelAttack, session_seed: int) -> object:
     """Wire the attack onto ``payload_map`` and read back its own log.
 
-    ``check_fraction`` is **zero** here, and that is not an arbitrary choice. The
-    payload seam is called on key rounds only, and which positions are key rounds
-    is decided by the recipients' check plan, which is drawn from the session's
-    generator. So the *set of positions the seam is offered* legitimately moves
-    with the session seed even for a perfectly isolated adversary, and a probe
-    that reported those positions would fail an honest attack. With no check
-    rounds every position is a key round and the call set is fixed, leaving only
-    the adversary's own choices to vary. See the module's seam notes.
+    ``check_fraction`` is **zero** here, and it used to be load-bearing: the
+    payload seam was called on key rounds only, which positions are key rounds
+    came out of the recipients' check plan, and so the *set of positions the
+    seam is offered* moved with the session seed even for a perfectly isolated
+    adversary -- a probe reporting those positions would have failed an honest
+    attack. That is no longer true, and the reason it is no longer true is the
+    same reason the check set is no longer inferable: the seam is offered every
+    position whether or not a plan is in force. The zero is kept because it
+    costs nothing and because a probe should not depend on a property this
+    module does not own; it is no longer the difference between a probe that
+    works and one that blames the attack for the harness.
     """
     params = ProtocolParams(key_length=24)
     session = QDSSession(
@@ -510,8 +513,16 @@ def test_the_two_seeds_must_differ():
 # ==========================================================================
 
 
-def test_the_payload_seam_is_never_offered_a_check_round():
-    """The structural fact the next test measures the consequence of."""
+def test_the_payload_seam_is_offered_every_position_including_check_rounds():
+    """The structural fact the next test measures the consequence of.
+
+    The seam used to be offered key rounds only, and the gaps in what it was
+    offered were the check set exactly -- an adversary holding this seam
+    recovered the whole plan by appending to a list. It is now offered every
+    position and what it returns at a check round is discarded, so the
+    substitution still never reaches a published statistic and the adversary
+    can no longer say which rounds those were.
+    """
     params = ProtocolParams(key_length=64, check_fraction=0.25)
     attack = InterceptResend(rng=np.random.default_rng(ATTACK_SEED))
     session = QDSSession(
@@ -526,8 +537,9 @@ def test_the_payload_seam_is_never_offered_a_check_round():
             for entry in attack.log
             if entry.message_bit == bit
         }
-        assert offered.isdisjoint(set(plan.positions))
-        assert offered == set(plan.signing_positions)
+        assert set(plan.positions), "there must be a check set to hide"
+        assert offered == set(range(params.key_length))
+        assert offered > set(plan.signing_positions)
 
 
 def test_a_payload_attack_wrecks_the_key_and_moves_no_statistic():

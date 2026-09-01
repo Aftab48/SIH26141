@@ -180,9 +180,15 @@ Standing rules
 D3/D6
     :class:`CountStarver` takes its own keyword-only
     :class:`numpy.random.Generator` and never sees the session's. Its
-    constructor does not accept ``session_seed`` at all, so the guarantee is
-    structural; :func:`starvation_probe` is the
-    :class:`~sih141.attacks.isolation.DecisionProbe` that demonstrates it.
+    constructor does not accept ``session_seed``, which closes the
+    construction-time channel and nothing else -- not declaring an argument is
+    not a proof, since an adversary can read ambient state when it is called and
+    a harness can hand it the session's own generator. Both of those are checked
+    rather than assumed: :func:`starvation_probe` runs inside the
+    :class:`~sih141.attacks.isolation.SessionEnvironment`
+    :func:`~sih141.attacks.isolation.check_attack_isolation` installs, and
+    :func:`measure_starvation` refuses a starver whose generator is the stream
+    one of its own session seeds produces.
 D4
     Binomial arithmetic and a z-score. No estimator is fitted to anything.
 D5
@@ -209,7 +215,7 @@ from typing import Any, Final
 import numpy as np
 
 from sih141.attacks.statistics import wilson_bounds
-from sih141.attacks.isolation import DecisionProbe
+from sih141.attacks.isolation import DecisionProbe, derived_from_seed
 from sih141.protocol.analysis import (
     matched_shortfall_probability,
     matched_statistics,
@@ -632,9 +638,9 @@ class CountStarver:
     rng : numpy.random.Generator
         Keyword-only, and the adversary's **own** (D6). Used for the selectivity
         coin and for the jitter on a starving declaration. The constructor does
-        not accept the session's seed in any form, so
-        :func:`~sih141.attacks.isolation.check_attack_isolation`'s first half is
-        structural for this candidate rather than merely observed.
+        not accept the session's seed in any form, which closes one of the three
+        routes :ref:`sih141.attacks.isolation <check-a-channel>` lists; the other
+        two are closed by check (a) actually running, not by this signature.
     party : Party or str, optional
         Keyword-only. Which verifier is dishonest. Defaults to
         :attr:`~sih141.protocol.params.Party.CHARLIE`, the transferee, because
@@ -947,11 +953,15 @@ def starvation_probe(
 
     ``(attack, session_seed) -> tuple of int``: the counts the candidate
     declares over ``repeats`` exchanges against one frozen pair of messages.
-    ``session_seed`` is **deliberately unused**, for the reason
-    :func:`~sih141.attacks.isolation.signer_probe` gives: the adversary's
-    observations are identical on every call, so the session seed is a quantity
-    it can only know if it went and took it, and that is exactly the question
-    the check asks.
+    ``session_seed`` is not passed on, for the reason
+    :func:`~sih141.attacks.isolation.signer_probe` gives: the seam takes no such
+    argument, and the adversary's observations are held identical on every call
+    so that check (a) is a statement about the adversary rather than about the
+    harness. What *does* vary with the seed is the
+    :class:`~sih141.attacks.isolation.SessionEnvironment` around the call
+    (:ref:`sih141.attacks.isolation <check-a-channel>`), so the seed remains a
+    quantity the candidate can only have by going and taking it -- and taking it
+    is now detected rather than merely made awkward.
 
     Parameters
     ----------
@@ -1324,7 +1334,10 @@ def measure_starvation(
         is not an integer.
     ValueError
         If ``trials < 1``, ``message_bits`` is empty or names anything but
-        ``0``/``1``, or ``session_seed_start`` is negative.
+        ``0``/``1``, ``session_seed_start`` is negative, or the starver's own
+        generator is the stream one of the arm's session seeds produces -- one
+        seed used for both roles, which is the D6 defect the two separate
+        arguments were meant to prevent and did not.
 
     See Also
     --------
@@ -1374,6 +1387,31 @@ def measure_starvation(
             "trials."
         )
     start = _as_count(session_seed_start, "session_seed_start")
+    if starver is not None:
+        # D6, enforced rather than asked for. session_seed_start and the
+        # starver's generator are separate arguments so that a caller cannot
+        # pass one number and get both -- but until this guard existed, passing
+        # `session_seed_start=500_000` beside
+        # `CountStarver(rng=numpy.random.default_rng(500_000))` did exactly
+        # that, and nothing said so. Two generators from one seed are one
+        # stream, and QDSSession derives all three of its streams from a single
+        # 32-byte draw off the one it is given, so a starver holding it holds
+        # both recipients' private symmetrisation coins. The generator is
+        # reached through the class's own attribute because it is deliberately
+        # not published: nothing outside this module should be able to take an
+        # adversary's randomness, and this check runs inside it.
+        for offset in range(total):
+            if derived_from_seed(starver._rng, start + offset):  # noqa: SLF001
+                raise ValueError(
+                    f"starver's generator is the stream session seed "
+                    f"{start + offset} produces (D6). The arm would measure an "
+                    f"adversary correlated with the very runs it is denying, "
+                    f"and its denial rate would be a statement about one seed "
+                    f"rather than about the attack. session_seed_start is "
+                    f"{start} and the arm runs {total} consecutive seeds from "
+                    f"there; seed the CountStarver from something unrelated to "
+                    f"that range."
+                )
 
     denied = complete = transferable = accepted_by_starver = 0
     declared: list[int] = []

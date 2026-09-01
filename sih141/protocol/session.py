@@ -360,14 +360,15 @@ than two different programs.
     already uses for the split-coin route. Charlie then scores on his own floor,
     lands near ``1/12``, and rejects.
 
-``channel_monitor`` -- what a Phase 4 detector reads, on check rounds only
+``channel_monitor`` -- what a Phase 4 detector reads, published on check rounds only
     Callable ``channel_monitor(resource, context)`` returning a JSON-safe
-    mapping of extra diagnostics, invoked **only at check-round positions** and
-    only on a parameter set that has check rounds
-    (:attr:`~sih141.protocol.params.ProtocolParams.check_fraction`). ``None`` --
-    the default -- still records the built-in summary of every check round's
-    resource; the seam is for a detector that wants more than fidelity, purity
-    and concurrence out of the pair it was given.
+    mapping of extra diagnostics, invoked **at every position** of a run whose
+    parameter set has check rounds
+    (:attr:`~sih141.protocol.params.ProtocolParams.check_fraction`), and not at
+    all on one that has none. ``None`` -- the default -- still records the
+    built-in summary of every check round's resource; the seam is for a
+    detector that wants more than fidelity, purity and concurrence out of the
+    pair it was given.
 
     It is an *observer*, not an adversary: it is handed a **copy** of the
     resource the ``resource_factory`` produced, so it can neither replace what
@@ -375,13 +376,24 @@ than two different programs.
     not fastidiousness -- a qiskit state hands out its array, and a monitor that
     wrote to the original would be a channel attack under an observer's name,
     invisible in a transcript that attributes channel behaviour to the factory.
-    Where it is invoked is the rest of the security content of the feature. A monitor called on every position would publish, per position, a
-    statement about the very rounds the key is made of -- and the reason a
-    sampled estimate is trustworthy at all is that the sample is a *sample*. So
-    the session records nothing at a key position, ever, and
-    :attr:`SessionTranscript.channel` is checked against the published
-    :attr:`SessionTranscript.check_logs` on the way back in from JSON, so a
-    transcript that claims otherwise does not reconstruct.
+
+    **Where it is invoked, and where its answer is kept, are two different
+    questions, and the security content is in keeping them apart.** This seam
+    used to be invoked at check-round positions only, which made *being called*
+    the entire signal: whoever held it read the check set straight off its own
+    call sequence -- 120 of 120 positions at ``L = 480``, no statistics
+    involved -- and the declared channel-side adversary holds this seam
+    alongside ``resource_factory`` and ``payload_map``. So it is now called
+    everywhere and its answer discarded at key positions. What must stay true
+    is the other half of the argument, and it does: a per-position record about
+    the rounds the key is made of would stop the sampled estimate being a
+    sample of anything, so the session **records** nothing at a key position,
+    ever, and :attr:`SessionTranscript.channel` is checked against the
+    published :attr:`SessionTranscript.check_logs` on the way back in from
+    JSON, so a transcript that claims otherwise does not reconstruct. A monitor
+    that wants to accumulate per-position state of its own is free to -- it is
+    the recipients' detector, not the adversary's -- but nothing it accumulates
+    reaches the transcript except through the check rounds.
 
     What comes out is a :class:`ChannelSample` per check round per recipient per
     message bit, carried in the transcript beside the
@@ -495,9 +507,10 @@ The rest of the seams, audited for the same class of leak:
   coins even indirectly. A seam that wants randomness closes over its own
   generator, which is the documented way (D6).
 * ``channel_monitor`` gets a resource and a context, no generator, and is
-  invoked only where the recipients' own stream said a check round would be. It
-  can read the channel it is shown and nothing else, and it cannot change what
-  is delivered.
+  invoked at every position alike, so that its call sequence says nothing about
+  where the recipients' own stream put the check rounds. It can read the
+  channel it is shown and nothing else, it cannot change what is delivered, and
+  what it returns is published only at the check positions.
 * ``symmetriser`` *is* handed ``self._recipient_rng``, which is correct: it
   replaces the recipients' step and the coins are theirs. It is the one seam
   from which the coins are readable -- and, by rewinding, the check plan drawn
@@ -543,7 +556,12 @@ one right answer:
   entire value of a sampled estimate is that the party being estimated cannot
   choose the sample, and the same stream separation that keeps the coins away
   from her (:ref:`two-streams`) is what keeps the check positions away from her
-  too.
+  too. One draw reserves the positions for both links and deals the rounds
+  between them, so the two links do not run the same check set
+  (:ref:`sih141.protocol.checkrounds <check-round-links>`): a run distributes
+  to Bob and then to Charlie, and a shared check set would mean an adversary
+  who recovered it on the first pass could spare exactly those positions on the
+  second. Each link publishes half of ``check_count`` rounds as a result.
 * **Alice still draws a full-length key** and is still asked to distribute all
   ``L`` positions, because she does not know the check set when she draws. What
   she *declares* in Phase B is the sifted key,
@@ -1115,6 +1133,99 @@ def _as_json_value(value: Any, path: str) -> Any:
     )
 
 
+def _as_pair(
+    resource: StateLike, context: ResourceContext
+) -> DensityMatrix:
+    """Coerce one hop's resource and refuse anything that is not a pair.
+
+    Parameters
+    ----------
+    resource : StateLike
+        What the ``resource_factory`` produced for this hop, in either
+        representation (D1).
+    context : ResourceContext
+        The hop, quoted in the error message.
+
+    Returns
+    -------
+    qiskit.quantum_info.DensityMatrix
+        The resource as a two-qubit density matrix.
+
+    Raises
+    ------
+    ValueError
+        If it is not a two-qubit state.
+    """
+    density = as_density(resource)
+    if density.num_qubits != 2:
+        raise ValueError(
+            f"a check round measures both halves of an entanglement "
+            f"resource, so the resource must be a two-qubit state; got "
+            f"{density.num_qubits} qubit(s) for {context.party.value} at "
+            f"position {context.position} of message bit "
+            f"{context.message_bit}. The resource_factory is what produced "
+            f"it."
+        )
+    return density
+
+
+def _call_monitor(
+    monitor: ChannelMonitor | None,
+    density: DensityMatrix,
+    context: ResourceContext,
+) -> Mapping[str, Any]:
+    """Put one hop's resource past the channel-monitor seam.
+
+    Parameters
+    ----------
+    monitor : ChannelMonitor or None
+        The seam. ``None`` returns an empty mapping without touching the state,
+        which is what keeps an unmonitored run free of the copy below.
+    density : qiskit.quantum_info.DensityMatrix
+        The resource, already checked to be a pair by :func:`_as_pair`.
+    context : ResourceContext
+        The hop.
+
+    Returns
+    -------
+    mapping
+        Whatever the seam returned, unvalidated as to its *contents* --
+        :class:`ChannelSample` coerces those to JSON leaves and is the one
+        place that has to.
+
+    Raises
+    ------
+    TypeError
+        If ``monitor`` is not callable, or did not return a mapping.
+    """
+    if monitor is None:
+        return {}
+    if not callable(monitor):
+        raise TypeError(
+            f"channel_monitor must be a callable "
+            f"monitor(resource, context), got {type(monitor).__name__}."
+        )
+    # A COPY, and this is the line that makes "an observer cannot become a
+    # channel attack" true rather than merely intended. The seam is handed the
+    # state the channel delivered; a qiskit state exposes its array, so handing
+    # over the object itself would let a monitor edit the pair between the
+    # factory that produced it and the measurement that consumes it -- a
+    # channel attack wearing an observer's name, and one that would not show up
+    # in the transcript as a channel attack at all. Four by four, once per hop.
+    returned = monitor(
+        DensityMatrix(np.array(density.data, copy=True)), context
+    )
+    if not isinstance(returned, Mapping):
+        raise TypeError(
+            f"channel_monitor must return a mapping of JSON-safe "
+            f"diagnostics, got {type(returned).__name__} for "
+            f"{context.party.value} at position {context.position}. "
+            f"Return an empty mapping to record nothing beyond the "
+            f"built-in summary."
+        )
+    return returned
+
+
 @dataclass(frozen=True)
 class ChannelSample:
     """What one check round's entanglement resource was, before it was measured.
@@ -1322,6 +1433,7 @@ class ChannelSample:
         scheduled: QberRound | ChshRound,
         *,
         monitor: ChannelMonitor | None = None,
+        extra: Mapping[str, Any] | None = None,
     ) -> ChannelSample:
         """Summarise the resource one check round was handed.
 
@@ -1336,7 +1448,14 @@ class ChannelSample:
             The planned round, which supplies :attr:`role` and is checked to sit
             at ``context.position``.
         monitor : ChannelMonitor or None, optional
-            Keyword-only. The seam; ``None`` records the built-in summary alone.
+            Keyword-only. The seam, invoked here; ``None`` records the built-in
+            summary alone.
+        extra : mapping or None, optional
+            Keyword-only. A monitor's output already collected by the caller,
+            for the case where the seam must be invoked somewhere this method
+            cannot see -- which is every position, not only the check ones, so
+            that being called stops being the signal it was
+            (:class:`_ChannelTap`). Mutually exclusive with ``monitor``.
 
         Returns
         -------
@@ -1345,8 +1464,8 @@ class ChannelSample:
         Raises
         ------
         ValueError
-            If ``resource`` is not a two-qubit state, or if ``scheduled`` is for
-            another position.
+            If ``resource`` is not a two-qubit state, if ``scheduled`` is for
+            another position, or if both ``monitor`` and ``extra`` are given.
         TypeError
             If ``monitor`` is not callable, or returned something that is not a
             JSON-safe mapping.
@@ -1359,44 +1478,16 @@ class ChannelSample:
                 f"a mismatch would file this pair's diagnostics against another "
                 f"position's outcomes."
             )
-        density = as_density(resource)
-        if density.num_qubits != 2:
+        if monitor is not None and extra is not None:
             raise ValueError(
-                f"a check round measures both halves of an entanglement "
-                f"resource, so the resource must be a two-qubit state; got "
-                f"{density.num_qubits} qubit(s) for {context.party.value} at "
-                f"position {context.position} of message bit "
-                f"{context.message_bit}. The resource_factory is what produced "
-                f"it."
+                "pass either monitor= to invoke the seam here or extra= to "
+                "record what it already returned, not both: two calls for one "
+                "hop would double every count a monitor keeps and leave the "
+                "sample carrying the second one's answer."
             )
-        extra: Mapping[str, Any] = {}
-        if monitor is not None:
-            if not callable(monitor):
-                raise TypeError(
-                    f"channel_monitor must be a callable "
-                    f"monitor(resource, context), got "
-                    f"{type(monitor).__name__}."
-                )
-            # A COPY, and this is the line that makes "an observer cannot
-            # become a channel attack" true rather than merely intended. The
-            # seam is handed the state the channel delivered; a qiskit state
-            # exposes its array, so handing over the object itself would let a
-            # monitor edit the pair between the factory that produced it and
-            # the measurement that consumes it -- a channel attack wearing an
-            # observer's name, and one that would not show up in the transcript
-            # as a channel attack at all. Four by four, once per check round.
-            returned = monitor(
-                DensityMatrix(np.array(density.data, copy=True)), context
-            )
-            if not isinstance(returned, Mapping):
-                raise TypeError(
-                    f"channel_monitor must return a mapping of JSON-safe "
-                    f"diagnostics, got {type(returned).__name__} for "
-                    f"{context.party.value} at position {context.position}. "
-                    f"Return an empty mapping to record nothing beyond the "
-                    f"built-in summary."
-                )
-            extra = returned
+        density = _as_pair(resource, context)
+        if extra is None:
+            extra = _call_monitor(monitor, density, context)
         reference = bell_state(BellState.PHI_PLUS)
         return cls(
             party=context.party,
@@ -1537,9 +1628,23 @@ class _ChannelTap:
     Wraps the caller's factory (or :func:`~sih141.protocol.distribute.ideal_resource`
     when there is none) and is what :meth:`QDSSession.distribute` actually hands
     the distributor on a checked run. For every hop it calls the underlying
-    factory exactly as :mod:`sih141.protocol.distribute` would, and *then* --
-    only at a position the plan designates a check round -- records a
-    :class:`ChannelSample`.
+    factory exactly as :mod:`sih141.protocol.distribute` would, then puts the
+    resource past the ``channel_monitor`` -- **also on every hop** -- and
+    *then*, only at a position this link's plan designates a check round,
+    records a :class:`ChannelSample`.
+
+    Calling the monitor everywhere and recording almost nowhere is the whole
+    design, and the asymmetry is the point. *Being called* is a signal: a
+    monitor invoked at check positions only publishes the check set to whoever
+    holds the seam, in one pass, with no statistics and no inference -- the
+    declared channel-side adversary holds this seam and the two in
+    :mod:`sih141.protocol.distribute` together, so a call pattern that differs
+    between the branches is a call pattern that hands the check set over. What
+    must stay true is the *other* half of the original argument: nothing is
+    ever **recorded** at a key position, because a per-position statement about
+    the rounds the key is made of would stop the sample being a sample. So the
+    seam sees everything and the transcript sees only the check rounds, and
+    :func:`_check_sample_against` re-checks that on the way back in from JSON.
 
     The order matters and is the reason this is a wrapper rather than a hook
     inside the distribution loop. The underlying factory is called identically
@@ -1549,19 +1654,32 @@ class _ChannelTap:
     (:ref:`sih141.protocol.distribute <check-round-lockstep>`) is untouched: the
     tap is downstream of the only thing the adversary can see.
 
+    One tap serves every link of one message bit, and the plan deals its
+    reserved rounds between them
+    (:ref:`sih141.protocol.checkrounds <check-round-links>`), so which rounds
+    are recorded is looked up per :attr:`~ResourceContext.party` -- indexed once
+    per link, on that link's first hop.
+
     Parameters
     ----------
     factory : ResourceFactory or None
         The session's channel seam.
     plan : CheckRoundPlan
-        The plan for this message bit, indexed once at construction.
+        The plan for this message bit, indexed per link on first use.
     monitor : ChannelMonitor or None
         The extra-diagnostics seam.
     sink : list of ChannelSample
         Where samples are appended, in call order. The session owns it.
     """
 
-    __slots__ = ("_factory", "_wants_context", "_planned", "_monitor", "_sink")
+    __slots__ = (
+        "_factory",
+        "_wants_context",
+        "_plan",
+        "_planned",
+        "_monitor",
+        "_sink",
+    )
 
     def __init__(
         self,
@@ -1572,19 +1690,48 @@ class _ChannelTap:
         sink: list[ChannelSample],
     ) -> None:
         self._factory, self._wants_context = _resolve_factory(factory)
-        self._planned = plan.rounds_by_position()
+        self._plan = plan
+        self._planned: dict[Party, dict[int, QberRound | ChshRound]] = {}
         self._monitor = monitor
         self._sink = sink
 
+    def _rounds_for(self, party: Party) -> dict[int, QberRound | ChshRound]:
+        """Return this link's planned rounds, indexed once per link.
+
+        Parameters
+        ----------
+        party : Party
+            The recipient whose link the hop belongs to.
+
+        Returns
+        -------
+        dict
+            Position to planned round, for the rounds this link measures.
+        """
+        rounds = self._planned.get(party)
+        if rounds is None:
+            rounds = self._plan.rounds_by_position(party)
+            self._planned[party] = rounds
+        return rounds
+
     def __call__(self, context: ResourceContext) -> StateLike:
-        """Draw one hop's resource, summarising it if this is a check round."""
+        """Draw one hop's resource, monitor it, and record it if it is watched."""
         resource = _draw_resource(self._factory, self._wants_context, context)
-        scheduled = self._planned.get(context.position)
+        # Every hop, so that the seam cannot read the plan off its own call
+        # sequence. Guarded rather than folded into the call, so that a run
+        # with no monitor neither coerces the state nor validates it here: the
+        # pair check would otherwise fire at position 0 of an unmonitored run
+        # instead of where it used to, and an honest run's cost would grow for
+        # a seam it does not have.
+        extra: Mapping[str, Any] = {}
+        if self._monitor is not None:
+            extra = _call_monitor(
+                self._monitor, _as_pair(resource, context), context
+            )
+        scheduled = self._rounds_for(context.party).get(context.position)
         if scheduled is not None:
             self._sink.append(
-                ChannelSample.of(
-                    resource, context, scheduled, monitor=self._monitor
-                )
+                ChannelSample.of(resource, context, scheduled, extra=extra)
             )
         return resource
 
@@ -2724,10 +2871,11 @@ class SessionTranscript:
             rounds = sum(log.round_count for log in self.check_logs)
             lines.append(
                 f"CHECK ROUNDS: {self.params.check_count} of "
-                f"{self.params.key_length} positions per link were spent on "
-                f"channel estimation, so the key was scored at "
-                f"L={self.params.signing_length}; {rounds} observations and "
-                f"{len(self.channel)} channel samples published."
+                f"{self.params.key_length} positions were reserved for "
+                f"channel estimation and dealt between the links, so the key "
+                f"was scored at L={self.params.signing_length}; {rounds} "
+                f"observations and {len(self.channel)} channel samples "
+                f"published."
             )
         if self.forwarding_altered_signature:
             lines.append(

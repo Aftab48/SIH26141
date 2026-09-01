@@ -117,7 +117,7 @@ The ``payload_map`` seam
 The resource seam owns the *channel*; this one owns the **payload line** -- the
 qubit Alice prepares, between her preparation and her Bell measurement.
 :func:`distribute_to_recipient` takes a ``payload_map``: a callable invoked once
-per **key round** with the eigenstate about to be teleported and the same
+per **position** with the eigenstate prepared for it and the same
 :class:`ResourceContext` the resource factory saw, returning the state that is
 actually sent. It defaults to ``None``, which calls nothing at all, so the
 honest path is unchanged down to the last variate.
@@ -130,20 +130,30 @@ copy drifts the first time this file changes, and its bugs are invisible,
 because the honest path never executes it. A seam that substitutes one state for
 another is one line of attack code and cannot drift.
 
-Two properties of the seam are worth stating because they are consequences
+Three properties of the seam are worth stating because they are consequences
 rather than decisions:
 
-* **It is never called on a check round.** A check round prepares no payload; it
-  spends its pair on measuring the channel. So a payload attack cannot be
-  aimed at, or hidden from, the watched positions -- it simply does not touch
-  them, and neither the QBER nor the CHSH estimate will move because of one.
+* **It is called on every position, and what it returns on a check round is
+  thrown away.** A check round prepares no payload of its own; it spends its
+  pair on measuring the channel. But *being called* is a signal, and this seam
+  used to be called on key rounds only -- which made the gaps in its call
+  sequence the check set, exactly, and recoverable in one pass. So the call is
+  now made everywhere and the result discarded where it has no use, the same
+  way the recipient's basis draw is made everywhere and discarded on a check
+  round. See :ref:`check-round-lockstep`.
+* **A payload attack still cannot reach the watched positions.** What is
+  discarded is discarded: the substituted state is never teleported on a check
+  round, so neither the QBER nor the CHSH estimate can move because of one.
   What moves is the verification rate, which is where a payload substitution
-  belongs: it is a statement about the *key*, not about the link. The mirror
-  image of :ref:`check-round-lockstep`, where the resource seam cannot tell the
-  two branches apart at all.
-* **It consumes no randomness**, like the resource seam: a map that wants some
-  closes over its own generator (D6). The variate budget is three per position
-  on every branch either way.
+  belongs -- it is a statement about the *key*, not about the link. The
+  difference from before is that the seam can no longer *tell* which positions
+  those are.
+* **It consumes no randomness** from this run's generator, like the resource
+  seam: a map that wants some closes over its own (D6). The variate budget here
+  is three per position on every branch either way. A randomised map now
+  advances its own generator on every position rather than on key rounds only,
+  which is the point: a map whose own stream advanced only on key rounds would
+  have carried the check set out with it.
 
 The payload may be pure or mixed: :func:`~sih141.core.teleport.teleport` accepts
 both, and measures its reported fidelity against whatever it was given, so a map
@@ -168,14 +178,18 @@ key is drawn at full length and sifted afterwards.
 The one thing this module has to get right is that **nothing distinguishes a
 check round from a key round on the wire**, because an adversary who could tell
 them apart would behave on the ones that are watched and misbehave on the ones
-that are not, and every estimate here would be a fiction. Two invariants secure
-it, and both are tested:
+that are not, and every estimate here would be a fiction. Three invariants
+secure it, and all three are tested:
 
-* The ``resource_factory`` is called **identically** on both -- same call, same
-  :class:`ResourceContext`, in the same order -- before the branch is taken. The
-  factory is the whole of the adversary's access to this loop, so it sees one
-  undifferentiated stream of requests.
-  ``test_the_factory_cannot_tell_a_check_round_from_a_key_round`` pins it.
+* **Every seam is called on every position**, in the same order, with the same
+  :class:`ResourceContext`, before the branch is taken. That is the
+  ``resource_factory``, the ``payload_map`` here, and the ``channel_monitor``
+  in :mod:`sih141.protocol.session`; the declared channel-side adversary holds
+  all three, so it is the union of their call sequences that has to be
+  undifferentiated, not any one of them.
+  ``test_the_factory_cannot_tell_a_check_round_from_a_key_round`` drives all
+  three together and pins it. It used to drive the factory alone, and passed
+  against code that published the whole check set through the other two.
 * **Exactly three variates are consumed per position, on both branches.** A key
   round spends them on the recipient's basis draw, the Bell measurement inside
   :func:`~sih141.core.teleport.teleport`, and the recipient's projective
@@ -188,6 +202,13 @@ it, and both are tested:
   "the retained key tests uniform", and
   ``test_retained_positions_are_bit_identical_to_an_unchecked_run`` asserts the
   equality outright.
+* **The two links do not run the same check rounds.** A plan reserves one set
+  of positions -- shared, because both recipients must retain the same key --
+  but deals them between the links, so recovering the check set on the link an
+  adversary sees first does not hand over the second's
+  (:ref:`sih141.protocol.checkrounds <check-round-links>`). The first two
+  invariants say the set cannot be recovered at all; this one says what it
+  would buy if it ever were.
 
 Notes
 -----
@@ -728,7 +749,14 @@ class RecipientDistribution:
     >>> len(outcome.record) == params.signing_length == 48
     True
     >>> outcome.record.check_against(params.sifted())
-    >>> outcome.log.round_count == params.check_count == 16
+
+    The run reserves ``params.check_count`` positions; this link measures its
+    own half of them and the other half are Charlie's
+    (:ref:`sih141.protocol.checkrounds <check-round-links>`):
+
+    >>> params.check_count, outcome.log.round_count
+    (16, 8)
+    >>> outcome.log.positions == plan.positions_for(Party.BOB)
     True
     >>> estimate_qber(outcome.log.qber).errors        # an ideal channel
     0
@@ -877,11 +905,13 @@ def distribute_to_recipient(
         only reason to pass a plan here at all.
     payload_map : callable or None, optional
         Keyword-only. The payload-line seam (:ref:`payload-seam`), called
-        ``payload_map(state, context)`` once per **key round** -- never on a
-        check round, which prepares no payload -- with the eigenstate about to
-        be teleported. ``None``, the default, calls nothing and sends the
-        eigenstate itself. It draws no randomness; an attack that wants some
-        closes over its own generator (D6).
+        ``payload_map(state, context)`` once per **position** -- check rounds
+        included, where what it returns is discarded -- with the eigenstate
+        prepared for that position. ``None``, the default, calls nothing and
+        sends the eigenstate itself. It draws no randomness *from this run's
+        generator*; an attack that wants some closes over its own (D6), and
+        will now advance that one on every position rather than on key rounds
+        only.
 
     Returns
     -------
@@ -967,17 +997,24 @@ def distribute_to_recipient_with_checks(
     """Run Phase A for one recipient, keeping the check-round diagnostics.
 
     The full-information form of :func:`distribute_to_recipient`, which is a
-    thin wrapper over this. Every position draws a resource from the seam; the
-    plan then decides what that resource is spent on:
+    thin wrapper over this. Every position draws a resource from the seam and
+    puts a payload through the payload seam; the plan then decides what that
+    resource is spent on:
 
     * a **key round** teleports the key element and the recipient measures what
       arrives, exactly as before;
     * a **check round** measures both halves of the pair instead
       (:func:`~sih141.protocol.checkrounds.observe_qber_round` or
-      :func:`~sih141.protocol.checkrounds.observe_chsh_round`) and contributes
-      nothing to the record.
+      :func:`~sih141.protocol.checkrounds.observe_chsh_round`), discards the
+      payload the seam returned, and contributes nothing to the record.
 
-    See :ref:`check-round-lockstep` for the two invariants that keep the two
+    A plan reserves positions for the run and designates which of them **this
+    link** measures (:ref:`sih141.protocol.checkrounds <check-round-links>`).
+    A reserved position designated for the *other* link runs as a key round
+    here and is then dropped from the record, since the signing key does not
+    contain it either.
+
+    See :ref:`check-round-lockstep` for the three invariants that keep the two
     branches indistinguishable from outside, and
     :mod:`sih141.protocol.checkrounds` for what the diagnostics mean.
 
@@ -986,7 +1023,9 @@ def distribute_to_recipient_with_checks(
     key : PrivateKey
         Alice's **full-length** key for one message bit. She draws all ``L``
         elements because she does not know which positions the recipients will
-        check; the ones that land on check rounds are simply never prepared.
+        check; the ones that land on this link's check rounds are prepared and
+        then thrown away, because the payload seam is offered every position
+        (:ref:`payload-seam`) and a seam offered fewer would publish the gaps.
     params : ProtocolParams
         The parameter set.
     party : Party or str
@@ -998,16 +1037,20 @@ def distribute_to_recipient_with_checks(
         Keyword-only (D3). Exactly three variates per position, on both
         branches.
     check_plan : CheckRoundPlan or None, optional
-        Keyword-only. The plan, shared by both recipients of a message bit.
+        Keyword-only. The plan, whose reserved *set* is shared by both
+        recipients of a message bit and whose rounds are dealt between their
+        links (:ref:`sih141.protocol.checkrounds <check-round-links>`).
         ``None`` runs the historical all-key distribution and returns an empty
         log.
     payload_map : callable or None, optional
         Keyword-only. The payload-line seam (:ref:`payload-seam`), called
-        ``payload_map(state, context)`` once per **key round** -- never on a
-        check round, which prepares no payload -- with the eigenstate about to
-        be teleported. ``None``, the default, calls nothing and sends the
-        eigenstate itself. It draws no randomness; an attack that wants some
-        closes over its own generator (D6).
+        ``payload_map(state, context)`` once per **position** -- check rounds
+        included, where what it returns is discarded -- with the eigenstate
+        prepared for that position. ``None``, the default, calls nothing and
+        sends the eigenstate itself. It draws no randomness *from this run's
+        generator*; an attack that wants some closes over its own (D6), and
+        will now advance that one on every position rather than on key rounds
+        only.
 
     Returns
     -------
@@ -1038,11 +1081,12 @@ def distribute_to_recipient_with_checks(
     ...     rng=np.random.default_rng(43),
     ... )
     >>> len(outcome.record), outcome.log.round_count
-    (400, 400)
+    (400, 200)
     >>> estimate_chsh(outcome.log.chsh).violates_classical_bound
     True
 
-    The payload seam sees every key round and no check round at all:
+    The payload seam sees every position, in order, and so learns nothing about
+    which of them the plan reserved:
 
     >>> small = ProtocolParams(key_length=40, check_fraction=0.25)
     >>> small_plan = draw_check_plan(small, rng=np.random.default_rng(1))
@@ -1055,10 +1099,10 @@ def distribute_to_recipient_with_checks(
     ...     small_key, small, party=Party.BOB, check_plan=small_plan,
     ...     payload_map=watch, rng=np.random.default_rng(3),
     ... )
-    >>> sorted(seen) == list(small_plan.signing_positions)
+    >>> seen == list(range(40))
     True
-    >>> set(seen) & set(small_plan.positions)
-    set()
+    >>> set(seen) >= set(small_plan.positions)
+    True
     """
     if not isinstance(key, PrivateKey):
         raise TypeError(
@@ -1080,7 +1124,14 @@ def distribute_to_recipient_with_checks(
     eigenvalues: list[int] = []
     qber_seen: list[QberObservation] = []
     chsh_seen: list[ChshObservation] = []
-    planned = {} if plan is None else plan.rounds_by_position()
+    # What THIS link spends on the channel, and what the RUN reserves. They
+    # differ on a split plan: a position reserved for the other link is an
+    # ordinary key round here whose outcome is dropped, because it carries no
+    # key either way (:ref:`sih141.protocol.checkrounds <check-round-links>`).
+    planned = {} if plan is None else plan.rounds_by_position(recipient)
+    reserved: frozenset[int] = (
+        frozenset() if plan is None else frozenset(plan.positions)
+    )
 
     for index, element in enumerate(key.elements):
         # 1. The recipient commits to a basis before the qubit arrives; his draw
@@ -1103,33 +1154,41 @@ def distribute_to_recipient_with_checks(
         )
         resource = _draw_resource(factory, wants_context, context)
 
+        # 3. The payload seam stands on EVERY position, before the branch and
+        #    after the resource has been drawn, so that the two seams see the
+        #    same hop in the same order and neither can tell the branches apart.
+        #    Alice re-prepares the eigenstate from its classical label
+        #    (preparation, not cloning) and hands it over as a Statevector,
+        #    which is teleport()'s exact fidelity path for a pure payload. On a
+        #    check round the mapped state is DISCARDED, unteleported and
+        #    unmeasured -- the pair is spent on the channel instead -- exactly
+        #    as the recipient's basis draw above is made and discarded. The
+        #    call is what has to be identical, not the use made of it: it used
+        #    to be made on key rounds only, and the gaps in the call sequence
+        #    were the check set, recovered whole (:ref:`payload-seam`).
+        payload = _map_payload(payload_map, element.state(), context)
+
         scheduled = planned.get(index)
         if scheduled is None:
-            # 3a. Key round: a genuine teleportation. Alice re-prepares the
-            #     eigenstate from its classical label (preparation, not
-            #     cloning) and hands it over as a Statevector, which is
-            #     teleport()'s exact fidelity path for a pure payload; the
-            #     received state is a one-qubit density matrix, so the measured
-            #     index is 0 (D2).
-            #
-            #     The payload seam stands here and nowhere else: on this
-            #     branch only, because a check round prepares no payload
-            #     (:ref:`payload-seam`), and after the resource has been drawn,
-            #     so that the two seams see the same hop in the same order.
-            hop = teleport(
-                _map_payload(payload_map, element.state(), context),
-                resource=resource,
-                rng=generator,
-            )
+            # 3a. Key round: a genuine teleportation. The received state is a
+            #     one-qubit density matrix, so the measured index is 0 (D2).
+            hop = teleport(payload, resource=resource, rng=generator)
             outcome = projective_measure(hop.received, 0, basis, rng=generator)
-            chosen_bases.append(basis)
-            eigenvalues.append(outcome.eigenvalue)
+            if index not in reserved:
+                chosen_bases.append(basis)
+                eigenvalues.append(outcome.eigenvalue)
+            # A position reserved for the OTHER link falls through here with
+            # nothing appended. It was teleported and measured like any key
+            # round -- which is what makes it indistinguishable from one -- but
+            # it is not in the signing key, so recording it would leave this
+            # record longer than the declaration it is scored against.
+            #
             # `hop` and `outcome.post_state` are rebound on the next iteration
             # and never stored: no quantum memory is retained anywhere (see the
             # module docstring). Only the two classical columns above survive.
         elif isinstance(scheduled, QberRound):
-            # 3b. Check round, QBER arm. The pair is spent here; `element` is
-            #     never prepared, which is why the position carries no key and
+            # 3b. Check round, QBER arm. The pair is spent here and `payload`
+            #     goes no further, which is why the position carries no key and
             #     is safe to publish.
             qber_seen.append(
                 observe_qber_round(resource, scheduled, rng=generator)
@@ -1216,11 +1275,13 @@ def distribute_public_key(
         :func:`distribute_public_key_with_checks` to keep them.
     payload_map : callable or None, optional
         Keyword-only. The payload-line seam (:ref:`payload-seam`), called
-        ``payload_map(state, context)`` once per **key round** -- never on a
-        check round, which prepares no payload -- with the eigenstate about to
-        be teleported. ``None``, the default, calls nothing and sends the
-        eigenstate itself. It draws no randomness; an attack that wants some
-        closes over its own generator (D6).
+        ``payload_map(state, context)`` once per **position** -- check rounds
+        included, where what it returns is discarded -- with the eigenstate
+        prepared for that position. ``None``, the default, calls nothing and
+        sends the eigenstate itself. It draws no randomness *from this run's
+        generator*; an attack that wants some closes over its own (D6), and
+        will now advance that one on every position rather than on key rounds
+        only.
 
     Returns
     -------
@@ -1284,7 +1345,10 @@ def distribute_public_key_with_checks(
     The full-information form of :func:`distribute_public_key`, which is a thin
     wrapper over this. One generator is threaded through every party, so one
     seed reproduces the whole distribution phase, and one plan is executed on
-    every link, so the two recipients retain the same positions.
+    every link, so the two recipients retain the same positions -- while each
+    measuring only the reserved rounds dealt to *its* link
+    (:ref:`sih141.protocol.checkrounds <check-round-links>`), so that learning
+    one link's check set does not hand over the other's.
 
     The two logs it returns are **separate samples of two different channels**,
     and should stay separate unless the links are believed identical: pooling
@@ -1311,11 +1375,13 @@ def distribute_public_key_with_checks(
         :func:`distribute_public_key`.
     payload_map : callable or None, optional
         Keyword-only. The payload-line seam (:ref:`payload-seam`), called
-        ``payload_map(state, context)`` once per **key round** -- never on a
-        check round, which prepares no payload -- with the eigenstate about to
-        be teleported. ``None``, the default, calls nothing and sends the
-        eigenstate itself. It draws no randomness; an attack that wants some
-        closes over its own generator (D6).
+        ``payload_map(state, context)`` once per **position** -- check rounds
+        included, where what it returns is discarded -- with the eigenstate
+        prepared for that position. ``None``, the default, calls nothing and
+        sends the eigenstate itself. It draws no randomness *from this run's
+        generator*; an attack that wants some closes over its own (D6), and
+        will now advance that one on every position rather than on key rounds
+        only.
 
     Returns
     -------
@@ -1346,9 +1412,14 @@ def distribute_public_key_with_checks(
     >>> outcomes = distribute_public_key_with_checks(
     ...     key, params, check_plan=plan, rng=np.random.default_rng(10)
     ... )
-    >>> outcomes[Party.BOB].log.positions == outcomes[
-    ...     Party.CHARLIE].log.positions == plan.positions
-    True
+
+    The two links measure disjoint halves of the reserved set, and between them
+    all of it (:ref:`sih141.protocol.checkrounds <check-round-links>`):
+
+    >>> bob = set(outcomes[Party.BOB].log.positions)
+    >>> charlie = set(outcomes[Party.CHARLIE].log.positions)
+    >>> bob & charlie, bob | charlie == set(plan.positions)
+    (set(), True)
     >>> estimate_qber(outcomes[Party.BOB].log.qber).estimate
     0.0
     """

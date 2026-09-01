@@ -145,6 +145,7 @@ from typing import Any, Final
 
 import numpy as np
 
+from sih141.attacks.isolation import derived_from_seed
 from sih141.attacks.statistics import two_sided_z, wilson_bounds
 from sih141.protocol.checkrounds import CheckRoundPlan, Interval
 from sih141.protocol.distribute import (
@@ -803,6 +804,69 @@ class ImpersonationTrial:
         }
 
 
+def _refuse_shared_stream(
+    attack_rng: np.random.Generator, seeds: Sequence[int], *, where: str
+) -> None:
+    """Refuse an adversary generator built from a session seed (D6).
+
+    The guard this module had none of. Mallory's generator and the session's
+    seed are separate arguments precisely so that a caller cannot pass one
+    number and get both -- but nothing stopped a caller passing ``session_seed=7``
+    beside ``attack_rng=numpy.random.default_rng(7)``, which is the same thing
+    written twice. Those are one stream:
+    :class:`~sih141.protocol.session.QDSSession` takes a single 32-byte draw
+    from its generator and derives Alice's stream, the recipients' stream and
+    the binding stream from it, so Mallory would hold the randomness of the very
+    run she is impersonating Alice into, and every rate below would be fiction.
+
+    Parameters
+    ----------
+    attack_rng : numpy.random.Generator
+        Mallory's own generator.
+    seeds : sequence of int
+        Every session seed the caller is about to run.
+    where : str
+        The calling function's name, quoted in the message.
+
+    Raises
+    ------
+    ValueError
+        If ``attack_rng`` is the stream any of ``seeds`` produces.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from sih141.attacks.impersonation import _refuse_shared_stream
+    >>> _refuse_shared_stream(
+    ...     np.random.default_rng(4242), (900_000, 900_001), where="demo"
+    ... ) is None
+    True
+    >>> try:
+    ...     _refuse_shared_stream(
+    ...         np.random.default_rng(900_001), (900_000, 900_001), where="demo"
+    ...     )
+    ... except ValueError as error:
+    ...     print(str(error).splitlines()[0])
+    demo: attack_rng is the stream session seed 900001 produces (D6).
+    """
+    for seed in seeds:
+        if derived_from_seed(attack_rng, int(seed)):
+            raise ValueError(
+                f"{where}: attack_rng is the stream session seed {int(seed)} "
+                f"produces (D6).\n"
+                f"They are different objects and the same randomness: "
+                f"numpy.random.default_rng({int(seed)}) gives identical bytes "
+                f"every time it is called. QDSSession derives Alice's stream, "
+                f"the recipients' stream and the binding stream from one "
+                f"32-byte draw off that generator, so an adversary holding it "
+                f"predicts every private symmetrisation coin and the "
+                f"acceptance rates measured here mean nothing.\n"
+                f"Seed Mallory from something unrelated to the session seeds "
+                f"-- see FIRST_SESSION_SEED, which is 900_000 so that no "
+                f"plausible adversary seed collides with one."
+            )
+
+
 def session_seeds(trials: int, *, first: int = FIRST_SESSION_SEED) -> tuple[int, ...]:
     """Return ``trials`` consecutive session seeds.
 
@@ -883,7 +947,10 @@ def run_impersonation(
         If ``params`` is not a :class:`ProtocolParams`, or ``attack_rng`` is not
         a generator.
     ValueError
-        If ``scope`` names no member, or ``message_bit`` is not ``0``/``1``.
+        If ``scope`` names no member, ``message_bit`` is not ``0``/``1``, or
+        ``attack_rng`` is the stream ``session_seed`` produces -- one seed used
+        for both roles, which is the D6 defect written twice rather than once
+        (:func:`_refuse_shared_stream`).
 
     Examples
     --------
@@ -901,6 +968,14 @@ def run_impersonation(
             f"params must be a ProtocolParams, got {type(params).__name__}"
         )
     resolved = _as_scope(scope)
+    if not isinstance(attack_rng, np.random.Generator):
+        raise TypeError(
+            f"attack_rng must be a numpy.random.Generator, got "
+            f"{type(attack_rng).__name__} (D6)"
+        )
+    _refuse_shared_stream(
+        attack_rng, (int(session_seed),), where="run_impersonation"
+    )
     mallory = Impersonator(rng=attack_rng)
     session = QDSSession(
         params,
@@ -1247,7 +1322,9 @@ def measure_impersonation(
     ------
     TypeError, ValueError
         As :func:`run_impersonation`, plus :class:`ImpersonationMeasurement`'s
-        own consistency checks.
+        own consistency checks. The D6 stream guard runs over the *whole* seed
+        list before the first trial, so a collision at seed 137 is reported
+        before any of the 200 runs is spent.
 
     Examples
     --------
@@ -1266,6 +1343,14 @@ def measure_impersonation(
     chosen = session_seeds(trials) if seeds is None else tuple(int(s) for s in seeds)
     if not chosen:
         raise ValueError("seeds must hold at least one session seed")
+    if not isinstance(attack_rng, np.random.Generator):
+        raise TypeError(
+            f"attack_rng must be a numpy.random.Generator, got "
+            f"{type(attack_rng).__name__} (D6)"
+        )
+    # Checked against the whole seed list before the first trial runs, rather
+    # than left to run_impersonation to find on trial 137 of 200.
+    _refuse_shared_stream(attack_rng, chosen, where="measure_impersonation")
     rows = tuple(
         run_impersonation(
             resolved,

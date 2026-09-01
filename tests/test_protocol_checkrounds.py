@@ -24,11 +24,19 @@ Five things are pinned here, in order of how badly they fail *silently*.
    does not see.
 3. **Nothing distinguishes a check round from a key round.** An adversary who
    could tell them apart would behave while watched, and every number this
-   module produces would be fiction. Two invariants close it and both are
-   asserted outright, not sampled: the ``resource_factory`` receives an
-   identical sequence of contexts either way, and the variate budget is constant
-   at three per position, so a retained position of a checked run is
-   *bit-identical* to the same position of an unchecked run under one seed.
+   module produces would be fiction. Three invariants close it and all three
+   are asserted outright, not sampled: **every** seam the channel-side
+   adversary holds -- ``resource_factory``, ``payload_map`` and
+   ``channel_monitor`` -- receives an identical sequence of contexts either
+   way; the variate budget is constant at three per position, so a retained
+   position of a checked run is *bit-identical* to the same position of an
+   unchecked run under one seed; and the two links watch disjoint halves of the
+   reserved set, so recovering one does not hand over the other. The first of
+   the three was asserted of the factory alone until Phase 3 measured the other
+   two seams recovering the whole check set -- ``30/30`` positions from the
+   payload seam's call gaps, ``120/120`` from the monitor being called at all --
+   which is why ``test_the_factory_cannot_tell_a_check_round_from_a_key_round``
+   now drives the full declared adversary rather than one third of it.
 4. **The estimates converge and the intervals cover.** Convergence to the true
    channel parameter, half-widths shrinking like ``1/sqrt(n)``, and coverage at
    the stated rate over hundreds of seeded runs -- for the calibrated intervals,
@@ -119,9 +127,11 @@ from sih141.protocol.params import (
     DEFAULT_PARAMS,
     DEMO_CHECKED_PARAMS,
     DEMO_PARAMS,
+    VERIFIERS,
     Party,
     ProtocolParams,
 )
+from sih141.protocol.session import QDSSession
 from sih141.protocol.verify import (
     enforced_repudiation_bound,
     minimum_matched_count,
@@ -700,41 +710,456 @@ def test_the_factory_cannot_tell_a_check_round_from_a_key_round():
 
     An adversary that could distinguish a watched round from an unwatched one
     would behave on the watched ones, and every estimate here would describe a
-    channel nobody ever used. The factory is the entirety of the adversary's
-    access to this loop, so the contexts it is handed must be identical with and
-    without a plan.
+    channel nobody ever used.
+
+    **The adversary is not the factory.** The threat model declared in
+    :mod:`sih141.protocol.session` hands one channel-side party three seams --
+    ``resource_factory``, ``payload_map`` and ``channel_monitor`` -- and the
+    check set is recovered if *any one* of them is offered a different set of
+    positions from the others: a seam called only on key rounds publishes the
+    check set as the gaps in its call sequence, and one called only on check
+    rounds publishes it by being called at all. So all three are driven
+    together, against a live session, and the assertion is that each sees
+    ``0 .. L-1`` once per link per message bit, in the same order, with nothing
+    between them to separate a watched round from an unwatched one.
+
+    A version of this test that drove the factory alone passed against code
+    that leaked the whole check set through the other two seams; that is why
+    the weaker form is not kept alongside as a fast path.
     """
-    params = ProtocolParams(key_length=150, check_fraction=0.25)
+    params = ProtocolParams(key_length=64, check_fraction=0.25)
+    seen: dict[str, list[tuple[Party, int, int]]] = {
+        "resource": [],
+        "payload": [],
+        "monitor": [],
+    }
+
+    def hop(context: ResourceContext) -> tuple[Party, int, int]:
+        return (context.party, context.message_bit, context.position)
+
+    def factory(context: ResourceContext):
+        seen["resource"].append(hop(context))
+        return ideal_resource()
+
+    def payload(state, context: ResourceContext):
+        seen["payload"].append(hop(context))
+        return state
+
+    def monitor(resource, context: ResourceContext):
+        seen["monitor"].append(hop(context))
+        return {}
+
+    session = QDSSession(
+        params,
+        resource_factory=factory,
+        payload_map=payload,
+        channel_monitor=monitor,
+        rng=np.random.default_rng(4318),
+    )
+    session.distribute()
+
+    expected = [
+        (party, bit, index)
+        for bit in (0, 1)
+        for party in VERIFIERS
+        for index in range(params.key_length)
+    ]
+    for name in ("resource", "payload", "monitor"):
+        assert seen[name] == expected, f"{name} was not offered every position"
+
+    # Stated the other way round as well, because the equality above would also
+    # be satisfied by three seams that all leaked the same thing.
+    for bit, plan in session.check_plans.items():
+        assert set(plan.positions), "the plan must designate something"
+        for name, calls in seen.items():
+            offered = {
+                position for _, message_bit, position in calls
+                if message_bit == bit
+            }
+            assert offered == set(range(params.key_length)), (
+                f"{name}'s call set on bit {bit} narrows the check set to "
+                f"{set(range(params.key_length)) - offered}"
+            )
+
+    # And the original claim, at the level of one distribution run: the seams
+    # see the same sequence with a plan in force as without one.
+    plain = params.with_check_fraction(0.0)
     plan = draw_check_plan(params, rng=np.random.default_rng(18))
     key = generate_private_key(params, 0, rng=np.random.default_rng(19))
 
-    def watcher(seen: list[ResourceContext]):
-        def factory(context: ResourceContext):
-            seen.append(context)
+    def watcher(store: list[ResourceContext]):
+        def factory_only(context: ResourceContext):
+            store.append(context)
             return ideal_resource()
 
-        return factory
+        return factory_only
+
+    def payload_watcher(store: list[ResourceContext]):
+        def payload_only(state, context: ResourceContext):
+            store.append(context)
+            return state
+
+        return payload_only
 
     with_plan: list[ResourceContext] = []
+    with_plan_payload: list[ResourceContext] = []
     without_plan: list[ResourceContext] = []
+    without_plan_payload: list[ResourceContext] = []
     distribute_to_recipient_with_checks(
         key,
         params,
         party=Party.CHARLIE,
         resource_factory=watcher(with_plan),
+        payload_map=payload_watcher(with_plan_payload),
         check_plan=plan,
         rng=np.random.default_rng(20),
     )
     distribute_to_recipient(
         key,
-        params.with_check_fraction(0.0),
+        plain,
         party=Party.CHARLIE,
         resource_factory=watcher(without_plan),
+        payload_map=payload_watcher(without_plan_payload),
         rng=np.random.default_rng(20),
     )
     assert with_plan == without_plan
+    assert with_plan_payload == without_plan_payload
+    assert with_plan_payload == with_plan
     assert len(with_plan) == params.key_length
-    assert [context.position for context in with_plan] == list(range(150))
+    assert [context.position for context in with_plan] == list(
+        range(params.key_length)
+    )
+
+
+def test_no_seam_narrows_the_check_set_below_the_prior():
+    """"No better than chance", stated as a number rather than as a hope.
+
+    The three channel-side seams are driven over six runs whose *only*
+    difference is the session seed, so the plan moves every time. If any seam
+    carried a bit about the plan, its observation would move with it. It does
+    not: the three call sequences are one and the same object across all six
+    runs, so the adversary's view is a constant function of the plan and
+    carries exactly zero bits about it.
+
+    Zero bits means the posterior is the prior, and the prior is uniform over
+    the ``C(120, 30)`` -- about ``10**29`` -- subsets a plan could have been.
+    So an adversary who must nominate ``check_count`` positions expects
+    ``check_count**2 / L = 30 * 30 / 120 = 7.5`` hits, a precision of
+    ``check_count / L = 0.25``, which is the base rate. That is measured below
+    against a fixed nomination over two hundred plans, and it is what the
+    payload seam used to return ``30/30`` on.
+    """
+    params = ProtocolParams(key_length=120, check_fraction=0.25)
+    assert params.check_count == 30
+
+    observations: list[tuple[tuple[str, int, int, int], ...]] = []
+    plans: list[tuple[int, ...]] = []
+    for seed in range(6):
+        seen: list[tuple[str, int, int, int]] = []
+
+        def note(name: str, context: ResourceContext) -> None:
+            seen.append(
+                (name, context.party, context.message_bit, context.position)
+            )
+
+        session = QDSSession(
+            params,
+            resource_factory=lambda context: (
+                note("resource", context) or ideal_resource()
+            ),
+            payload_map=lambda state, context: (
+                note("payload", context) or state
+            ),
+            channel_monitor=lambda resource, context: (
+                note("monitor", context) or {}
+            ),
+            rng=np.random.default_rng(6100 + seed),
+        )
+        session.distribute()
+        observations.append(tuple(seen))
+        plans.append(tuple(session.check_plans[0].positions))
+
+    assert len(set(plans)) == len(plans), "the plans must actually move"
+    assert len(set(observations)) == 1, "the adversary's view must not"
+
+    # And the consequence, measured. A fixed nomination of check_count
+    # positions -- the best an adversary with no information can do -- hits the
+    # base rate, four sigmas of the binomial standard error either side.
+    nomination = set(range(params.check_count))
+    trials = 200
+    hits = sum(
+        len(nomination & set(
+            draw_check_plan(params, rng=np.random.default_rng(7000 + seed)
+                            ).positions
+        ))
+        for seed in range(trials)
+    )
+    rate = hits / (trials * params.check_count)
+    base = params.check_count / params.key_length
+    band = 4.0 * math.sqrt(base * (1.0 - base) / (trials * params.check_count))
+    assert abs(rate - base) < band, f"{rate} is not the base rate {base}"
+
+
+def test_the_two_links_do_not_watch_the_same_positions():
+    """Learning one link's check set must not hand over the other's.
+
+    The exploit the split exists to stop runs Bob's whole pass before Charlie's
+    first hop, so a shared check set would let an adversary who recovered it on
+    Bob's link spare exactly those positions on Charlie's. Disjoint halves make
+    that useless: the positions left over from Bob's half are precisely the
+    ones Charlie is watching.
+    """
+    params = ProtocolParams(key_length=240, check_fraction=0.25)
+    overlaps = []
+    for seed in range(8):
+        plan = draw_check_plan(params, rng=np.random.default_rng(6200 + seed))
+        bob = set(plan.positions_for(Party.BOB))
+        charlie = set(plan.positions_for(Party.CHARLIE))
+        assert bob and charlie
+        assert bob | charlie == set(plan.positions)
+        overlaps.append(len(bob & charlie))
+        # What an adversary who learned Bob's half would have to attack on
+        # Charlie's link, and what it costs him: every position of the reserved
+        # set he does not already know is one Charlie is watching.
+        assert set(plan.positions) - bob == charlie
+    assert overlaps == [0] * 8
+
+    # The reserved set itself is still shared, because both records have to
+    # index the same key.
+    plan = draw_check_plan(params, rng=np.random.default_rng(6300))
+    assert plan.signing_length == params.signing_length
+
+
+def test_sparing_the_watched_no_longer_separates_published_from_real():
+    """The exploit, run both ways, with the key hops held identical.
+
+    An adversary on the resource line who learns which positions carry key --
+    the only thing the seams used to leak -- and degrades those and nothing
+    else would publish a pristine channel over a corrupted key. Both arms are
+    run here: one degrading every position of Charlie's link, one degrading
+    only the positions the payload seam offered it on Bob's link. The two arms
+    must now agree, because the payload seam offers every position, and the
+    published QBER must track the real damage rather than the watched subset.
+    """
+    params = ProtocolParams(key_length=240, check_fraction=0.25)
+    noisy = _werner(0.9)
+
+    def arm(spare: bool) -> tuple[float, float]:
+        keyed: set[int] = set()
+
+        def payload(state, context: ResourceContext):
+            if context.party is Party.BOB:
+                keyed.add(context.position)
+            return state
+
+        def factory(context: ResourceContext):
+            if context.party is not Party.CHARLIE:
+                return ideal_resource()
+            if spare and context.position not in keyed:
+                return ideal_resource()
+            return noisy
+
+        session = QDSSession(
+            params,
+            resource_factory=factory,
+            payload_map=payload,
+            rng=np.random.default_rng(6400),
+        )
+        session.distribute()
+        published = estimate_qber(
+            session.check_logs[(Party.CHARLIE, 0)].qber
+        ).estimate
+        key = session.signing_keys[0]
+        record = session.raw_records[0][Party.CHARLIE]
+        matched = [
+            index
+            for index in range(len(record))
+            if record.bases[index] is key.bases[index]
+        ]
+        real = sum(
+            record.eigenvalues[index] != key.eigenvalues[index]
+            for index in matched
+        ) / len(matched)
+        return published, real
+
+    naive_published, naive_real = arm(spare=False)
+    spared_published, spared_real = arm(spare=True)
+
+    # The key is damaged, identically, in both arms.
+    assert naive_real == spared_real > 0.2
+    # And the published statistic reports it, identically, in both arms. Before
+    # the seams were closed the spared arm published 0.0 against the same 0.22.
+    assert spared_published == naive_published
+    assert spared_published > 0.2
+
+
+def test_one_seed_still_reproduces_a_checked_run_byte_for_byte():
+    """Three seams on every position instead of some must not cost determinism.
+
+    The seams are called more often than they were and the plan is dealt
+    between the links; neither reads the session's generator, so a seed must
+    still fix the whole run -- the transcript, the plans, and the order every
+    seam was called in.
+    """
+    params = ProtocolParams(key_length=64, check_fraction=0.25)
+
+    def once() -> tuple[str, tuple, tuple]:
+        seen: list[tuple[str, int, int, int]] = []
+
+        def note(name: str, context: ResourceContext) -> None:
+            seen.append(
+                (name, context.party, context.message_bit, context.position)
+            )
+
+        session = QDSSession(
+            params,
+            resource_factory=lambda context: (
+                note("resource", context) or ideal_resource()
+            ),
+            payload_map=lambda state, context: (
+                note("payload", context) or state
+            ),
+            channel_monitor=lambda resource, context: (
+                note("monitor", context) or {"seen": len(seen)}
+            ),
+            rng=np.random.default_rng(6500),
+        )
+        transcript = session.run(1)
+        return (
+            json.dumps(transcript.to_dict(), sort_keys=True),
+            tuple(seen),
+            tuple(
+                session.check_plans[bit].to_dict()["qber_rounds"][0]["position"]
+                for bit in (0, 1)
+            ),
+        )
+
+    first = once()
+    second = once()
+    assert first[0] == second[0]
+    assert first[1] == second[1]
+    assert first[2] == second[2]
+    assert len(first[1]) == 3 * 2 * 2 * params.key_length
+
+
+def test_an_observing_seam_changes_the_call_count_and_nothing_else():
+    """The honest run's results must survive the seams being called more often.
+
+    An observer that returns what it was given, on every position, must leave
+    the records, the verdicts and the transcript exactly where a bare run left
+    them -- so that the extra calls buy uninferability and cost nothing.
+    """
+    params = ProtocolParams(key_length=64, check_fraction=0.25)
+    bare = QDSSession(params, rng=np.random.default_rng(6600)).run(0)
+
+    calls = 0
+
+    def counting_monitor(resource, context: ResourceContext) -> dict:
+        nonlocal calls
+        calls += 1
+        return {}
+
+    watched = QDSSession(
+        params,
+        resource_factory=lambda context: ideal_resource(),
+        payload_map=lambda state, context: state,
+        channel_monitor=counting_monitor,
+        rng=np.random.default_rng(6600),
+    ).run(0)
+
+    assert calls == 2 * 2 * params.key_length
+    assert watched.to_dict() == bare.to_dict()
+
+
+def test_an_untagged_plan_is_measured_in_full_by_every_link():
+    """The historical shape still means what it used to mean.
+
+    A plan whose rounds carry no link tag -- one hand-built, or one rebuilt
+    from a ``to_dict`` written before the tags existed -- is the *shared* plan:
+    every link measures every reserved position, at full sample size and with
+    the two links coupled. It is what ``parties=None`` draws, and saying so is
+    what keeps a pre-split transcript readable.
+    """
+    params = ProtocolParams(key_length=64, check_fraction=0.25)
+    shared = draw_check_plan(
+        params, rng=np.random.default_rng(6700), parties=None
+    )
+    assert not shared.is_split
+    assert shared.measured_by == ()
+    for party in VERIFIERS:
+        assert shared.positions_for(party) == shared.positions
+
+    key = generate_private_key(params, 0, rng=np.random.default_rng(6701))
+    outcomes = distribute_public_key_with_checks(
+        key, params, check_plan=shared, rng=np.random.default_rng(6702)
+    )
+    for party in VERIFIERS:
+        assert outcomes[party].log.positions == shared.positions
+        assert outcomes[party].log.round_count == params.check_count
+        assert len(outcomes[party].record) == params.signing_length
+
+    # And it survives the round trip, still untagged.
+    restored = CheckRoundPlan.from_dict(
+        json.loads(json.dumps(shared.to_dict()))
+    )
+    assert restored == shared and not restored.is_split
+
+    split = draw_check_plan(params, rng=np.random.default_rng(6700))
+    assert split.positions == shared.positions
+    assert split.is_split
+    assert CheckRoundPlan.from_dict(
+        json.loads(json.dumps(split.to_dict()))
+    ) == split
+
+
+def test_a_half_tagged_plan_is_refused():
+    """All the rounds carry a link or none of them do."""
+    with pytest.raises(ValueError) as excinfo:
+        CheckRoundPlan(
+            key_length=8,
+            qber_rounds=(QberRound(0, PauliBasis.Z, Party.BOB),),
+            chsh_rounds=(ChshRound(1, 0, 1),),
+        )
+    assert "tag every round" in str(excinfo.value)
+
+
+def test_a_check_round_cannot_be_tagged_with_alice():
+    with pytest.raises(ValueError) as excinfo:
+        QberRound(0, PauliBasis.Z, Party.ALICE)
+    assert "common endpoint" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "parties, expected",
+    [
+        ((), ValueError),
+        ((Party.ALICE,), ValueError),
+        ((Party.BOB, Party.BOB), ValueError),
+        ((None,), ValueError),
+        ("Bob", TypeError),
+        (7, TypeError),
+    ],
+)
+def test_draw_check_plan_refuses_a_malformed_party_list(parties, expected):
+    params = ProtocolParams(key_length=48, check_fraction=0.25)
+    with pytest.raises(expected):
+        draw_check_plan(params, rng=np.random.default_rng(1), parties=parties)
+
+
+def test_a_single_link_takes_the_whole_reserved_set():
+    """One link named means one link measures everything -- and it is tagged.
+
+    Not the same object as the shared plan: this one *says* who measures the
+    rounds, so a second link joining the run would measure none of them, which
+    is the honest reading of a plan drawn for one recipient.
+    """
+    params = ProtocolParams(key_length=48, check_fraction=0.25)
+    plan = draw_check_plan(
+        params, rng=np.random.default_rng(6800), parties=(Party.BOB,)
+    )
+    assert plan.is_split and plan.measured_by == (Party.BOB,)
+    assert plan.positions_for(Party.BOB) == plan.positions
+    assert plan.positions_for(Party.CHARLIE) == ()
 
 
 def test_retained_positions_are_bit_identical_to_an_unchecked_run():
@@ -769,8 +1194,12 @@ def test_retained_positions_are_bit_identical_to_an_unchecked_run():
         plain.eigenvalues[i] for i in kept
     )
     assert len(checked.record) == params.signing_length
-    assert checked.log.round_count == params.check_count
-    assert checked.log.positions == plan.positions
+    # The run reserves check_count positions; this link measures its own half
+    # of them and runs the other half as key rounds it then drops -- which is
+    # what keeps the equality above true position for position.
+    assert checked.log.round_count == params.check_count // 2
+    assert checked.log.positions == plan.positions_for(Party.BOB)
+    assert set(checked.log.positions) < set(plan.positions)
 
 
 def test_the_variate_budget_is_three_per_position_on_both_branches():
@@ -867,7 +1296,14 @@ def test_both_recipients_retain_the_same_positions():
     )
     bob, charlie = outcomes[Party.BOB], outcomes[Party.CHARLIE]
     assert len(bob.record) == len(charlie.record) == params.signing_length
-    assert bob.log.positions == charlie.log.positions == plan.positions
+    # The reserved SET is shared -- it has to be, or the two records stop
+    # indexing the same key -- and the two links measure disjoint halves of it,
+    # so that recovering one link's check set does not hand over the other's.
+    assert set(bob.log.positions).isdisjoint(charlie.log.positions)
+    assert set(bob.log.positions) | set(charlie.log.positions) == set(
+        plan.positions
+    )
+    assert bob.record.entries != charlie.record.entries
     # Two independent links, so two independent samples: the logs must not be
     # the same object or the same outcomes.
     assert bob.log is not charlie.log
@@ -1406,7 +1842,10 @@ def test_a_checked_run_over_a_noisy_link_reports_the_noise_it_was_given():
 
 
 def test_every_published_object_is_frozen_and_serialisable():
-    params = ProtocolParams(key_length=64, check_fraction=0.25)
+    # Large enough that one link's half of the CHSH arm still lands in all four
+    # correlator cells: the arms are dealt between the links, so a per-link
+    # sample is half the reserved count (:ref:`check-round-links`).
+    params = ProtocolParams(key_length=256, check_fraction=0.25)
     plan = draw_check_plan(params, rng=np.random.default_rng(301))
     key = generate_private_key(params, 0, rng=np.random.default_rng(302))
     outcome = distribute_to_recipient_with_checks(
