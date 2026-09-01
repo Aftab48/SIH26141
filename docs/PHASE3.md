@@ -80,7 +80,7 @@ which is convention D6 as an arithmetic fact about the harness rather than a pro
 
 | Quantity | Bob | Charlie | Predicted | Source |
 | --- | --- | --- | --- | --- |
-| acceptance | `5/800 = 0.00625`, 95% `[0.0027, 0.0146]` | `3/800 = 0.00375`, `[0.0013, 0.0110]` | `0.0042075` / `0.0042111` | `analysis.forgery_probability` |
+| acceptance | `5/800 = 0.00625`, 95% `[0.0027, 0.0145]` | `3/800 = 0.00375`, `[0.0013, 0.0110]` | `0.0042075` / `0.0042111` | `analysis.forgery_probability` |
 | mismatch, per scored position | `3924/7917 = 0.4956`, `[0.4846, 0.5067]` | `3998/7967 = 0.5018`, `[0.4908, 0.5128]` | `1/2` | `FORGER_MATCHED_MISMATCH_PROBABILITY` |
 | scored fraction | `7917/24000 = 0.3299` | `7967/24000 = 0.3320` | `1/3` | `analysis.matched_statistics` |
 
@@ -144,7 +144,11 @@ running the protocol correctly with a key of her own, and no counting rule over 
 recipients' logs can object to a key they measured faithfully. That is assumption **(AUTH)**
 in `analysis.py`, and Phase 3 is what makes it load-bearing rather than decorative.
 
-**The matched counts never move, in any scope.** Under `DISTRIBUTION` this was checked in its
+**The matched counts' *law* never moves; under `DISTRIBUTION` the counts themselves do not
+either.** The distinction matters and an earlier revision of this line lost it: under `SIGNING`
+the matched set and its realised counts *do* move (`MATCHED_IDENTICAL_TRIALS[SIGNING] == 0`),
+and what survives is that the count is still `Binomial(L, 1/3)` -- which is all the surrounding
+argument needs. Under `DISTRIBUTION` the stronger statement holds and was checked in its
 sharpest form: the matched sets are identical *position for position* to the control at the
 same session seed, 200/200 trials, with `SIGNING` as the control that stops the claim being
 vacuous (0/200 identical there, counts still `Binomial(L, 1/3)`). So QBER is the only signal
@@ -333,7 +337,7 @@ authentication buys. `verify.py`'s `:ref:`ledger-denial`` now says so.
 
 Poisoning a ledger from outside (`0/400` over three routes); one verifier writing the other's
 ledger (refused with a reason); forging an identifier (`0/500000` preimage attempts against
-the length-prefixed encoding, bounding the per-attempt rate at `7.4e−06` at 95%, which is all
+the length-prefixed encoding, bounding the per-attempt rate at `7.7e−06` at 95%, which is all
 a bounded search can say against `2**−128 = 2.9e−39`); and a signer giving two rounds one
 identifier, which buys her exactly the outside forger's rate and costs her the second round
 outright.

@@ -2,16 +2,16 @@
 
 **SIH26141** — Quantum-Inspired Cyber Threat Detection for Digital Signature Security
 
-Generated `2026-08-30 21:28 UTC` by `tools/metrics.py`. Every figure is computed from the
+Generated `2026-09-01 04:42 UTC` by `tools/metrics.py`. Every figure is computed from the
 repository — do not edit by hand, re-run the script.
 
 ## Test suite
 
 ```
-1421 passed in 318.16s (0:05:18)
+2100 passed in 747.44s (0:12:27)
 ```
 
-- Doctests collected from package modules: **112**
+- Doctests collected from package modules: **249**
 - `--doctest-modules` is enabled over `testpaths = ["tests", "sih141"]`, so every
   numeric claim written in a docstring is an executable test. Documentation that
   lies fails the suite.
@@ -26,21 +26,30 @@ repository — do not edit by hand, re-run the script.
 | `sih141/core/rng.py` | 219 | 33 | 153 | 0 | 2 | 0 |
 | `sih141/core/states.py` | 877 | 153 | 514 | 76 | 18 | 1 |
 | `sih141/core/teleport.py` | 1183 | 171 | 785 | 52 | 15 | 2 |
-| `sih141/protocol/__init__.py` | 308 | 162 | 123 | 11 | 0 | 0 |
-| `sih141/protocol/analysis.py` | 3447 | 210 | 2683 | 29 | 39 | 2 |
-| `sih141/protocol/distribute.py` | 728 | 153 | 477 | 14 | 7 | 1 |
-| `sih141/protocol/keys.py` | 620 | 108 | 411 | 3 | 23 | 2 |
-| `sih141/protocol/params.py` | 1205 | 348 | 694 | 2 | 20 | 2 |
-| `sih141/protocol/records.py` | 668 | 145 | 428 | 4 | 18 | 2 |
-| `sih141/protocol/session.py` | 2713 | 767 | 1582 | 77 | 55 | 5 |
-| `sih141/protocol/signature.py` | 426 | 82 | 283 | 2 | 11 | 1 |
+| `sih141/protocol/__init__.py` | 353 | 206 | 123 | 12 | 0 | 0 |
+| `sih141/protocol/analysis.py` | 3514 | 201 | 2750 | 29 | 39 | 2 |
+| `sih141/protocol/checkrounds.py` | 3023 | 889 | 1706 | 29 | 74 | 11 |
+| `sih141/protocol/distribute.py` | 1385 | 294 | 912 | 36 | 12 | 2 |
+| `sih141/protocol/keys.py` | 773 | 117 | 537 | 3 | 24 | 2 |
+| `sih141/protocol/params.py` | 1606 | 483 | 916 | 2 | 26 | 2 |
+| `sih141/protocol/records.py` | 1413 | 335 | 901 | 7 | 31 | 3 |
+| `sih141/protocol/session.py` | 5116 | 1529 | 2879 | 211 | 89 | 9 |
+| `sih141/protocol/signature.py` | 955 | 179 | 646 | 4 | 16 | 1 |
 | `sih141/protocol/symmetrise.py` | 554 | 79 | 407 | 2 | 4 | 1 |
-| `sih141/protocol/tally.py` | 1125 | 286 | 706 | 7 | 20 | 3 |
-| `sih141/protocol/verify.py` | 2921 | 644 | 1875 | 53 | 39 | 5 |
-| **total** | **19089** | **3799** | **12400** | **402** | **298** | **29** |
+| `sih141/protocol/tally.py` | 1344 | 293 | 885 | 12 | 24 | 3 |
+| `sih141/protocol/verify.py` | 3703 | 796 | 2397 | 90 | 49 | 6 |
+| `sih141/attacks/__init__.py` | 300 | 181 | 96 | 8 | 0 | 0 |
+| `sih141/attacks/channel.py` | 2035 | 445 | 1278 | 21 | 50 | 6 |
+| `sih141/attacks/forgery.py` | 1655 | 469 | 968 | 26 | 29 | 3 |
+| `sih141/attacks/impersonation.py` | 1934 | 530 | 1102 | 46 | 54 | 5 |
+| `sih141/attacks/isolation.py` | 1482 | 411 | 850 | 26 | 24 | 5 |
+| `sih141/attacks/replay.py` | 2181 | 662 | 1208 | 48 | 34 | 3 |
+| `sih141/attacks/starvation.py` | 1640 | 320 | 1102 | 9 | 27 | 4 |
+| `sih141/attacks/statistics.py` | 570 | 158 | 323 | 3 | 14 | 1 |
+| **total** | **39910** | **9392** | **24717** | **822** | **682** | **74** |
 
-Tests: **17423 lines** across **16 files**, **939 test functions** defined.
-Test-lines to code-lines ratio: **4.59 : 1**
+Tests: **27548 lines** across **26 files**, **1451 test functions** defined.
+Test-lines to code-lines ratio: **2.93 : 1**
 
 ## Live security parameters
 
@@ -66,22 +75,28 @@ actually computes today — not what a document once claimed.
 
 | File | Words |
 | --- | ---: |
-| `README.md` | 1759 |
-| `JOURNAL.md` | 5148 |
-| `docs/METRICS.md` | 609 |
+| `README.md` | 2783 |
+| `JOURNAL.md` | 25050 |
+| `docs/METRICS.md` | 846 |
 | `docs/PHASE1.md` | 4078 |
-| `docs/PHASE2.md` | 9835 |
-| `docs/QDS.md` | 4377 |
-| **total** | **25806** |
+| `docs/PHASE2.md` | 10056 |
+| `docs/PHASE3.md` | 7193 |
+| `docs/QDS.md` | 4491 |
+| **total** | **54497** |
 
-Working-journal entries: **45** (temporary; deleted at the end of Phase 7).
+Working-journal entries: **93** (temporary; deleted at the end of Phase 7).
 
 ## Repository
 
-- Commits: **5**
+- Commits: **10**
 
 | Commit | Subject |
 | --- | --- |
+| `e36e7b1` | Add channel monitor, restrict signer seam, build and verify five attacks |
+| `658f2ff` | Add sampled check rounds for channel parameter estimation |
+| `ea5ba71` | Add replay defence: session binding and consumed-records ledger |
+| `5983c00` | Enforce declaration binding and add attack randomness isolation |
+| `cf35087` | Close Phase 2: fix stale claims and verify at full scale |
 | `8182fc4` | runway doc update |
 | `cf32fc0` | Harden checkpoint against concurrent-agent races |
 | `64185f9` | Add pooled matched-count floor and close split-coin repudiation |

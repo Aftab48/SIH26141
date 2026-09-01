@@ -8,7 +8,7 @@
 > on the maintainer's explicit instruction. The permanent record is
 > `docs/METRICS.md` and the `docs/PHASE*.md` notes.
 
-**86 entries** — 25 finding · 24 decision · 22 issue · 7 fix · 7 note · 1 deadend
+**93 entries** — 26 finding · 25 issue · 24 decision · 9 fix · 8 note · 1 deadend
 
 
 ## Phase 0 — Scaffold
@@ -2743,3 +2743,162 @@ says it exists "for a caller who distributed without a plan and wants to apply
 one after the fact", which is precisely the ordering that hits this. Consequence
 is a refusal (verify_all declines a raw pair), not a false accept, so it costs an
 honest verdict rather than granting a dishonest one -- but it costs it silently.
+
+### `[!]` CRITICAL and OPEN -- the check rounds are steerable by the channel adversary
+
+*issue · audit:phase3:2 · 2026-09-01T00:35:24Z*
+
+STATUS: OPEN. Not fixed in Phase 3. Decision pending with the maintainer.
+
+The check set leaks two independent ways, both measured:
+  - payload_map is invoked on KEY ROUNDS ONLY and receives context.position, so the GAPS in
+    its call sequence are exactly the check set. Recovered 24/24 at L=96.
+  - channel_monitor is invoked on CHECK ROUNDS ONLY, so being called is itself the signal.
+    Recovered 120/120 at L=480, with no Alice-side seam involved at all.
+
+Exploitable because distribute_public_key_with_checks finishes Bob's entire pass before
+Charlie's first hop, and both links run the SAME plan. The adversary learns the plan on link
+one and cheats on link two.
+
+Measured, key hops held bit-identical between arms (L=480, check_fraction=1/4, Werner p=0.9
+on Charlie's link):
+
+                        published QBER   published CHSH   REAL key mismatch
+    naive                  0.4667            0.439            0.2231
+    spare the watched      0.0000            2.673            0.2231
+
+It is a six-line subclass of our own shipped DepolarisingChannel. The invariant asserted in
+distribute.py -- that the factory is the whole of the adversary access to the loop -- is
+false, and its test drives resource_factory ALONE while the declared adversary also holds
+payload_map.
+
+WHY IT IS SERIOUS BUT NOT FATAL: auditor 1 independently established that the VERIFIER RATE
+is the strongest and cheapest channel signal and needs no check rounds at all. Channel
+attacks are still DETECTED. What is compromised is the published QBER/CHSH FIGURE, which
+must not be quoted as a security statistic until this is closed.
+
+FIX DIRECTION: make the check set uninferable -- invoke payload_map and channel_monitor on
+EVERY position and discard the irrelevant results, and give the two links independent plans
+instead of one shared plan run back to back.
+
+### `[+]` Corrected four published numbers that did not reproduce
+
+*fix · claude · 2026-09-01T00:35:24Z*
+
+STATUS: closed. Each verified by computation before changing it rather than by trusting the
+auditor, because propagating an unchecked figure is how the wrong ones got there.
+
+  session.py   105/300 -> 96/300. The stale value came from a working-note draft; the
+               shipped code measures 96/300 = 0.3200 at z = -0.93, which docs/PHASE3.md and
+               README.md already carried and an independent re-measurement reproduced count
+               for count.
+
+  PHASE3.md    7.4e-06 -> 7.7e-06 for the 0/500000 preimage bound. 7.4e-06 is the
+               Clopper-Pearson 97.5% one-sided value, -ln(0.025)/n = 7.3778e-06; the suite
+               standardised on Wilson, which gives 7.6829e-06. It was quoted TIGHTER than
+               the code computes, the unsafe direction for a security bound.
+
+  PHASE3.md    0.0146 -> 0.0145. wilson_bounds(5, 800) returns 0.014547.
+
+  PHASE3.md    The bold claim that the matched counts never move contradicted its own table
+               four rows above and the constant MATCHED_IDENTICAL_TRIALS[SIGNING] == 0.
+               What is invariant is the count's LAW, which is all the argument needs.
+
+### `[*]` Phase 4 IS buildable -- 4 of 5 adversaries separate at 100%, zero false alarms
+
+*finding · audit:phase3:1 · 2026-09-01T00:35:24Z*
+
+STATUS: closed, no action needed. The most important positive result of the phase.
+
+A threshold-only detector -- no ML, every cut a constant fixed before any attack run --
+reading a SessionTranscript ROUND-TRIPPED THROUGH JSON, so it provably cannot touch
+attack.decisions(), CountStarver.log, or any harness state.
+
+    honest control                   0/80 flagged  (false-alarm rate zero)
+    outside forger                  40/40   via rate
+    recipient forger, both orderings 40/40
+    impersonation, partial          40/40   via rate
+    impersonation, FULL              0/40   NOT SEPARABLE -- the stated (AUTH) assumption
+    channel, 3 attacks x 2 links   120/120
+    count starver                   40/40   via abort reason
+    replay                          40/40 and 60/60
+
+Two design inputs for Phase 4 fell out of it. The verifier RATE is the strongest and
+cheapest channel signal and needs no check rounds. And wings_agree is a NON-SIGNAL: no
+trace-preserving map on one half of a maximally entangled pair can change only that half's
+marginal, so every channel adversary leaves it True on every round. Do not build a detector
+on it.
+
+### `[!]` MAJOR and OPEN -- the D6 stream guards compare generator objects, not seeds
+
+*issue · audit:phase3:3 · 2026-09-01T00:35:24Z*
+
+STATUS: OPEN.
+
+forgery._check_streams and replay._distinct_generators both refuse only the identical
+generator OBJECT. Two generators built from ONE SEED pass -- precisely the leak isolation.py
+exists to prevent, because QDSSession consumes its caller's generator as a single
+rng.bytes(32) and derives every stream from that material with a public helper.
+
+impersonation.py and starvation.py carry no guard at all.
+
+Together with the previous entry: the D6 machinery does not enforce what it claims. The
+convention held in practice; it is not held by construction.
+
+### `[!]` MAJOR and OPEN -- check (a) of the D6 isolation test is inert on all 14 rows
+
+*issue · audit:phase3:3 · 2026-09-01T00:35:24Z*
+
+STATUS: OPEN.
+
+The PHASE3.md headline result of 14/14 passing check (a) is true and carries NO EVIDENCE,
+because no row can fail it. Six probes -- isolation.signer_probe, isolation.forwarder_probe,
+forgery.forwarder_probe, impersonation.signing_probe, replay.replay_probe and
+starvation.starvation_probe -- execute a del of session_seed, so observing at a varied
+session seed changes nothing.
+
+This is the vacuous-test failure mode, in the one test I called the single most important in
+Phase 3. The negative controls still work, which is why it looked healthy: SessionSeedForger
+is caught by (a) and DeafForger by (b).
+
+MITIGATING FACT, established independently: auditor 3 re-measured 16 published tables with
+its own harness written from the docs rather than by importing our tests, and every one
+reproduced count for count. So no adversary was in fact reading the session -- the guard
+simply would not have caught one that did.
+
+### `[+]` Closed the check-round accounting hole in analysis.py
+
+*fix · claude · 2026-09-01T00:35:24Z*
+
+STATUS: closed.
+
+Confirmed by my own measurement before fixing. Handed a parameter set that reserves check
+rounds, analysis.py counted the diverted positions as key: matched_statistics gave 38400
+expected matched positions where the truth is 34560, an 11% overcount, and the bounds are
+exponential in that count. recipient_forgery_bound read 1.13e-29 where the honest figure is
+8.83e-27.
+
+Erring in the FLATTERING direction is the failure mode this project has already shipped
+three times, so it is closed at the choke point rather than at twenty call sites where the
+twenty-first would be missed: _as_params -- which every public entry point routes through,
+verified by AST that none bypasses it -- now returns params.sifted() when check rounds are
+reserved. sifted() is idempotent and the identity on an unchecked set, so nothing published
+from DEFAULT_PARAMS moves. Pinned by a doctest.
+
+Nothing in the workflow was assigned to this. The check-round agent flagged it in its
+integrator notes, but the repair agent receives only the five ATTACK reports -- a gap in my
+workflow design, not in any agent's work.
+
+### `[-]` Phase 3 complete -- 14/14 agents, audit verdicts unsound/sound/unsound
+
+*note · claude · 2026-09-01T00:35:24Z*
+
+Suite 1421 -> 2098. Commits 5983c00, ea5ba71, 658f2ff, e36e7b1.
+
+Built: declaration-binding enforcement, attack randomness isolation, RecipientView, replay
+defence (session binding + consumed-records ledger), sampled check rounds, channel-monitor
+seam, restricted signer seam, payload_map, widened forwarder, and all five adversaries with
+measurements.
+
+Two auditors returned unsound; their findings are the next four entries. The third returned
+sound and established that Phase 4 is buildable.

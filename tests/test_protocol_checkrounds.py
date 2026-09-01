@@ -384,50 +384,70 @@ def test_the_shipped_fraction_meets_the_requirement_it_was_derived_from():
     )
 
 
-def test_the_analytic_bounds_must_be_given_the_sifted_parameters():
-    """The one place the shortening does *not* propagate on its own.
+def test_the_shortening_now_propagates_into_the_analytic_bounds():
+    """The shortening reaches every published number, without the caller helping.
 
-    :mod:`sih141.protocol.verify` reads
-    :attr:`~sih141.protocol.params.ProtocolParams.expected_matched` and nothing
-    else, so both floors and the enforced bound follow the signing length by
-    themselves. :mod:`sih141.protocol.analysis` predates check rounds and counts
-    ``Binomial(L, 1/|B|)`` against ``key_length`` directly, so handed a checked
-    set it counts the diverted positions as key and returns a bound that is too
-    good.
+    This test replaces ``test_the_analytic_bounds_must_be_given_the_sifted_parameters``,
+    on that test's own instruction: it asserted the discrepancy rather than
+    hiding it, and said that "if a future edit to ``analysis`` fixes the root
+    cause this test will fail and should be replaced by an equality." It has
+    been, so it is.
 
-    This test asserts the discrepancy rather than hiding it: it is the reason
-    :meth:`~sih141.protocol.params.ProtocolParams.sifted` is documented as
-    mandatory before any analytic call, and if a future edit to ``analysis``
-    fixes the root cause this test will fail and should be replaced by an
-    equality.
+    What changed. :mod:`sih141.protocol.analysis` predates check rounds and
+    counted ``Binomial(L, 1/|B|)`` against ``key_length`` directly, so handed a
+    checked set it counted the diverted positions as key and returned a bound
+    that was *too good* -- 38400 expected matched positions where the truth is
+    33600, and the bounds are exponential in that count.
+    :func:`~sih141.protocol.analysis._as_params`, which every public entry point
+    in that module routes through, now reduces a checked set to
+    :meth:`~sih141.protocol.params.ProtocolParams.sifted` before anything counts
+    against it.
+
+    Why the design moved. The old contract made ``sifted()`` the caller's duty
+    and this test the reminder. That is exactly the shape of the error this
+    project has already shipped three times: a number that errs in the
+    flattering direction, reachable by forgetting one call. Twenty call sites
+    today, and the twenty-first is the one that forgets. Making the reduction
+    happen where the parameter set is validated removes the opportunity rather
+    than documenting it.
+
+    ``sifted()`` is idempotent and is the identity on a set that reserves no
+    check rounds, so nothing published from ``DEFAULT_PARAMS`` moves.
     """
     checked = ProtocolParams(key_length=115200, check_fraction=0.125)
+    sifted = checked.sifted()
 
-    # Safe: verify reads expected_matched, which already follows the key.
-    assert minimum_matched_count(checked) == minimum_matched_count(
-        checked.sifted()
-    )
-    assert enforced_repudiation_bound(checked) == enforced_repudiation_bound(
-        checked.sifted()
-    )
+    # verify reads expected_matched, which already followed the signing length.
+    assert minimum_matched_count(checked) == minimum_matched_count(sifted)
+    assert enforced_repudiation_bound(checked) == enforced_repudiation_bound(sifted)
 
-    # Not safe: analysis counts trials against key_length.
+    # analysis now follows it too: the checked set and its sifted form agree,
+    # and they agree on the *honest* value rather than the flattering one.
     nominal = matched_statistics(checked)
-    honest = matched_statistics(checked.sifted())
-    assert nominal.expected == 38400.0, "counted all 115200 rounds as key"
-    assert honest.expected == 33600.0, "counted only the 100800 signing rounds"
-    assert nominal.expected > honest.expected
+    honest = matched_statistics(sifted)
+    assert nominal.expected == honest.expected
+    assert nominal.expected == 33600.0, "counted only the 100800 signing rounds"
+    assert nominal.key_length == 100800, "the diverted positions are not key"
 
-    optimistic = averaged_repudiation_bound(
+    # The property that made forgetting sifted() dangerous is gone: there is no
+    # longer a better-looking number to reach by omitting the call.
+    assert averaged_repudiation_bound(
         checked, signer_sees_recipient_bases=False
-    )
-    truthful = averaged_repudiation_bound(
-        checked.sifted(), signer_sees_recipient_bases=False
-    )
-    assert optimistic < truthful, (
-        "the unsifted call must be the *better*-looking number; that is what "
-        "makes forgetting sifted() a silent weakening rather than a loud one"
-    )
+    ) == averaged_repudiation_bound(sifted, signer_sees_recipient_bases=False)
+
+
+def test_an_unchecked_parameter_set_is_untouched_by_the_reduction():
+    """Nothing published from ``DEFAULT_PARAMS`` moves.
+
+    The guard above only bites when check rounds are reserved. This pins the
+    other half, because a reduction that silently altered the shipped numbers
+    would be a far worse bug than the one it fixes.
+    """
+    plain = ProtocolParams(key_length=115200)
+    assert plain.check_fraction == 0.0
+    assert plain.sifted() == plain
+    assert matched_statistics(plain).expected == 38400.0
+    assert matched_statistics(plain).key_length == 115200
 
 
 def test_check_fraction_survives_a_round_trip_through_json():

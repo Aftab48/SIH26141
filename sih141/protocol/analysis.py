@@ -1110,7 +1110,11 @@ the returned exponent is the converged one and the count never has to be tuned.
 
 
 def _as_params(params: Any, *, name: str = "params") -> ProtocolParams:
-    """Check that ``params`` is a :class:`~sih141.protocol.params.ProtocolParams`.
+    """Validate ``params`` and reduce it to the positions that carry key.
+
+    Every public entry point in this module routes its parameter set through
+    here, so this is the one place the two lengths a checked run has can be told
+    apart.
 
     Parameters
     ----------
@@ -1122,7 +1126,9 @@ def _as_params(params: Any, *, name: str = "params") -> ProtocolParams:
     Returns
     -------
     ProtocolParams
-        The same object.
+        The same object when no check rounds are reserved, otherwise
+        ``params.sifted()`` -- the parameter set describing only the positions
+        that actually carry key.
 
     Raises
     ------
@@ -1131,6 +1137,35 @@ def _as_params(params: Any, *, name: str = "params") -> ProtocolParams:
         mapping on purpose: every guarantee in this module rests on the
         ``s_a < s_v < 1/2`` validation that the class performs, and a duck-typed
         stand-in would skip it.
+
+    Notes
+    -----
+    **Why the sifting happens here, and why it is a security fix rather than
+    tidiness.** Every closed form below counts Bernoulli trials against
+    ``params.key_length`` -- ``Binomial(L, 1/|B|)`` for one verifier's matched
+    set, ``Binomial(2L, 1/|B|)`` for the pair -- because when they were written
+    every round was a key position. Phase 3 added sampled check rounds, which
+    divert a fraction of the positions to parameter estimation and exclude them
+    from the key. Handed such a parameter set unreduced, this module counted the
+    diverted positions as evidence and returned a bound that was *too good*: at
+    ``check_fraction = 0.1`` it claimed 38400 expected matched positions where
+    the truth is 34560, an 11% overcount, and the bounds are exponential in that
+    count. Erring in the flattering direction is the failure mode this project
+    has already shipped three times, so it is closed at the choke point rather
+    than at twenty call sites where the twenty-first would be missed.
+
+    ``sifted()`` is idempotent and is the identity on a parameter set that
+    reserves no check rounds, so nothing published from ``DEFAULT_PARAMS``
+    moves.
+
+    Examples
+    --------
+    >>> from sih141.protocol.params import DEFAULT_PARAMS
+    >>> _as_params(DEFAULT_PARAMS) is DEFAULT_PARAMS
+    True
+    >>> checked = DEFAULT_PARAMS.with_check_fraction(0.10)
+    >>> checked.key_length, _as_params(checked).key_length
+    (115200, 103680)
     """
     if not isinstance(params, ProtocolParams):
         raise TypeError(
@@ -1140,7 +1175,7 @@ def _as_params(params: Any, *, name: str = "params") -> ProtocolParams:
             f"only valid for a parameter set that passed its s_a < s_v < 1/2 "
             f"validation."
         )
-    return params
+    return params.sifted() if params.check_fraction else params
 
 
 def _as_probability(value: Any, name: str) -> float:

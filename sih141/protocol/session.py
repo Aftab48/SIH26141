@@ -1938,9 +1938,14 @@ class SessionTranscript:
         substituted on the hop is refused under the first and scored under the
         second, so a table that pooled runs from both would be averaging a
         forgery rate with a denial-of-service rate. Phase 3 measured
-        ``0/50`` forgeries scored under the first ordering and ``105/300``
+        ``0/50`` forgeries scored under the first ordering and ``96/300``
         accepted under the second, against one analytic prediction of
         ``0.345566``; only the second is a measurement of the prediction.
+        (``105/300`` appeared here in an earlier revision. It came from a
+        working-note draft, not from the shipped code, which measures
+        ``96/300 = 0.3200`` at ``z = -0.93`` -- the figure ``docs/PHASE3.md``
+        and ``README.md`` carry, and the one an independent re-measurement
+        reproduced count for count.)
     spent_rounds : tuple of tuple, optional
         What each verifier's replay ledger holds at the end of the run, as
         ``(party, session_id, message_bit)`` triples sorted for reproducibility.
