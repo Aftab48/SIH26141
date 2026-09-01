@@ -8,7 +8,7 @@
 > on the maintainer's explicit instruction. The permanent record is
 > `docs/METRICS.md` and the `docs/PHASE*.md` notes.
 
-**108 entries** — 28 finding · 26 decision · 26 issue · 15 fix · 11 note · 2 deadend
+**113 entries** — 29 finding · 28 issue · 26 decision · 16 fix · 12 note · 2 deadend
 
 
 ## Phase 0 — Scaffold
@@ -3680,3 +3680,142 @@ claim of section 4 needed its key length doubled to survive. That is written int
 section 0 and section 9 limitation 10 rather than absorbed quietly, and
 draw_check_plan(..., parties=None) is a documented, tested way back to the
 coupled full-sample plan for a deployment that would rather not pay it.
+
+### `[!]` CRITICAL and OPEN -- the check set is still recoverable: being USED is the new signal
+
+*issue · verify:harden · 2026-09-01T17:37:21Z*
+
+STATUS: OPEN. The hardening round closed the call-sequence leak and did NOT close the finding.
+
+The fix equalised how often each seam is CALLED. It did not equalise what the protocol then
+DOES with what the seam returned. The object resource_factory hands over is read ONCE on a key
+round (teleport) and TWICE on a check round (ChannelSample.of -> _as_pair -> as_density, then
+observe_qber_round / observe_chsh_round). An adversary returning an instrumented object counts
+the reads.
+
+FOUR ROUTES REMAIN, all held by the declared channel-side adversary:
+  D  resource read-count      precision 1.0000, recall 1.0000 (resource_factory alone)
+  E  payload read-count       precision 1.0000, recall 1.0000 (payload_map alone)
+  F  extra-mapping consumed   precision 1.0000, recall 1.0000 (channel_monitor alone)
+  G  TIMING                   precision 0.70-1.00, and NO instrumentation of any kind
+
+Route G is the one the brief named and the fix does not touch at all: a check round performs
+two projective measurements of an entangled pair while a key round performs a teleportation
+plus one measurement, so the wall-clock gap between consecutive factory calls classifies the
+branch.
+
+Spare-the-watched still works in-run. At the parameters PHASE3.md section 8 itself publishes,
+per-link check QBER goes from 23/192 = 0.1198 (detected AND attributed) to 0/192 = 0.0000
+(neither), with BIT-IDENTICAL key damage.
+
+So the answer to the question the brief asked -- do published QBER and CHSH now track the real
+key mismatch? -- is NO.
+
+WHAT DID CLOSE, and it is not nothing: routes A (payload call gaps), B (monitor invocation) and
+C (factory call gaps) are all shut, verified from scratch at two key lengths, both bits, both
+recipients. The per-link deal is genuine -- the two links' sets are disjoint, their union is the
+reserved set, and knowing one link's set moves the posterior on the other only from 0.1250 to
+0.1429.
+
+FRAMING THAT MATTERS FOR THE DECISION. Routes D, E and F are artefacts of the SIMULATION
+HARNESS: they count how many times Python reads an object. A real adversary on a fibre observes
+no such thing. Route G is more nearly real but is also dominated, in a deployment, by physical
+processes rather than by our loop structure. That does NOT make them harmless -- every attack
+number this project publishes comes from this harness, so a harness a simulated adversary can
+steer produces published figures that are wrong even where a real adversary could not steer.
+It is the same category as the Phase 3 finding that the harness leaked the symmetrisation
+coins: not a break of the protocol, a break of our ability to measure it.
+
+FIX DIRECTION: equalise the WORK, not just the calls -- read every seam's return value the same
+number of times on both branches, and consume the monitor's mapping identically. Route G needs
+either constant-work rounds or an explicit statement that timing is out of the simulated threat
+model, argued rather than assumed.
+
+### `[-]` Phase 3 hardening: what closed, what did not, and why I stopped here
+
+*note · claude · 2026-09-01T17:37:21Z*
+
+Two findings went into this round. One closed, one did not.
+
+CLOSED: the D6 isolation check. It was vacuous; it now bites, with per-row evidence and two
+mutations proving the tests can fail.
+
+NOT CLOSED: the steerable check set. The fix shut three of seven leak routes and the adversary
+still recovers the check set at precision 1.0. The published channel statistic still does not
+track the real key damage.
+
+I am stopping rather than starting a second hardening round, because that is what the
+maintainer asked for and because the remaining routes raise a design question that is his to
+answer, not mine to assume: whether to equalise the protocol's WORK on both branches (real
+cost, and route G may need constant-work rounds), or to state explicitly that read-counting and
+timing are outside the simulated threat model and argue why.
+
+The second option is defensible -- a real Eve does not count Python attribute reads -- but it
+must be argued in the documentation rather than left implicit, and it changes what Phase 4's
+channel detector may claim. Either way the code is committed, green at 2169 tests, and the
+limitation is recorded here rather than discovered by a judge.
+
+### `[+]` CLOSED -- the D6 isolation check now genuinely bites
+
+*fix · fix:isolation-that-isolates · 2026-09-01T17:37:21Z*
+
+STATUS: closed, verified independently.
+
+Root cause was deeper than the audit reported. observe(attack_seed, session_seed) reached the
+candidate by only TWO routes -- the builder's optional session_seed= keyword and the probe's
+argument. Six probes deleted the second and NO shipped adversary declared the first, so the
+five calls check (a) compared were five byte-identical experiments.
+
+The fix went into observe(), not the six probes, so a probe author cannot forget it. It now
+installs a SessionEnvironment and deliberately opens three leak routes -- an in-scope session
+handle, the ambient global numpy/stdlib random streams, and the session's own rng.bytes(32)
+material -- on the principle that a check offering no leak detects no theft. A D3 violation is
+now caught rather than merely forbidden.
+
+Evidence is PER ROW, because a shared control cannot give it: each of the 14 adversaries is
+rebuilt with the session seed folded into its generator -- same class, same probe, one line of
+defect -- and check (a) must catch it. 13/14 caught; the 14th is the deterministic recipient
+forger, whose decisions move with nothing at all, and whose randomised sibling is caught.
+
+  mutation 'reads_the_session always False':  7 failures before -> 24 after
+  new mutation 'remove the environment':      18 failures, AND every negative control still
+                                              passes under it -- which is exactly why the old
+                                              controls never caught the vacuity.
+
+Independent verification caught six distinct reading routes (session handle, stream material,
+global numpy, stdlib random, declared keyword, and a late reader in __call__). Stream guards
+now refuse same-seed generators in EVERY attack module, including the two that had no guard.
+No shipped attack rate moved -- now a measured statement rather than an untested one.
+
+### `[*]` MINOR and OPEN -- one D6 route the isolation check still cannot see
+
+*finding · verify:harden · 2026-09-01T17:37:21Z*
+
+STATUS: OPEN, and worth knowing before Phase 5 publishes anything.
+
+An adversary that closes over the harness's real, fixed SEED constant -- rather than the check's
+varying stand-in -- passes BOTH halves. Its stream is byte-for-byte the session's in the real
+experiment, yet its decisions do not move across the check's varied session seeds.
+
+The derived_from_seed guards do not close it either: they inspect the generator HANDED to the
+entry point, and such an adversary builds default_rng(SEED) internally.
+
+This is the one route D6 names explicitly that remains uncovered.
+
+### `[!]` MINOR and OPEN -- three docstrings still assert the invariant that WAS the vulnerability
+
+*issue · verify:harden · 2026-09-01T17:37:21Z*
+
+STATUS: OPEN.
+
+distribute.py:372 (the PayloadMap type-alias contract itself), session.py:183 (the phase3-seams
+section a Phase 4 author reads) and session.py:3158 (QDSSession.__init__) all still say
+payload_map is 'called once per key round'. It is now called at every position.
+
+The parallel channel_monitor text WAS updated, so the repository now contradicts itself about
+the exact invariant the critical fix established.
+
+Also open: the re-stated CHSH half-widths at PHASE3.md:317 and :740 do not reproduce -- both sit
+at the low tail of their sampling distributions, and both are prose pinned by no doctest, in a
+repository whose own D5 rule puts load-bearing figures in doctests and whose README already
+records five wrong prose numbers.

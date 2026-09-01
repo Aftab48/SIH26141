@@ -2,16 +2,16 @@
 
 **SIH26141** — Quantum-Inspired Cyber Threat Detection for Digital Signature Security
 
-Generated `2026-09-01 04:42 UTC` by `tools/metrics.py`. Every figure is computed from the
+Generated `2026-09-01 17:37 UTC` by `tools/metrics.py`. Every figure is computed from the
 repository — do not edit by hand, re-run the script.
 
 ## Test suite
 
 ```
-2100 passed in 747.44s (0:12:27)
+2169 passed in 748.70s (0:12:28)
 ```
 
-- Doctests collected from package modules: **249**
+- Doctests collected from package modules: **262**
 - `--doctest-modules` is enabled over `testpaths = ["tests", "sih141"]`, so every
   numeric claim written in a docstring is an executable test. Documentation that
   lies fails the suite.
@@ -28,28 +28,28 @@ repository — do not edit by hand, re-run the script.
 | `sih141/core/teleport.py` | 1183 | 171 | 785 | 52 | 15 | 2 |
 | `sih141/protocol/__init__.py` | 353 | 206 | 123 | 12 | 0 | 0 |
 | `sih141/protocol/analysis.py` | 3514 | 201 | 2750 | 29 | 39 | 2 |
-| `sih141/protocol/checkrounds.py` | 3023 | 889 | 1706 | 29 | 74 | 11 |
-| `sih141/protocol/distribute.py` | 1385 | 294 | 912 | 36 | 12 | 2 |
+| `sih141/protocol/checkrounds.py` | 3406 | 975 | 1955 | 33 | 81 | 11 |
+| `sih141/protocol/distribute.py` | 1456 | 290 | 968 | 49 | 12 | 2 |
 | `sih141/protocol/keys.py` | 773 | 117 | 537 | 3 | 24 | 2 |
 | `sih141/protocol/params.py` | 1606 | 483 | 916 | 2 | 26 | 2 |
 | `sih141/protocol/records.py` | 1413 | 335 | 901 | 7 | 31 | 3 |
-| `sih141/protocol/session.py` | 5116 | 1529 | 2879 | 211 | 89 | 9 |
+| `sih141/protocol/session.py` | 5266 | 1555 | 2980 | 218 | 92 | 9 |
 | `sih141/protocol/signature.py` | 955 | 179 | 646 | 4 | 16 | 1 |
 | `sih141/protocol/symmetrise.py` | 554 | 79 | 407 | 2 | 4 | 1 |
 | `sih141/protocol/tally.py` | 1344 | 293 | 885 | 12 | 24 | 3 |
 | `sih141/protocol/verify.py` | 3703 | 796 | 2397 | 90 | 49 | 6 |
-| `sih141/attacks/__init__.py` | 300 | 181 | 96 | 8 | 0 | 0 |
-| `sih141/attacks/channel.py` | 2035 | 445 | 1278 | 21 | 50 | 6 |
-| `sih141/attacks/forgery.py` | 1655 | 469 | 968 | 26 | 29 | 3 |
-| `sih141/attacks/impersonation.py` | 1934 | 530 | 1102 | 46 | 54 | 5 |
-| `sih141/attacks/isolation.py` | 1482 | 411 | 850 | 26 | 24 | 5 |
-| `sih141/attacks/replay.py` | 2181 | 662 | 1208 | 48 | 34 | 3 |
-| `sih141/attacks/starvation.py` | 1640 | 320 | 1102 | 9 | 27 | 4 |
+| `sih141/attacks/__init__.py` | 329 | 196 | 108 | 9 | 0 | 0 |
+| `sih141/attacks/channel.py` | 2056 | 443 | 1299 | 21 | 50 | 6 |
+| `sih141/attacks/forgery.py` | 1679 | 474 | 985 | 26 | 29 | 3 |
+| `sih141/attacks/impersonation.py` | 2019 | 560 | 1149 | 48 | 55 | 5 |
+| `sih141/attacks/isolation.py` | 2145 | 462 | 1355 | 34 | 33 | 6 |
+| `sih141/attacks/replay.py` | 2324 | 682 | 1313 | 51 | 36 | 3 |
+| `sih141/attacks/starvation.py` | 1678 | 333 | 1115 | 21 | 27 | 4 |
 | `sih141/attacks/statistics.py` | 570 | 158 | 323 | 3 | 14 | 1 |
-| **total** | **39910** | **9392** | **24717** | **822** | **682** | **74** |
+| **total** | **41517** | **9632** | **25843** | **872** | **704** | **75** |
 
-Tests: **27548 lines** across **26 files**, **1451 test functions** defined.
-Test-lines to code-lines ratio: **2.93 : 1**
+Tests: **29072 lines** across **26 files**, **1514 test functions** defined.
+Test-lines to code-lines ratio: **3.02 : 1**
 
 ## Live security parameters
 
@@ -75,23 +75,26 @@ actually computes today — not what a document once claimed.
 
 | File | Words |
 | --- | ---: |
-| `README.md` | 2783 |
-| `JOURNAL.md` | 25050 |
-| `docs/METRICS.md` | 846 |
+| `README.md` | 3199 |
+| `JOURNAL.md` | 32962 |
+| `docs/METRICS.md` | 848 |
 | `docs/PHASE1.md` | 4078 |
 | `docs/PHASE2.md` | 10056 |
-| `docs/PHASE3.md` | 7193 |
+| `docs/PHASE3.md` | 10426 |
 | `docs/QDS.md` | 4491 |
-| **total** | **54497** |
+| **total** | **66060** |
 
-Working-journal entries: **93** (temporary; deleted at the end of Phase 7).
+Working-journal entries: **113** (temporary; deleted at the end of Phase 7).
 
 ## Repository
 
-- Commits: **10**
+- Commits: **13**
 
 | Commit | Subject |
 | --- | --- |
+| `f4544fc` | Reconcile the two hardening fixes and re-measure what moved |
+| `9c00d5f` | Make the check set uninferable and the isolation check bite |
+| `885f342` | Close Phase 3: propagate check-round sifting, fix stale figures |
 | `e36e7b1` | Add channel monitor, restrict signer seam, build and verify five attacks |
 | `658f2ff` | Add sampled check rounds for channel parameter estimation |
 | `ea5ba71` | Add replay defence: session binding and consumed-records ledger |
