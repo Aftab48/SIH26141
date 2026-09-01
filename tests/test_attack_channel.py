@@ -129,6 +129,12 @@ def _payload_probe(attack: ChannelAttack, session_seed: int) -> object:
     costs nothing and because a probe should not depend on a property this
     module does not own; it is no longer the difference between a probe that
     works and one that blames the attack for the harness.
+
+    The same adversary's row in ``tests/test_phase3_isolation_suite.py`` goes
+    the other way on purpose and runs *with* check rounds, because that suite is
+    about the join and wants check (a) to say "independent of the check plan"
+    as well as "independent of the seed". The two probes differ deliberately;
+    they have not drifted.
     """
     params = ProtocolParams(key_length=24)
     session = QDSSession(

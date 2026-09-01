@@ -63,11 +63,51 @@ whose decisions move with nothing at all, and whose randomised sibling is
 covered -- which is the same argument
 :func:`test_every_waiver_has_a_randomised_sibling` already makes and is why the
 waiver is only sound beside one.
+
+What check (a) means now that the seams are called on every position
+---------------------------------------------------------------------
+Two Phase 3 defects were repaired at once, and they meet in this file, so it is
+worth writing down what a green row asserts today rather than leaving a reader
+to assume it is what it was.
+
+The other repair was in the protocol: ``payload_map`` used to be invoked on key
+rounds only and ``channel_monitor`` on check rounds only, so either seam handed
+its holder the check set outright. Both are now called at every position and
+their answers discarded where they have no use
+(:ref:`sih141.protocol.distribute <check-round-lockstep>`). That changes what a
+probe can do here, and therefore what a row means:
+
+* **Before.** ``_channel_payload_probe`` had to run with ``check_fraction = 0``,
+  because the set of positions the seam was offered moved with the session seed
+  all by itself and check (a) would have reported an innocent adversary as
+  reading the session. With no plan drawn, varying the session seed varied only
+  the seed. A green row said "this adversary does not read the session seed".
+* **Now.** Both channel probe helpers run the *same* checked parameters
+  (:data:`CHANNEL_PROBE_PARAMS`), so across check (a)'s five calls the check
+  plan is a different subset every time. A green row says "this adversary does
+  not read the session seed **and** its decisions do not move with the check
+  plan" -- and the second half is a property of the seam wiring, which is why
+  :func:`test_the_channel_rows_ride_on_the_seam_lockstep` states it directly
+  and in a form whose failure blames the protocol rather than the attack.
+
+Two things follow that are easy to get wrong.
+
+``del session_seed`` in a probe is correct and is not the old defect. What made
+check (a) inert was never the ``del``; it was that nothing else offered the
+candidate a route to the session. :func:`check_attack_isolation` now installs a
+:class:`~sih141.attacks.isolation.SessionEnvironment` around every build and
+probe call, so the routes are open whatever a probe does with its argument.
+
+A probe that *freezes* its session is the remaining way to weaken a row without
+failing anything: check (a) still catches a session-reading adversary, but the
+plan stops moving and the row silently drops the second half of its claim.
+:func:`test_the_channel_probes_vary_the_session_they_run` is what notices.
 """
 
 from __future__ import annotations
 
 import functools
+from typing import Final
 
 import numpy as np
 import pytest
@@ -92,8 +132,17 @@ from sih141.attacks import (
     starvation_probe,
 )
 from sih141.attacks.channel import ChannelAttack
-from sih141.attacks.isolation import active_session
-from sih141.protocol.params import Party, ProtocolParams
+from sih141.attacks.isolation import (
+    DEFAULT_SESSION_SEEDS,
+    active_session,
+)
+from sih141.protocol.distribute import (
+    PayloadMap,
+    ResourceContext,
+    ResourceFactory,
+    ideal_resource,
+)
+from sih141.protocol.params import VERIFIERS, Party, ProtocolParams
 from sih141.protocol.session import QDSSession
 from tests.test_attack_isolation import (
     AmbientSessionForger,
@@ -112,21 +161,68 @@ RECIPIENT_FORGER_DETERMINISM = (
 """Why check (b) cannot apply to the adversary whose rate Phase 3 publishes."""
 
 
+CHANNEL_PROBE_PARAMS: Final[ProtocolParams] = ProtocolParams(
+    key_length=24, check_fraction=0.25
+)
+"""The parameter set both channel probes mount on. Check rounds are **on**.
+
+They used to differ: the resource probe ran with checks and the payload probe
+without, because ``payload_map`` was invoked on key rounds only and *which*
+positions are key rounds is drawn from the session's own generator -- so the set
+of occasions a payload adversary was offered moved with the session seed, and a
+probe reporting those positions failed check (a) against a flawless attack
+(:ref:`sih141.attacks.isolation <probe-traps>`). That was the protocol's leak,
+not the probe's bug, and it is closed: every channel-side seam is now offered
+every position. Both probes therefore run the same parameters, and running them
+*with* checks is what makes check (a) say something new -- see
+:func:`test_the_channel_rows_ride_on_the_seam_lockstep`.
+"""
+
+
+def _channel_session(
+    session_seed: int,
+    *,
+    resource_factory: ResourceFactory | None = None,
+    payload_map: PayloadMap | None = None,
+) -> QDSSession:
+    """Build the live session both channel probes mount on.
+
+    One home rather than one per probe, so that the liveness the rows depend on
+    can be asserted against the object the rows actually use
+    (:func:`test_the_channel_probes_vary_the_session_they_run`) instead of
+    against a copy of it that can drift.
+
+    Parameters
+    ----------
+    session_seed : int
+        The seed check (a) is varying. It reaches the session's generator, so
+        the check plan drawn from the recipients' stream moves with it.
+    resource_factory : ResourceFactory or None, optional
+        Keyword-only. The entanglement seam, or ``None``.
+    payload_map : PayloadMap or None, optional
+        Keyword-only. The payload seam, or ``None``.
+
+    Returns
+    -------
+    QDSSession
+        Undistributed; the caller runs :meth:`~QDSSession.distribute`.
+    """
+    return QDSSession(
+        CHANNEL_PROBE_PARAMS,
+        resource_factory=resource_factory,
+        payload_map=payload_map,
+        rng=np.random.default_rng(session_seed),
+    )
+
+
 def _channel_resource_probe(attack: ChannelAttack, session_seed: int) -> object:
     """Mount a channel attack on ``resource_factory`` and read back its log.
 
     A real session rather than a frozen scenario, because for this seam the
     wiring is what is under test: an attack reaching the session's generator
-    *through the seam* is caught here and nowhere else. Check rounds are on,
-    which is safe for this seam -- check-round lockstep calls
-    ``resource_factory`` at every position identically, so the set of occasions
-    the adversary is offered does not move with the seed.
+    *through the seam* is caught here and nowhere else.
     """
-    session = QDSSession(
-        ProtocolParams(key_length=24, check_fraction=0.25),
-        resource_factory=attack.resource,
-        rng=np.random.default_rng(session_seed),
-    )
+    session = _channel_session(session_seed, resource_factory=attack.resource)
     session.distribute()
     return attack.decisions()
 
@@ -134,19 +230,13 @@ def _channel_resource_probe(attack: ChannelAttack, session_seed: int) -> object:
 def _channel_payload_probe(attack: ChannelAttack, session_seed: int) -> object:
     """Mount a channel attack on ``payload_map`` and read back its log.
 
-    ``check_fraction`` is **zero**, and that is load-bearing rather than tidy.
-    ``payload_map`` is called on key rounds only and which positions are key
-    rounds comes out of the session's own generator, so the set of contexts a
-    payload adversary is legitimately offered moves with the session seed even
-    when the adversary is flawless. A probe reporting those positions fails
-    check (a) and the report blames the attack. See
-    :ref:`sih141.attacks.isolation <probe-traps>`.
+    The same live session and the same parameters as the resource probe, check
+    rounds included. That is a change: this probe used to require
+    ``check_fraction = 0`` to avoid blaming the adversary for a seam the
+    protocol offered a seed-dependent set of positions
+    (:data:`CHANNEL_PROBE_PARAMS`).
     """
-    session = QDSSession(
-        ProtocolParams(key_length=24),
-        payload_map=attack.payload,
-        rng=np.random.default_rng(session_seed),
-    )
+    session = _channel_session(session_seed, payload_map=attack.payload)
     session.distribute()
     return attack.decisions()
 
@@ -279,6 +369,106 @@ def test_every_unwaived_adversary_really_draws_from_its_generator(
     report = check_attack_isolation(build, probe, name=label)
     assert report.uses_its_own_generator, report.summary()
     assert report.distinct_decisions > 1
+
+
+def test_the_channel_probes_vary_the_session_they_run() -> None:
+    """The seven channel rows must actually put a moving session under the attack.
+
+    Check (a) varies the session seed and requires the adversary's decisions not
+    to move. For a row whose probe runs a *live checked session*, that is two
+    statements at once: the adversary does not read the seed, **and** its view
+    does not move with the check plan the recipients drew from that seed. The
+    second only holds if the plan moves, so this asserts that it does, against
+    :func:`_channel_session` -- the object the rows themselves call, not a copy.
+
+    A probe that quietly pinned ``rng=default_rng(0)`` would still pass check
+    (a), because the :class:`~sih141.attacks.isolation.SessionEnvironment` that
+    makes check (a) bite is installed by
+    :func:`~sih141.attacks.isolation.check_attack_isolation` and not by the
+    probe. It would pass for less, and this is what notices
+    (:ref:`sih141.attacks.isolation <probe-traps>`).
+    """
+    plans: set[tuple[int, ...]] = set()
+    for seed in DEFAULT_SESSION_SEEDS:
+        session = _channel_session(seed)
+        session.distribute()  # the plans are drawn here, not at construction
+        plans.add(tuple(session.check_plans[0].positions))
+    assert len(plans) == len(DEFAULT_SESSION_SEEDS), (
+        "the check plan must be a different set at every session seed check (a) "
+        "varies, or the channel rows stop testing independence from the plan "
+        "and only test independence from the seed"
+    )
+    assert all(plan for plan in plans), "the probe parameters must reserve rounds"
+
+
+def test_the_channel_rows_ride_on_the_seam_lockstep() -> None:
+    """Why a payload row may run with check rounds on, asserted rather than assumed.
+
+    The row above requires the plan to move. This one requires the seams not to
+    notice, which is the protocol's job and not the adversary's: with a plan in
+    force, ``resource_factory``, ``payload_map`` and ``channel_monitor`` are
+    each offered every position of every link of every message bit, in order.
+
+    Kept here, in the isolation suite, because it is the premise the seven
+    channel rows rest on. If it ever fails, check (a) on
+    ``depolarising-channel/payload``
+    fails immediately afterwards and the report will name the *adversary* --
+    which is what happened for the whole of Phase 3 and is why the payload probe
+    used to need ``check_fraction = 0``. A failure here says the fault is in
+    :mod:`sih141.protocol.distribute` or :mod:`sih141.protocol.session`, not in
+    the attack.
+    """
+    seen: dict[str, list[tuple[Party, int, int]]] = {
+        "resource": [],
+        "payload": [],
+        "monitor": [],
+    }
+
+    def note(name: str, context: ResourceContext) -> None:
+        """Record one hop against one seam."""
+        seen[name].append(
+            (context.party, context.message_bit, context.position)
+        )
+
+    def factory(context: ResourceContext) -> object:
+        """The entanglement seam, honest and watching."""
+        note("resource", context)
+        return ideal_resource()
+
+    def payload(state: object, context: ResourceContext) -> object:
+        """The payload seam, honest and watching."""
+        note("payload", context)
+        return state
+
+    def monitor(resource: object, context: ResourceContext) -> dict[str, object]:
+        """The observer seam, honest and watching."""
+        note("monitor", context)
+        return {}
+
+    session = QDSSession(
+        CHANNEL_PROBE_PARAMS,
+        resource_factory=factory,
+        payload_map=payload,
+        channel_monitor=monitor,
+        rng=np.random.default_rng(DEFAULT_SESSION_SEEDS[0]),
+    )
+    session.distribute()
+
+    expected = [
+        (party, bit, index)
+        for bit in (0, 1)
+        for party in VERIFIERS
+        for index in range(CHANNEL_PROBE_PARAMS.key_length)
+    ]
+    for name, calls in seen.items():
+        assert calls == expected, (
+            f"the {name} seam was not offered every position of a checked run. "
+            f"The fault is in the protocol, not in any adversary: a seam whose "
+            f"call set moves with the plan hands the check set to whoever holds "
+            f"it, and makes check (a) on the channel rows blame the attack for "
+            f"it. See sih141.protocol.distribute's check-round-lockstep note."
+        )
+    assert session.check_plans[0].positions, "the run must reserve rounds"
 
 
 def seeded_from_the_session(build, label):

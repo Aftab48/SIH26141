@@ -3870,10 +3870,12 @@ class QDSSession:
                 keys[bit],
                 self._params,
                 parties=VERIFIERS,
-                # The channel seam, tapped on check rounds only when there are
-                # any. The tap is downstream of the factory and cannot be seen
-                # from it (:class:`_ChannelTap`); with no plan the seam is
-                # passed through untouched, arity and all.
+                # The channel seam, tapped on EVERY hop of a checked run --
+                # the monitor is called everywhere and a ChannelSample is
+                # recorded only at this link's check positions
+                # (:class:`_ChannelTap`). The tap is downstream of the factory
+                # and cannot be seen from it; with no plan the seam is passed
+                # through untouched, arity and all.
                 resource_factory=(
                     self._resource_factory
                     if plan is None

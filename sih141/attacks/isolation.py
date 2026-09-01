@@ -210,10 +210,11 @@ and the fix is to return the part of the decision the generator reaches.
 
 .. _probe-traps:
 
-Two ways to write a probe that blames the adversary for your bug
------------------------------------------------------------------
-Both were found the hard way in Phase 3, by different agents, and both report a
-perfectly isolated attack as a cheat.
+Three ways to write a probe that does not say what you think it says
+--------------------------------------------------------------------
+All three were found the hard way in Phase 3, by different agents. Two report a
+perfectly isolated attack as a cheat; the third reports nothing at all, which is
+worse, because a green row is read as evidence.
 
 **A distributor probe must return the adversary's own decision, never the seam's
 output.** The obvious probe for the ``distributor`` seam returns the records it
@@ -223,19 +224,38 @@ the report points at the adversary. Return the thing the adversary chose: the
 key an impersonating distributor substituted, the axis a channel attack drew.
 :func:`sih141.attacks.impersonation.distributor_probe` is the worked example.
 
-**A payload_map probe must run with ``check_fraction = 0``.** ``payload_map`` is
-called on key rounds only, and *which* positions are key rounds is drawn from
-the session's own generator, so the set of contexts the seam is legitimately
-offered moves with the session seed even for a flawless adversary. A probe
-returning a log that includes positions therefore fails check (a), which
-:func:`check_attack_isolation` then reports as ``reads_the_session=True``. The
-``resource_factory`` seam has no such problem: check-round lockstep calls it at
-every position identically.
+**A payload_map probe used to need ``check_fraction = 0``, and that was the
+protocol's bug rather than the probe's.** ``payload_map`` was invoked on key
+rounds only, and *which* positions are key rounds is drawn from the session's
+own generator, so the set of contexts the seam was legitimately offered moved
+with the session seed even for a flawless adversary: a probe reporting those
+positions failed check (a), and :func:`check_attack_isolation` reported it as
+``reads_the_session=True`` against an innocent attack. The same fact was a leak
+in its own right -- the gaps in the seam's call sequence *were* the check set --
+and it is closed at the source: :mod:`sih141.protocol.distribute` now offers the
+seam every position and discards what it returns on a check round, exactly as
+``resource_factory`` was always called, and :mod:`sih141.protocol.session` does
+the same for ``channel_monitor``. A payload probe may now run with check rounds
+on, and the rows in ``tests/test_phase3_isolation_suite.py`` do.
 
-The rule both cases are instances of: everything the adversary *legitimately
+**A probe that freezes its session seed silently narrows what its row proves.**
+This one does not fail; it passes for less. Check (a) still bites, because the
+:class:`SessionEnvironment` is installed by :func:`check_attack_isolation`
+around the probe call rather than by the probe (:ref:`check-a-channel`), so an
+adversary reading the session is caught whatever the probe does with its
+argument -- which is why ``del session_seed`` in a seam-less probe is correct
+and not a defect. What a frozen probe loses is the *other* half: with the
+session seed varying, a probe that runs a live checked session also requires the
+adversary's view to be independent of the **check plan**, and that is a
+statement about the protocol's seam lockstep as much as about the adversary. A
+probe that pins ``rng=default_rng(0)`` keeps the first guarantee and quietly
+drops the second.
+
+The rule the first two are instances of: everything the adversary *legitimately
 observes* -- including the set of occasions on which it is consulted -- must be
 identical across probe calls, or check (a) is not a statement about the
-adversary at all.
+adversary at all. The rule the third is an instance of: a probe should vary
+everything the row claims the adversary is independent of.
 
 Adding the sixth adversary
 --------------------------

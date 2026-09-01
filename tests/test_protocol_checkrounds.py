@@ -71,6 +71,7 @@ sample size at four sigmas, not guessed.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import math
 from collections import Counter
@@ -1200,6 +1201,65 @@ def test_retained_positions_are_bit_identical_to_an_unchecked_run():
     assert checked.log.round_count == params.check_count // 2
     assert checked.log.positions == plan.positions_for(Party.BOB)
     assert set(checked.log.positions) < set(plan.positions)
+
+
+UNCHECKED_TRANSCRIPT_DIGEST = (
+    "43ea5ceafda99b83d41dd78b8ef7b6968300a7b005040cbd346a7c0ca726660b"
+)
+"""SHA-256 of one honest ``check_fraction = 0`` transcript, measured before the fix.
+
+Computed on the code as it stood at commit ``885f342`` -- before ``payload_map``
+and ``channel_monitor`` were lifted onto every position and before a plan's
+rounds were dealt between the links -- and re-measured identical afterwards. It
+is the *cross-version* half of the honest-path claim, which no test written
+inside one revision can make on its own.
+"""
+
+
+def test_an_unchecked_honest_run_is_byte_identical_to_the_pre_fix_code():
+    """The honest path did not move when the seams were opened. A digest, not a promise.
+
+    Every other invariance test in this file compares two runs of *one* revision
+    against each other, which cannot distinguish "the honest path is unchanged"
+    from "the honest path changed and both sides of the comparison moved with
+    it". This pins the actual bytes, against a value measured on the code before
+    the change.
+
+    ``check_fraction = 0`` because that is the configuration in which the claim
+    can be exact: with no plan drawn, nothing about the run is check-round
+    dependent, so the whole transcript -- keys, records, signature, verdicts,
+    the pooled counts, the printed bounds -- must survive the change untouched.
+
+    The claim extends to a **checked** honest run by composition rather than by
+    a second digest, which would be wrong to pin: a checked transcript legitimately
+    differs from the pre-fix one, because each link now publishes half the
+    reserved rounds rather than all of them. What must not differ is the *key*,
+    and :func:`test_retained_positions_are_bit_identical_to_an_unchecked_run`
+    says a checked run's record is the unchecked run's record sifted -- so an
+    unchecked run pinned byte for byte pins the checked run's record too.
+
+    If this fails, the honest protocol produced different numbers under one seed
+    and the reason must be found before any measured rate in Phase 3 is quoted
+    again. Re-pin the constant only after establishing that the change was
+    intended and that nothing published depends on the old bytes.
+    """
+    session = QDSSession(
+        ProtocolParams(key_length=96), rng=np.random.default_rng(20260141)
+    )
+    transcript = session.run(0)
+    digest = hashlib.sha256(
+        transcript.to_json(sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    assert digest == UNCHECKED_TRANSCRIPT_DIGEST, (
+        "an honest unchecked run's transcript moved. The check-round seams are "
+        "not supposed to be reachable from a run that has no check rounds, so "
+        "this is a change to the honest protocol and not to the sampling "
+        "design."
+    )
+    # And the two properties a reader would check the digest for by hand, so a
+    # failure above is diagnosable without recomputing a hash.
+    assert transcript.params.check_count == 0
+    assert not transcript.check_logs and not transcript.channel
 
 
 def test_the_variate_budget_is_three_per_position_on_both_branches():

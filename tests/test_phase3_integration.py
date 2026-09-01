@@ -655,15 +655,23 @@ def test_a_one_link_channel_attack_is_attributable_from_the_check_logs():
     never reach the symmetriser -- so unlike the records they are not smeared
     across the two recipients. Phase 4 must estimate per link and never pool the
     two.
+
+    The figures this asserts are the ones ``docs/PHASE3.md`` §4 quotes, and the
+    length is twice what it was: a plan now deals its reserved rounds between
+    the two links (:ref:`sih141.protocol.checkrounds <check-round-links>`), so a
+    fixed ``(L, check_fraction)`` puts half as many rounds on each link as it
+    used to and every per-link interval is ``sqrt(2)`` wider. At the old
+    ``L = 384`` the two intervals now overlap on two session seeds in eight --
+    the attack is still detected, and no longer reliably *attributed*. Doubling
+    ``L`` buys the sample back.
     """
-    # L = 384 rather than a demo length, and this is the point of the test
-    # rather than an inconvenience: attribution is a sample-size property. At
-    # L = 96 the same attack is plainly *detected* on Bob's link and the two
-    # links' 99% intervals still overlap, so a detector could not name the
-    # compromised party. The check-round arm has to be sized for the question
-    # being asked of it, which is what
-    # :func:`~sih141.protocol.checkrounds.required_check_rounds` is for.
-    params = ProtocolParams(key_length=384, check_fraction=0.5)
+    # The sample size is the point of the test rather than an inconvenience:
+    # attribution is a sample-size property. At L = 96 the same attack is
+    # plainly *detected* on Bob's link and the two links' 99% intervals still
+    # overlap, so a detector could not name the compromised party. The
+    # check-round arm has to be sized for the question being asked of it, which
+    # is what :func:`~sih141.protocol.checkrounds.required_check_rounds` is for.
+    params = ProtocolParams(key_length=768, check_fraction=0.5)
     attack = DepolarisingChannel(
         0.3, rng=np.random.default_rng(ATTACK_SEEDS + 33_000), target=Party.BOB
     )
@@ -686,6 +694,24 @@ def test_a_one_link_channel_attack_is_attributable_from_the_check_logs():
     bob_errors, bob_rounds = per_party[Party.BOB]
     charlie_errors, charlie_rounds = per_party[Party.CHARLIE]
     assert bob_rounds > 0 and charlie_rounds > 0
+    assert bob_rounds == charlie_rounds, (
+        "the deal must give the two links equal-sized samples, or one link's "
+        "interval is wider than the other's for a reason a reader cannot see"
+    )
+    # The arithmetic the sample size rests on, stated so that a future change to
+    # the deal fails here and not two paragraphs of prose away: each link
+    # measures half of `check_count` reserved positions per message bit, and
+    # those halves are split again between the QBER and the CHSH arm.
+    assert 2 * bob_rounds + 2 * len(
+        [
+            observation
+            for bit in (0, 1)
+            for observation in transcript.check_log_for(Party.BOB, bit).chsh
+        ]
+    ) == 2 * params.check_count, (
+        "Bob's QBER and CHSH observations, over both message bits, must "
+        "account for exactly half the run's reserved positions"
+    )
     assert charlie_errors == 0, "Charlie's link was never touched"
     verdict = agrees_within(bob_errors, bob_rounds, 0.15)
     assert verdict.agrees, verdict.summary()
@@ -697,15 +723,29 @@ def test_a_one_link_channel_attack_is_attributable_from_the_check_logs():
         "the two links' 99% intervals must be disjoint, or the attack is "
         "detected but not attributed"
     )
+    # Pinned exactly, because docs/PHASE3.md quotes them and a figure that only
+    # lives in prose is the failure mode this project has already shipped five
+    # times.
+    assert (bob_errors, bob_rounds) == (33, 192), (bob_errors, bob_rounds)
+    assert (charlie_errors, charlie_rounds) == (0, 192)
+    assert f"{bob_low:.4f}" == "0.1130"
+    assert f"{charlie_high:.4f}" == "0.0334"
 
 
 def test_the_payload_line_is_invisible_to_the_check_round_arm():
     """A limitation, asserted rather than described.
 
-    ``payload_map`` is never called on a check round, so an adversary on the
-    payload line wrecks the key while the published QBER reports a perfect
-    channel. A Phase 4 detector keyed off channel quality alone sees nothing
-    here; the signal that survives is the verifiers' own mismatch rate.
+    A check round teleports no payload, so what ``payload_map`` returns there is
+    thrown away: an adversary on the payload line wrecks the key while the
+    published QBER reports a perfect channel. A Phase 4 detector keyed off
+    channel quality alone sees nothing here; the signal that survives is the
+    verifiers' own mismatch rate.
+
+    The seam *is* called on a check round -- at every position, key round and
+    check round alike, so that its call sequence carries nothing about the plan
+    (:ref:`sih141.protocol.distribute <payload-seam>`). It is the result that
+    never reaches the published statistics, not the call, and this test is about
+    the result.
     """
     params = ProtocolParams(key_length=96, check_fraction=0.5)
     attack = InterceptResend(rng=np.random.default_rng(ATTACK_SEEDS + 34_000))

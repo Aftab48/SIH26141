@@ -175,11 +175,29 @@ is re-run with the session's own seed folded into its generator, through its own
 check (a) has to catch it. Thirteen of the fourteen are covered directly; the fourteenth moves
 with nothing at all, which is the same fact its check-(b) waiver rests on.
 
-Four mutation checks confirm the defences are actually tested: disabling the replay ledger,
-the declaration binding, check (a) of the isolation check, or the session channel check (a)
-reaches the candidate by, each turns the relevant tests red and only those tests.
+**A published statistic that could be steered, and now cannot be.** Besides the entanglement
+line, a channel-side adversary holds two seams, and both gave the check set away for free:
+`payload_map` was called on key rounds only, so the *gaps* in its call sequence were the check
+set — 24 of 24 recovered at `L = 96`, precision `1.0000` against a base rate of `0.2500` — and
+`channel_monitor` was called on check rounds only, so *being called* was the whole signal, 120
+of 120 at `L = 480`. An adversary who read it could wreck the key and spare exactly the watched
+positions, publishing a clean QBER over a corrupted link. Both seams are now called at every
+position and what they return is discarded where it has no use; and a plan's reserved rounds
+are **dealt between the two links**, so recovering one link's check set does not hand over the
+other's. Re-measured: the payload seam's call gaps are now empty, and the monitor's call set is
+every position, which contains that link's check rounds at exactly the base rate and no better.
+The price is written down rather than absorbed: each link publishes half of `check_count`
+rounds, per-link intervals are `√2` wider, and the claim that a one-link attack can be
+*attributed* needed twice the key length to keep.
 
-Full suite: **2166 passed in 12 min 45 s**, up from 1421 at the end of Phase 2.
+Nine mutation checks confirm the defences are actually tested — the replay ledger, the
+declaration binding, check (a) of the isolation check, the route by which check (a) reaches a
+candidate, the payload seam's every-position call, the channel monitor's, the per-link deal,
+the last two together, and the session a channel isolation probe runs. Each turns the relevant
+tests red and only those tests; the two seam mutations were measured against the *whole* suite
+and cost 10 failures and 6.
+
+Full suite: **2169 passed in 12 min 29 s**, up from 1421 at the end of Phase 2.
 
 ## Roadmap
 
@@ -262,9 +280,12 @@ docs/              engineering notes per phase
 2. **Little-endian qubit ordering throughout** (Qiskit convention: qubit 0 is the rightmost
    bit). Pinned by tests using asymmetric states, since symmetric states such as
    |00⟩+|11⟩ cannot distinguish the two conventions.
-3. **All randomness flows through an injected `numpy.random.Generator`.** No global
-   `numpy.random` or stdlib `random` calls anywhere. Reproducible seeding is a prerequisite
-   for the Phase 5 evaluation to be credible.
+3. **All randomness flows through an injected `numpy.random.Generator`.** Nothing anywhere
+   *draws* from global `numpy.random` or stdlib `random`. Reproducible seeding is a
+   prerequisite for the Phase 5 evaluation to be credible. The one place those globals are
+   touched at all is the D6 isolation check, which *writes* them for the duration of a probe
+   call — and restores them exactly — so that an adversary breaking this rule is caught by a
+   test rather than trusted not to.
 4. **No AI/ML anywhere in the detection path.** Every threshold in the codebase is a closed
    form in the protocol parameters, derived from a concentration inequality — including the
    matched-count floor, which is a Chernoff tail at a fixed budget and not a learned or

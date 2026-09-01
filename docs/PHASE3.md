@@ -40,7 +40,29 @@ a new mechanism:
 adversary-and-seam pairs pass the D6 isolation check in `tests/test_phase3_isolation_suite.py`,
 and — since the audit — the check is separately shown to be *capable* of failing thirteen of
 them, one row at a time. Every deliberately-defective control is still caught. **No adversary
-failed, so no published rate changed on that account.** §7.
+failed, so no published rate changed on that account.** §7. One rate did change on a different
+account, and it is in the ledger below.
+
+## 0. The audit ledger
+
+Three items were opened against Phase 3 by the audit. **All three are closed.** Each is closed
+by a change with a test that goes red when the change is reverted (§10), not by an argument.
+
+| # | Severity | Finding | Status | What closed it |
+| --- | --- | --- | --- | --- |
+| 1 | **CRITICAL** | The check set is recoverable by the declared channel-side adversary. `payload_map` was invoked on key rounds only, so the *gaps* in its call sequence were the check set — 24 of 24 at `L = 96`, precision `1.0000` against a base rate of `0.2500`. `channel_monitor` was invoked on check rounds only, so *being called* was the whole signal — 120 of 120 at `L = 480`. Both links ran the same plan, and the run finishes Bob's pass before Charlie's first hop, so one recovery bought the second link. | **CLOSED** | Both seams are called at every position and their answers discarded where they have no use, exactly as `resource_factory` always was; and a plan's reserved rounds are **dealt** between the two links so their check sets are disjoint. Re-measured: the payload seam's call gaps are now empty, and the monitor's call set is all `L` positions, which contains this link's 60 check rounds at precision `0.1250` — the per-link base rate exactly. The two changes are independently sufficient against the exploit they were aimed at, and the mutation table says so. §4, §10. |
+| 2 | MAJOR | The D6 stream guards compared generator *objects*. Two generators built from one seed — which is one stream byte for byte, and the form the mistake actually takes — were accepted. `impersonation.py` and `starvation.py` had no guard at all. | **CLOSED** | `stream_fingerprint` / `same_stream` / `derived_from_seed` / `require_distinct_streams` compare the seed sequence and the bit-generator state; `forgery`, `replay`, `run_impersonation`, `measure_impersonation` and `measure_starvation` all use them. §11 (D3). |
+| 3 | MAJOR | Check (a) of the D6 isolation check was **inert on all fourteen rows**: every ready-made probe deleted the session seed, no shipped adversary declared a `session_seed` constructor argument, and the five decisions check (a) compares were five runs of an identical experiment. "14/14 pass check (a)" was true and carried no evidence. | **CLOSED** | `check_attack_isolation` installs a `SessionEnvironment` around every build and probe call and varies it, opening the three routes a real experiment leaks through; and the pass is evidenced **per row** rather than by a shared control. §7. |
+
+**What closing item 1 cost, stated because it is a published number that moved.** Both
+recipients must retain the same key, so the reserved *set* has to stay shared; dealing it
+between the links is what makes their check sets disjoint, and each link therefore publishes
+`check_count / 2` rounds instead of `check_count`. Every per-link interval is `√2` wider at a
+fixed `check_fraction`. Concretely, the one-link attribution claim of §4 needed its length
+doubled — at `L = 384, cf = 0.5` the two links' 99% QBER intervals are now disjoint on six
+session seeds in eight, where before they were disjoint on eight of eight. Nothing else moved:
+an honest run's records, verdicts and unchecked transcript are **byte-identical** to the
+pre-fix code at the same seed (§10).
 
 ---
 
@@ -216,12 +238,33 @@ reads above `2.83` (§9.5). Every published interval is recomputed from the *raw
 carried in the transcript — `estimate_qber(check_log_for(party, bit).qber)` returns the same
 numbers the run reported, which is what makes the estimate auditable rather than asserted.
 
-**Sizing.** `required_check_rounds` sizes the arm to resolve a shift of `2·s_a` at
-`L = 115200`. Below that, what a campaign can resolve has to be stated rather than assumed:
-at 192 pooled rounds a `p = 0.3` one-link attack is detected *and* attributed on the QBER arm
-(intervals disjoint at 99%); at 8000 rounds the 99% half-width is about `0.014` at a rate of
-`1/3` and `0.009` at `0.1`; and the CHSH arm needs the full-scale sample before it can
-attribute anything at all.
+**Sizing, and what the per-link deal costs.** `required_check_rounds` sizes the arm to
+resolve a shift of `2·s_a` at `L = 115200`. Below that, what a campaign can resolve has to be
+stated rather than assumed: at **192 QBER rounds per link** a `p = 0.3` one-link attack is
+detected *and* attributed (intervals disjoint at 99%, on 8 seeds of 8); at 8000 rounds the 99%
+half-width is about `0.014` at a rate of `1/3` and `0.009` at `0.1`; and the CHSH arm needs
+the full-scale sample before it can attribute anything at all.
+
+Those are statements about **rounds per link**, and the run that delivers a given number of
+them changed. Each link now measures `check_count / 2` reserved positions rather than all
+`check_count`, so a fixed `(L, check_fraction)` yields half the per-link sample it used to and
+every published half-width on that link grows by `√2`. Re-measured, one-link depolariser at
+`p = 0.3` on Bob, pooled over both message bits, adversary seed `999`, session seeds
+`2026 .. 2033`:
+
+| Run | QBER rounds per link | Bob's 99% interval, seed `2026` | Charlie's | Intervals disjoint |
+| --- | --- | --- | --- | --- |
+| `L = 384`, `cf = 0.5` — **before** the deal | 192 | `29/192 = 0.1510`, `[0.0962, 0.2292]` | `0/192`, `[0.0000, 0.0334]` | 8 of 8 seeds |
+| `L = 384`, `cf = 0.5` — **after** | 96 | `9/96 = 0.0938`, `[0.0414, 0.1986]` | `0/96`, `[0.0000, 0.0646]` | **6 of 8 seeds** |
+| `L = 768`, `cf = 0.5` — after, resampled to 192 | 192 | `34/192 = 0.1771`, `[0.1173, 0.2585]` | `0/192`, `[0.0000, 0.0334]` | 8 of 8 seeds |
+
+So attribution at `L = 384, cf = 0.5` is no longer reliable and is not claimed; the same
+attribution costs twice the reserved positions, which is what `CheckRoundBudget.reserved_fraction`
+exists to say out loud. `draw_check_plan(..., parties=None)` restores the shared full-sample
+plan for a deployment that would rather re-couple the links than pay it. The headline run is
+pinned to the digit by `test_a_one_link_channel_attack_is_attributable_from_the_check_logs`,
+which was itself moved from `L = 384` to `L = 768` for this reason; the seed sweep above is
+reproduced by re-running that experiment over `range(2026, 2034)`.
 
 Standalone check-round campaigns, 8000 rounds each. Intervals here are the attack suite's
 own 95% Wilson bounds (`attacks.statistics.wilson_bounds`, the default a measurement table
@@ -248,12 +291,15 @@ classical bound" has `0.59` of margin against a kept share, not `0.00`.
 `QDSSession` builds one `CheckLog` per `(party, message_bit)` inside `distribute()`, from the
 `_ChannelTap` wrapper, and only then calls the symmetriser — the `Symmetriser` signature only
 ever sees `RecipientRecord`s, so no code path hands a `CheckLog` to Phase A′. The smearing is
-confined to the records. One-link depolariser at `p = 0.3` on Bob, `L = 384`,
-`check_fraction = 0.5`, pooled over both bits:
+confined to the records. One-link depolariser at `p = 0.3` on Bob, `L = 768`,
+`check_fraction = 0.5`, session seed `433000`, pooled over both bits — the length is twice what
+this table used to quote, because each link now measures half the reserved set and 192 rounds
+per link is what the claim needs. These are the figures
+`test_a_one_link_channel_attack_is_attributable_from_the_check_logs` asserts:
 
 | Statistic | Bob | Charlie |
 | --- | --- | --- |
-| check-log QBER | `18/192 = 0.0938`, 99% `[0.0523, 0.1623]` | `0/192 = 0.0000`, 99% `[0.0000, 0.0334]` |
+| check-log QBER | `33/192 = 0.1719`, 99% `[0.1130, 0.2527]` | `0/192 = 0.0000`, 99% `[0.0000, 0.0334]` |
 | post-exchange record mismatch | smeared to ≈ `q/2` | smeared to ≈ `q/2`, on a link never touched |
 
 The two check-log intervals are disjoint at 99%, so **Phase 4 can name the compromised link**
@@ -263,12 +309,14 @@ The two check-log intervals are disjoint at 99%, so **Phase 4 can name the compr
   reports the average of two things and detects neither; here that pooling would voluntarily
   discard the only signal symmetrisation leaves standing. Per-party estimation should be the
   default and pooling the deliberate opt-in.
-* **Attribution is a sample-size property, not a free one.** At `L = 96` the same attack is
-  plainly detected on Bob's link and the two 99% intervals still *overlap*, so a detector
-  could not name the party. The CHSH arm cannot attribute at demo sizing at all — at
-  `p = 0.14` the shift in `S` is about `0.4` against a 99% half-width of about `0.37`.
-  `required_check_rounds` sizes the arm to resolve `2·s_a` at `L = 115200`; anything smaller
-  has to say what it can resolve.
+* **Attribution is a sample-size property, not a free one — and the per-link deal doubled
+  its price.** At `L = 96` the same attack is plainly detected on Bob's link and the two 99%
+  intervals still *overlap*, so a detector could not name the party; at `L = 384, cf = 0.5`
+  they now overlap on 2 seeds in 8, where before the deal they were disjoint on all 8. The
+  CHSH arm cannot attribute at demo sizing at all — at `p = 0.14` the shift in `S` is `2√2·p ≈
+  0.4`, against a 99% half-width of `0.36` at 320 CHSH rounds and `0.51` at 160, and 160 is
+  what a run delivering 320 before the deal delivers now. `required_check_rounds` sizes the
+  arm to resolve `2·s_a` at `L = 115200`; anything smaller has to say what it can resolve.
 
 ---
 
@@ -495,6 +543,39 @@ covered directly. The fourteenth is the deterministic recipient forger, whose de
 with nothing at all and so cannot be moved by a defect in whose randomness he was handed; that
 is the same fact the waiver rests on, and his randomised sibling is covered.
 
+### What a green row asserts now, which is more than it used to
+
+Two Phase 3 defects were repaired in parallel and they meet in this file, so the claim a row
+carries has to be restated rather than assumed unchanged.
+
+The other repair (§4) made every channel-side seam be called at **every** position. Before it,
+`payload_map` was invoked on key rounds only, so the set of occasions a payload adversary was
+offered moved with the session seed all by itself — and check (a), which varies exactly that
+seed, would have reported a flawless adversary as reading the session. The three payload rows
+therefore ran with `check_fraction = 0`: with no plan drawn, varying the session seed varied
+only the seed, and a green row said *this adversary does not read the session seed*.
+
+Both channel probes now run the same checked parameters (`key_length = 24`,
+`check_fraction = 0.25`), so across check (a)'s five calls the check plan is a different
+subset every time. A green row now says *this adversary does not read the session seed **and**
+its decisions do not move with the check plan* — and the second half is a property of the seam
+wiring rather than of the attack, which is why it is also asserted directly, in a form whose
+failure names the protocol:
+
+| Test | What it pins | Goes red when |
+| --- | --- | --- |
+| `test_the_channel_probes_vary_the_session_they_run` | the probe's session really moves with the seed, so the seven channel rows' second claim has content | a probe freezes its session |
+| `test_the_channel_rows_ride_on_the_seam_lockstep` | all three seams are offered every position of a checked run | `payload_map` or `channel_monitor` goes back to one branch |
+
+Two consequences worth stating because both are easy to get backwards. **`del session_seed` in
+a probe is correct and was never the defect** — what made check (a) inert was that nothing
+*else* offered the candidate a route to the session, and `check_attack_isolation` now installs
+the `SessionEnvironment` around every build and probe call, so the routes are open whatever a
+probe does with its argument. And **a probe that freezes its session no longer fails; it passes
+for less** — check (a) still catches a session-reading adversary, but the plan stops moving and
+the row silently drops half its claim. That is the one remaining way to weaken a row without
+turning anything red, and the first test above is what notices.
+
 ### The one waiver, and why it is not a loophole
 
 The optimal recipient forger is a **deterministic function of his view**. Declaring his own
@@ -544,10 +625,11 @@ through `signer_probe()` establishes that *that* probe's channel is live and say
 `starvation_probe()`, the two channel probes, or a probe added next year. Hence the per-row
 test above.
 
-### Two ways to write a probe that blames the adversary for your bug
+### Three ways to write a probe that does not say what you think it says
 
-Both were found the hard way, by different agents, and both report a flawless attack as a
-cheat. They are now documented in `isolation.py` under `:ref:`probe-traps``.
+All three were found the hard way, by different agents. They are documented in `isolation.py`
+under `:ref:`probe-traps``. Two report a flawless attack as a cheat; the third reports nothing
+at all, which is worse, because a green row is read as evidence.
 
 * **A distributor probe must return the adversary's own decision, never the seam's output.**
   The obvious probe returns the records — which are a function of the session's Alice-side
@@ -558,11 +640,20 @@ cheat. They are now documented in `isolation.py` under `:ref:`probe-traps``.
   consulted* moved with the seed even for a perfect adversary — and the same fact let any
   adversary holding the seam read the check set off the gaps in its own call sequence. The
   seam is now called on every position and its result discarded on a check round, so the probe
-  no longer needs the workaround and the leak is gone with it. `resource_factory` never had
-  the problem; `channel_monitor` had the mirror image of it and is fixed the same way.
+  no longer needs the workaround and the leak is gone with it; both payload rows now run
+  *with* check rounds, which is what makes them say something new. `resource_factory` never
+  had the problem; `channel_monitor` had the mirror image of it and is fixed the same way.
+* **A probe that freezes its session seed passes for less.** It does not fail: the
+  `SessionEnvironment` is installed by `check_attack_isolation`, not by the probe, so an
+  adversary reading the session is still caught. What is lost is the half of the claim that
+  needs the *check plan* to move. Measured: freezing the session inside the shared channel
+  probe helper left the whole isolation suite green before this was noticed, and turns
+  `test_the_channel_probes_vary_the_session_they_run` red now.
 
-The rule both are instances of: everything the adversary legitimately observes, *including the
-set of occasions on which it is consulted*, must be identical across probe calls.
+The rule the first two are instances of: everything the adversary legitimately observes,
+*including the set of occasions on which it is consulted*, must be identical across probe
+calls. The rule the third is an instance of: a probe must vary everything its row claims the
+adversary is independent of.
 
 ---
 
@@ -575,7 +666,7 @@ Everything here is reachable from `SessionTranscript` unless the last column say
 | `VerificationResult.rate` per verifier | `0.0` on an ideal channel | `1/2` outside forgery and partial impersonation; `1/12` forging recipient; `0.0` under **full** impersonation | yes |
 | `VerificationResult.matched_count` per verifier | `Binomial(L, 1/3)` | **unchanged** by every forgery and every impersonation scope; `2L/3` under recipient forgery | yes |
 | the **pair** `(matched fraction, rate)` | `(1/3, ~0)` | `(2/3, 1/12)` recipient forgery; `(1/3, 1/2)` outside forgery; `(1/3, ~0)` depolarising channel | yes |
-| per-link check QBER, `estimate_qber(check_log_for(party, bit).qber)` | `0.0000`, 99% `[0, 0.033]` at 192 rounds | `p/2` on the attacked link, `0.0000` on the other — **disjoint at 99%**, and this is the only statistic that both detects and attributes | yes |
+| per-link check QBER, `estimate_qber(check_log_for(party, bit).qber)` | `0.0000`, 99% `[0, 0.033]` at 192 rounds **per link** | `p/2` on the attacked link, `0.0000` on the other — **disjoint at 99% once each link carries 192 rounds**, and this is the only statistic that both detects and attributes. A link now measures `check_count / 2` reserved positions, so read the round count and not the key length (§4) | yes |
 | per-link CHSH, `estimate_chsh` | `2.8284` | `(1−p)·2.8284` twirl; `0.9428` intercept-resend; `1.4142` Z-axis kept share | yes |
 | `ChannelSample.purity` | `1.00` | `0.50` for a kept share **only** — the one statistic separating it from intercept-resend, which no correlator can do at any sample size | yes |
 | `ChannelSample.concurrence` | `1.00` | `0.00` for both collapse attacks; blind to the twirl | yes |
@@ -645,9 +736,11 @@ Three requests could not be made reachable, and each is a design fact rather tha
    channel adversaries act on one leg and leave it `True` on every round. It is a detector for
    damping or replacement — its docstring's worked example is a split product state — and its
    docstring now says so.
-4. **CHSH cannot attribute at demo check sizing.** `dS` is only about `0.4` at `p = 0.14`
-   against a 99% half-width of about `0.37`. A sample-size fact, but any Phase 4 attribution
-   built on CHSH needs the full-scale sample and must say so.
+4. **CHSH cannot attribute at demo check sizing.** `dS = 2√2·p` is only about `0.4` at
+   `p = 0.14`, against a 99% half-width of `0.36` at 320 CHSH rounds and `0.51` at 160. A
+   sample-size fact, but any Phase 4 attribution built on CHSH needs the full-scale sample and
+   must say so — and the per-link deal (§4) halved the rounds a given run puts on each link,
+   so the number to compare against is the one at half the rounds you used to get.
 5. **Measured CHSH routinely lands above Tsirelson at demo sample sizes** — `3.0425` on a clean
    link over 480 rounds, `2.8410` over 8000. `estimate_chsh` clips only at the algebraic bound,
    which is right, but a Phase 6 dashboard rendering `S = 3.04` next to `ideal 2.83` will read
@@ -673,6 +766,16 @@ Three requests could not be made reachable, and each is a design fact rather tha
    choosing. A deployment running Phase C′ simultaneously would force a blind commit. The
    advantage only ever helps the adversary, so the measured attack is the conservative one —
    but the simultaneous variant is a different experiment and is not measured here.
+10. **Making the check set uninferable cost half the per-link sample, and that is forced.**
+    Both links must retain the same key, so the reserved *set* has to be shared or the two
+    records stop indexing the same positions and `params.signing_length` stops being a
+    constant. Two independently drawn full-size plans would make `|union|` hypergeometric and
+    the signing length random. What is left is one reserved set **dealt** between the links,
+    so each publishes `check_count / 2` rounds and every per-link interval widens by `√2`
+    (§4). The trade is real and is not hidden: `CheckRoundBudget.reserved_fraction` is the
+    number a deployment sets, and `draw_check_plan(..., parties=None)` is a documented way
+    back to the coupled full-sample plan for anyone who prefers the old arithmetic to the
+    second line of defence.
 
 ### One reported disagreement, resolved
 
@@ -698,16 +801,30 @@ was the protocol gap of §2b, and it is now measured and agrees.
 ## 10. Mutation checks
 
 A defence with no test that fails when it is removed is not tested. Each mutation switches one
-defence off surgically, runs its tests, and restores the file from a scratchpad copy.
+defence off surgically and runs the tests. The last five were applied to **copies** of the tree
+in a scratchpad and run there, so no mutation ever existed in the repository; the first three
+were applied in place and each site verified byte-identical afterwards.
 
 | Defence disabled | Mutation | Result |
 | --- | --- | --- |
 | the consumed-records ledger | `verify()` no longer consults `ledger.is_spent(record)` | **RED** — 12 failures across `test_protocol_replay.py` (5) and `test_attack_replay.py` (7), including `test_after_a_captured_signature_is_refused_every_time_it_is_re_presented` and `test_a_rejection_spends_the_round_and_this_is_the_denial_of_service_price` |
 | the declaration binding | `_evidence_refusal` no longer compares the counterpart's digest with the scored declaration's | **RED** — 4 failures, and *only* those four: `test_a_count_against_another_declaration_is_refused_not_pooled`, `test_a_hop_that_alters_the_declaration_stops_the_pooled_floor_passing`, `test_a_seam_that_drops_the_binding_reaches_no_verdict`, and `test_the_shipped_ordering_denies_the_transfer_instead_of_detecting_it`. Honest runs are untouched, which is what a fail-*open* mutation should look like |
 | check (a) of the isolation check | `IsolationReport.reads_the_session` returns `False` | **RED** — 24 failures, including every negative control and all thirteen rows of `test_the_session_channel_is_live_on_every_row`. The same mutation applied to a clean checkout of the pre-audit code costs **7** (this document previously said 6, which was wrong; the 7 are all controls) |
-| the channel check (a) reaches the candidate by | `observe()` no longer installs the `SessionEnvironment` | **RED** — 18 failures, and this is the shape of the original defect reproduced on demand: every shipped negative control still passes, because each reads the seed through the builder, and only the per-row channel evidence goes red |
+| the channel check (a) reaches the candidate by | `observe()` no longer installs the `SessionEnvironment` | **RED** — 18 failures over `test_phase3_isolation_suite.py` and `test_attack_isolation.py`, and this is the shape of the original defect reproduced on demand: every shipped negative control still passes, because each reads the seed through the builder, and only the per-row channel evidence goes red |
+| the payload seam's every-position call | `_map_payload` moved back inside the key-round branch of `distribute_to_recipient_with_checks` | **RED** — 10 failures on the *whole* suite and only those ten. `test_no_seam_narrows_the_check_set_below_the_prior`, `test_the_factory_cannot_tell_a_check_round_from_a_key_round`, `test_one_seed_still_reproduces_a_checked_run_byte_for_byte`, `test_the_payload_seam_sees_every_position_and_locates_no_check_round`, two doctests, **and four in the isolation suite**: the three `*/payload` rows fail check (a) and `test_the_channel_rows_ride_on_the_seam_lockstep` fails beside them saying whose fault that is. Re-measured under the mutation, the gaps in the seam's call sequence name this link's check rounds again, 12 of 12 at `L = 96`, precision `1.0000` |
+| the channel monitor's every-position call | `_ChannelTap.__call__` invokes the seam only where it records a sample | **RED** — 6 failures on the *whole* suite and only those six, including `test_the_channel_monitor_is_called_on_every_position` and `test_an_observing_seam_changes_the_call_count_and_nothing_else`. Exactly one of them is in the isolation suite, because no adversary row mounts on the monitor — which is why the lockstep assertion has to exist beside the rows and not only inside them |
+| the per-link deal | `draw_check_plan`'s `parties` defaults back to `None`, so both links run the same plan | **RED** — 12 failures over the six seam files and the three protocol modules' doctests, including `test_the_two_links_do_not_watch_the_same_positions` and `test_retained_positions_are_bit_identical_to_an_unchecked_run` |
+| **the payload seam and the per-link deal, together** | the payload-seam mutation and the per-link-deal mutation applied to one copy | **RED**, and this is the row that says why there are two defences. Neither single reversion brings the spare-the-watched exploit back — with the deal in force, the positions the payload seam offers on Bob's link already cover Charlie's whole check set; with the seam offering everything, there is nothing to spare. Reverted together, `test_sparing_the_watched_no_longer_separates_published_from_real` fails with the audit's own shape: published QBER `0.0000` on the spared arm against `0.3333` naive, over a key damaged identically in both |
+| the session a channel isolation probe runs | `_channel_session` deletes its `session_seed` and pins `rng=default_rng(4242)` | **RED** — 1 failure, `test_the_channel_probes_vary_the_session_they_run`. It earns a row because **before the two fixes were reconciled the same mutation left the whole suite green**: it is the third probe trap of §7, and the one that costs a row half its meaning without turning anything red |
 
-All four sites verified byte-identical to their originals afterwards.
+The honest path is the other half of a mutation check and is asserted the same way. An honest
+`check_fraction = 0` run at one seed produces a transcript whose SHA-256 is
+`43ea5cea…6660b`, measured on the code *before* these changes and pinned by
+`test_an_unchecked_honest_run_is_byte_identical_to_the_pre_fix_code`. A checked honest run's
+records, verdicts and check *plans* are unchanged too; what differs is only the published check
+logs, where each link now carries half the reserved positions — and every observation that
+survives has the value it had before, position for position, which is the variate-budget
+argument made concrete rather than asserted.
 
 ---
 
@@ -722,8 +839,14 @@ no state-vector representation, so the convention is load-bearing rather than st
 asymmetric collapse tensors.
 
 **D3 — injected generators throughout.** Every adversary takes its own
-`numpy.random.Generator`; no module reaches for global `numpy.random` or stdlib `random`, and
-an adversary that does is now caught by check (a) rather than merely asked not to. The
+`numpy.random.Generator`; no module *draws* from global `numpy.random` or stdlib `random`, and
+an adversary that does is now caught by check (a) rather than merely asked not to. One module
+**writes** them, deliberately: `isolation.session_environment` seeds both ambient streams from
+the session seed for the duration of a probe call and restores the exact prior states in a
+`finally`, so that a candidate drawing there is drawing from something the session seed
+controls. That is the opposite of a D3 violation — it is D3 made detectable — but it will look
+wrong to a reader skimming for global randomness, so it is written down here. It is not
+thread-safe and says so; nesting is, and is pinned by a test. The
 `measure_*` functions take the world's generator and the adversary's separately and **refuse
 the same *stream* for both** — the same object, the same position in one stream, or two
 generators built from one seed, which is one stream byte for byte and is the form the mistake
@@ -754,11 +877,11 @@ one the whole phase's arithmetic rests on.
 | one `L = 60` session with a forwarding attack | ~0.12 s |
 | one `L = 192` session | ~0.36 s |
 | one standalone check round | ~0.3 ms |
-| `tests/test_phase3_integration.py` | 40 tests, **~3 min 40 s** |
-| `tests/test_phase3_isolation_suite.py` | 50 tests, **16 s** |
-| `tests/test_attack_isolation.py` | 48 tests, **3 s** |
+| `tests/test_phase3_integration.py` | 40 tests, **~3 min 38 s** |
+| `tests/test_phase3_isolation_suite.py` | 52 tests, **14 s** |
+| `tests/test_attack_isolation.py` | 49 tests, **3 s** |
 | one `DEFAULT_PARAMS` session | minutes — out of reach for any repeated-trials measurement |
-| the **whole suite** (`python -m pytest`) | **2166 passed in 765.56s (0:12:45)** |
+| the **whole suite** (`python -m pytest`) | **2169 passed in 749.94s (0:12:29)** |
 
 The heavy shipped tables (800 impersonation sessions at `L = 192`, 8 minutes; 2000 outside
 forgeries at `L = 30`) are **not** in the unit suite. What is in the suite is a smaller live
