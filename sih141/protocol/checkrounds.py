@@ -3204,7 +3204,30 @@ def _wilson_interval(
     Returns
     -------
     tuple of float
-        ``(low, high)``, clipped to ``[0, 1]``.
+        ``(low, high)``, clipped to ``[0, 1]``, and **exact** at the two
+        endpoints -- see the note.
+
+    Notes
+    -----
+    The endpoints are clamped **by case** rather than by ``max``/``min``, and
+    that is not cosmetic. At ``errors == 0`` the Wilson centre and spread are
+    equal in exact arithmetic, so ``centre - spread`` is zero mathematically
+    but evaluates to floating-point dust in IEEE 754 --
+    ``6.938893903907228e-18`` over a clean 50-round sample -- and
+    ``max(0.0, ...)`` happily returns the dust, because the dust is positive.
+    The mirror case at ``errors == rounds`` gives a high endpoint a hair
+    under ``1``.
+
+    That lands on exactly the numbers a reader most needs to read plainly:
+    every defended result in this project is ``0`` successes out of ``N``, so
+    the interval a Phase 4 or Phase 5 table quotes for a clean link is the one
+    the dust appears in. The same bug was found and removed from
+    :mod:`sih141.attacks.statistics` in Phase 3; this copy was not part of that
+    consolidation and kept it until Phase 4.
+    :func:`sih141.detect.statistics.wilson_interval` clamps the same way, and
+    ``tests/test_detect_reconciliation.py`` pins the two implementations
+    against each other to the bit at both endpoints so they cannot drift apart
+    again.
     """
     z = _two_sided_z(confidence)
     z_squared = z * z
@@ -3217,7 +3240,9 @@ def _wilson_interval(
             errors * (rounds - errors) / rounds + z_squared / 4.0
         )
     )
-    return max(0.0, centre - spread), min(1.0, centre + spread)
+    low = 0.0 if errors == 0 else max(0.0, centre - spread)
+    high = 1.0 if errors == rounds else min(1.0, centre + spread)
+    return low, high
 
 
 def _hoeffding_rate_interval(

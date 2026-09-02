@@ -164,10 +164,11 @@ so ``{evidence >= 1}`` is contained in ``E_B ∪ E_C ∪ E_M`` and
 
     P[ evidence >= 1 ] <= P[E_B] + P[E_C] + P[E_M]          (union bound)
 
-**Three terms, not two.** :attr:`~sih141.detect.statistics.AbortStatistics.honest_bound`
-in the layer below reports ``2 * eps0``; the run-level union is over three
-events, and :mod:`sih141.protocol.verify` derives ``3 eps`` itself. See
-:ref:`findings` -- this module computes its own and does not read that field.
+**Three terms, not two.** The layer below used to report ``2 * eps0`` for this
+event, which is smaller than the union bound its own derivation supports. It
+now computes the same quantity this section derives, and the two share one
+implementation (:func:`~sih141.detect.statistics.floor_shortfall_bound`), so a
+run cannot be handed two different bounds for one event. See :ref:`findings`.
 
 Each term, in closed form. :func:`~sih141.protocol.verify.minimum_matched_count`
 sets ``m_min = max(1, ceil((1 - d0) mu))`` with ``d0 = sqrt(2 ln(1/eps0) / mu)``
@@ -331,21 +332,27 @@ discouraged.
 
 Findings, reported rather than worked around
 ----------------------------------------------
-1. **The layer below understates a proven bound.**
-   :attr:`sih141.detect.statistics.AbortStatistics.honest_bound` is
-   ``2 * HONEST_ABORT_BUDGET``, described as the run-level bound on
+1. **The layer below understated a proven bound. FIXED in the Phase 4
+   reconciliation; kept here because the shape of the mistake is worth
+   remembering.** :attr:`sih141.detect.statistics.AbortStatistics.honest_bound`
+   was ``2 * HONEST_ABORT_BUDGET``, described as the run-level bound on
    ``evidence > 0``. The run-level union is over **three** events -- both
    per-verifier floors and the pooled floor -- and
    :mod:`sih141.protocol.verify` derives ``3 eps`` for exactly that reason, with
    ``tests/test_protocol_reconciliation.py`` asserting ``<= 3 * eps``. ``2 eps``
-   is smaller than the union bound its own derivation supports, so it is not
-   proven. This module computes :func:`evidence_abort_bound` itself and never
-   reads that field; ``test_detect_structural.py`` pins the divergence so it
-   cannot be fixed silently or forgotten quietly.
-2. **The same field is a constant where the truth is a function of ``n``.** At
+   was smaller than the union bound its own derivation supports, so it was not
+   proven -- and being a *constant* it was also wrong at the short end, where
+   the truth is ``1.19e-04`` at ``n = 24``. The repair was not ``2.0 -> 3.0``
+   but the function of ``n`` this section derives. This module computes
+   :func:`evidence_abort_bound` itself and never
+   reads that field; ``test_detect_structural.py`` now pins the **agreement**,
+   and ``test_detect_reconciliation.py`` pins that the two are one
+   implementation.
+2. **The same field was a constant where the truth is a function of ``n``**
+   -- the other half of finding 1, and the half that decided the repair. At
    ``n = 96`` both floors are ``1``, the only reachable evidence reason is an
    empty matched set, and the honest probability is ``2.49e-17`` -- *above*
-   ``2 * eps0``, so the constant is optimistic there too. At ``n = 24`` it is
+   ``2 * eps0``, so the constant was optimistic there too. At ``n = 24`` it is
    ``1.19e-04``. A detector that fires on an abort at a demonstration key length
    is not making a ``2**-64`` claim, and :func:`evidence_abort_threshold`
    withholds itself rather than letting one be made.
@@ -430,6 +437,7 @@ from sih141.detect.statistics import (
     STRUCTURAL_ABORT_REASONS,
     TranscriptStatistics,
     chernoff_deviation_bound,
+    floor_shortfall_bound,
 )
 from sih141.protocol.analysis import matched_shortfall_probability
 from sih141.protocol.params import DEFAULT_BASES, Party, ProtocolParams
@@ -1382,19 +1390,13 @@ def _floor_bound(
             ProtocolParams(key_length=trials, bases=bases),
             minimum_matched=max(1, floor),
         )
-    candidates: list[float] = []
-    if floor <= 1:
-        # The event is {count == 0}, whose probability is exact and needs no
-        # inequality. Available whenever the floor degenerates -- and it is
-        # sometimes far tighter than the Chernoff term even when both apply.
-        candidates.append((1.0 - probability) ** trials)
-    if 2.0 * _LOG_FLOOR_BUDGET < trials * probability:
-        # The regime minimum_matched_count derived the floor in: the Chernoff
-        # lower tail at the budget it was calibrated to, which is exactly eps0.
-        candidates.append(HONEST_ABORT_BUDGET)
-    if not candidates:
-        return 1.0
-    return min(candidates)
+    # The inequality path is NOT reimplemented here. It lives one layer down,
+    # in sih141.detect.statistics.floor_shortfall_bound, and both this family
+    # and AbortStatistics.honest_bound call it -- so a run cannot be handed two
+    # different bounds for one event by two modules that were written apart.
+    # Consolidated in the Phase 4 reconciliation; the two regimes and why the
+    # third answer is 1.0 rather than eps0 are documented there.
+    return floor_shortfall_bound(trials, probability, floor)
 
 
 def evidence_abort_bound(
@@ -1443,11 +1445,12 @@ def evidence_abort_bound(
 
     Notes
     -----
-    **Three terms, not two.**
-    :attr:`sih141.detect.statistics.AbortStatistics.honest_bound` reports
-    ``2 * eps0`` for the same event; the union is over both per-verifier floors
-    *and* the pooled floor, and :mod:`sih141.protocol.verify` derives ``3 eps``
-    for exactly that reason. See :ref:`finding 1 <findings>`.
+    **Three terms, not two.** The union is over both per-verifier floors *and*
+    the pooled floor, and :mod:`sih141.protocol.verify` derives ``3 eps`` for
+    exactly that reason.
+    :attr:`sih141.detect.statistics.AbortStatistics.honest_bound` reported
+    ``2 * eps0`` for the same event until the Phase 4 reconciliation; the two
+    now agree by construction. See :ref:`finding 1 <findings>`.
 
     The value is **not monotone in ``n``**, because an exact term is replaced by
     a much looser Chernoff term each time a floor starts to bite. It steps up at

@@ -346,6 +346,8 @@ __all__ = [
     "TranscriptStatistics",
     "VerifierStatistics",
     "chernoff_deviation_bound",
+    "evidence_abort_probability_bound",
+    "floor_shortfall_bound",
     "pooled_check_qber",
     "why_wings_agree_is_absent",
     "wilson_interval",
@@ -564,20 +566,20 @@ def wilson_interval(
     the protocol's. If a future phase promotes the arithmetic to a neutral
     module, all three should delegate to it.
 
-    They agree bit for bit **off the endpoints**, and deliberately differ at
-    one of them. At zero successes the Wilson lower bound is the difference of
-    two expressions that are equal in exact arithmetic and differ by about
-    ``1e-18`` in IEEE 754, so a ``max(0.0, centre - spread)`` returns
-    ``6.9e-18`` rather than ``0.0`` for some ``n``. This copy clamps *by case*
-    and returns the exact ``0.0``;
-    :func:`~sih141.protocol.checkrounds.estimate_qber` still clamps by
-    ``max``/``min`` and carries the dust, which is visible as
-    ``estimate_qber(clean).interval.low == 6.938893903907228e-18`` at ``n =
-    50``. Every defended result in this project is ``0`` successes out of
-    ``N``, so the difference lands on exactly the numbers a reader most needs
-    to be able to read plainly. Reported rather than worked around: the fix
-    belongs in :mod:`sih141.protocol.checkrounds`, which this module does not
-    own.
+    They now agree bit for bit, endpoints included, and the endpoints are the
+    part that had to be fixed rather than documented. At zero successes the
+    Wilson lower bound is the difference of two expressions that are equal in
+    exact arithmetic and differ by about ``1e-18`` in IEEE 754, so a
+    ``max(0.0, centre - spread)`` returns ``6.938893903907228e-18`` rather than
+    ``0.0`` for some ``n``. Both copies clamp *by case* and return the exact
+    ``0.0``. Every defended result in this project is ``0`` successes out of
+    ``N``, so that endpoint is the one a published table quotes.
+
+    When this module was written the protocol's copy still carried the dust and
+    the divergence was pinned by a test rather than fixed, because the fix
+    belonged to a module this layer does not own. The Phase 4 reconciliation
+    made it, and ``tests/test_detect_reconciliation.py`` now pins the two
+    against each other at both endpoints over a grid of sample sizes.
 
     Examples
     --------
@@ -640,6 +642,184 @@ def wilson_interval(
 
 #: The three sides :func:`chernoff_deviation_bound` will bound.
 _SIDES: Final[frozenset[str]] = frozenset({"two-sided", "lower", "upper"})
+
+_LOG_FLOOR_BUDGET: Final[float] = math.log(1.0 / HONEST_ABORT_BUDGET)
+"""``ln(1/eps0)`` with ``eps0 = 2**-64``, the budget both matched-count floors
+were derived at. Named because it appears in the applicability test of
+:func:`floor_shortfall_bound` as well as in the deviation itself."""
+
+
+def evidence_abort_probability_bound(
+    params: ProtocolParams, *, counts_exchanged: bool = True
+) -> float:
+    """Bound P(an honest run records an evidence abort), as a function of ``n``.
+
+    **This replaces a constant that was not proven.** The field it feeds,
+    :attr:`AbortStatistics.honest_bound`, used to be the fixed
+    ``2 * HONEST_ABORT_BUDGET``. That was wrong in both directions. The
+    run-level union is over **three** events, not two -- both per-verifier
+    floors *and* the pooled floor -- and
+    :mod:`sih141.protocol.verify` derives ``3 * eps0`` itself, with
+    ``tests/test_protocol_reconciliation.py`` asserting ``<= 3 * eps``. So two
+    terms was smaller than the union bound its own derivation supports, i.e.
+    optimistic. And a constant is wrong at the short end regardless: at
+    ``n = 24`` the honest probability is ``1.19e-04``, five thousand million
+    million times larger than ``2 * 2**-64``.
+
+    The derivation, which is the one
+    :func:`~sih141.protocol.verify.minimum_matched_count` already made and is
+    reused rather than restated. Write ``n`` for the sifted key length,
+    ``p = 1/|B|``, and let ``m_min`` and ``M_min`` be the two floors. An
+    evidence abort implies one of
+
+    .. code-block:: text
+
+        E_B = {m_B < m_min},  E_C = {m_C < m_min},  E_M = {M < M_min}
+
+    with ``m_B, m_C ~ Binomial(n, p)`` and ``M ~ Binomial(2n, p)`` -- the last
+    exactly, by conservation of the pooled count under the symmetrisation
+    coins rather than by independence. The union bound gives
+
+    .. code-block:: text
+
+        P(evidence > 0)  <=  2 b(n, m_min) + b(2n, M_min)
+
+    and each term is answered in one of two exact regimes:
+
+    * **floor > 1.** Since ``ceil(x) - 1 < x``, ``{m < m_min}`` is contained in
+      ``{m <= (1 - d0) mu}`` with ``d0 = sqrt(2 ln(1/eps0) / mu)``, so the
+      multiplicative Chernoff lower tail gives ``exp(-d0^2 mu / 2) = eps0``
+      exactly -- the same inequality at the same budget the floor was derived
+      from.
+    * **floor == 1.** The event is ``{m = 0}``, whose probability is exactly
+      ``(1 - p)**n``. No inequality is needed, and the smaller of the two is
+      taken wherever both apply.
+
+    Without the count exchange there is no pooled floor and the third term is
+    dropped.
+
+    Parameters
+    ----------
+    params : ProtocolParams
+        The run's **sifted** parameter set -- ``TranscriptStatistics.params``,
+        never the nominal one. A null stated over ``L`` where the truth is
+        ``n`` claims more evidence than the run has.
+    counts_exchanged : bool, optional
+        Keyword-only. ``False`` drops the pooled term for a run that did not
+        exchange counts.
+
+    Returns
+    -------
+    float
+        The bound, in ``[0, 1]``.
+
+    See Also
+    --------
+    sih141.detect.thresholds_structural.evidence_abort_bound : The threshold
+        family's own copy, which computes the same quantity for its own use and
+        never reads this field. The two are pinned against each other in
+        ``tests/test_detect_reconciliation.py``.
+
+    Examples
+    --------
+    Not monotone in ``n``, and that is the derivation showing through: each
+    time a floor stops being ``1`` an exact term is replaced by the looser
+    Chernoff one.
+
+    >>> from sih141.detect.statistics import evidence_abort_probability_bound
+    >>> from sih141.protocol.params import ProtocolParams
+    >>> for length in (24, 96, 136, 137, 273, 115200):
+    ...     bound = evidence_abort_probability_bound(
+    ...         ProtocolParams(key_length=length))
+    ...     print(f"{length:6d}  {bound:.4e}")
+        24  1.1881e-04
+        96  2.4904e-17
+       136  2.2523e-24
+       137  5.4212e-20
+       273  1.6263e-19
+    115200  1.6263e-19
+
+    It settles on three times the floors' own budget, never two:
+
+    >>> from sih141.protocol.params import DEFAULT_PARAMS
+    >>> evidence_abort_probability_bound(DEFAULT_PARAMS) == 3 * 2.0 ** -64
+    True
+    >>> evidence_abort_probability_bound(
+    ...     DEFAULT_PARAMS, counts_exchanged=False) == 2 * 2.0 ** -64
+    True
+    """
+    length = int(params.key_length)
+    probability = float(params.match_probability)
+    bound = 2.0 * floor_shortfall_bound(
+        length, probability, minimum_matched_count(params)
+    )
+    if counts_exchanged:
+        bound += floor_shortfall_bound(
+            2 * length, probability, minimum_pooled_matched_count(params)
+        )
+    return min(1.0, bound)
+
+
+def floor_shortfall_bound(trials: int, probability: float, floor: int) -> float:
+    """Bound ``P(Binomial(trials, probability) < floor)`` in its two exact regimes.
+
+    The per-floor term of :func:`evidence_abort_probability_bound`, and the one
+    implementation of it in the tree: the structural threshold family's
+    ``_floor_bound`` delegates here for its inequality path rather than keeping
+    a second copy, so the two cannot report different bounds for one run.
+
+    Two regimes, and the tighter of the two wherever both apply:
+
+    * ``floor <= 1`` -- the event is ``{count == 0}`` and its probability is
+      exactly ``(1 - probability) ** trials``. No inequality is needed, and it
+      is sometimes far tighter than the Chernoff term: at ``trials = 267`` the
+      floor is still ``1`` while Chernoff already applies, and ``(2/3)**267``
+      is ``9.6302e-48`` against ``eps0 = 5.4210e-20``.
+    * ``2 ln(1/eps0) < trials * probability`` -- the regime
+      :func:`~sih141.protocol.verify.minimum_matched_count` derived the floor
+      in. Since ``ceil(x) - 1 < x``, the event is contained in
+      ``{count <= (1 - d0) mu}`` with ``d0 = sqrt(2 ln(1/eps0) / mu)``, and the
+      multiplicative Chernoff lower tail ``exp(-d0^2 mu / 2)`` is exactly
+      ``eps0``.
+
+    When neither applies the honest answer is ``1.0``: the sample is too small
+    for the Chernoff form to have any power and the floor is too high for the
+    event to be ``{count == 0}``, so nothing better than the trivial bound has
+    been proven. Returning ``eps0`` there would be asserting a bound rather
+    than proving one, which is the whole failure mode D7 exists to prevent.
+
+    Parameters
+    ----------
+    trials : int
+        ``n`` for a per-verifier floor, ``2n`` for the pooled one.
+    probability : float
+        ``p = 1/|B|``.
+    floor : int
+        The floor as the protocol derives it.
+
+    Returns
+    -------
+    float
+        The bound, in ``[0, 1]``.
+
+    Examples
+    --------
+    >>> from sih141.detect.statistics import floor_shortfall_bound
+    >>> f"{floor_shortfall_bound(115200, 1 / 3, 36555):.4e}"
+    '5.4210e-20'
+    >>> f"{floor_shortfall_bound(267, 1 / 3, 1):.4e}"
+    '9.6302e-48'
+    >>> floor_shortfall_bound(24, 1 / 3, 3)
+    1.0
+    """
+    candidates: list[float] = []
+    if floor <= 1:
+        candidates.append((1.0 - probability) ** trials)
+    if 2.0 * _LOG_FLOOR_BUDGET < trials * probability:
+        candidates.append(HONEST_ABORT_BUDGET)
+    if not candidates:
+        return 1.0
+    return min(candidates)
 
 
 def chernoff_deviation_bound(
@@ -1750,21 +1930,43 @@ class AbortStatistics:
         lower tail at :data:`~sih141.protocol.verify.HONEST_ABORT_BUDGET`, so
         an honest verifier trips one with probability at most ``2**-64`` and an
         honest run with probability at most :attr:`honest_bound`.
-    honest_bound : float
-        ``2 * HONEST_ABORT_BUDGET``, the run-level bound on
-        ``evidence > 0`` under the honest null.
+    honest_bound : float or None
+        The run-level bound on ``evidence > 0`` under the honest null,
+        **computed from this run's own sifted parameters**, or ``None`` when no
+        parameter set was supplied and the bound therefore cannot be stated.
+        See :func:`evidence_abort_probability_bound` for the derivation and for
+        what this field used to be.
     shortfalls : mapping of str to int
         Each refusing party's distance below whichever floor it failed, as the
         run recorded it. ``0`` for the structural reasons, which name no floor.
 
     Examples
     --------
+    An abort tally with no parameter set behind it states no bound, because the
+    bound is a function of the key length and there is no honest number to put
+    there:
+
     >>> from sih141.detect.statistics import AbortStatistics
     >>> empty = AbortStatistics.empty()
     >>> empty.total, empty.structural, empty.evidence
     (0, 0, 0)
-    >>> f"{empty.honest_bound:.3e}"
-    '1.084e-19'
+    >>> empty.honest_bound is None
+    True
+
+    Given the parameters it is a function of ``n``, and it is not monotone in
+    it -- an exact ``(1 - p)**n`` term is replaced by the looser Chernoff term
+    each time a floor starts to bite:
+
+    >>> from sih141.protocol.params import ProtocolParams
+    >>> for length in (24, 96, 273, 115200):
+    ...     bound = AbortStatistics.empty(
+    ...         ProtocolParams(key_length=length)
+    ...     ).honest_bound
+    ...     print(f"n = {length:6d}   {bound:.4e}")
+    n =     24   1.1881e-04
+    n =     96   2.4904e-17
+    n =    273   1.6263e-19
+    n = 115200   1.6263e-19
     """
 
     total: int
@@ -1772,12 +1974,19 @@ class AbortStatistics:
     by_party: Mapping[str, str]
     structural: int
     evidence: int
-    honest_bound: float
+    honest_bound: float | None
     shortfalls: Mapping[str, int]
 
     @classmethod
-    def empty(cls) -> AbortStatistics:
+    def empty(cls, params: ProtocolParams | None = None) -> AbortStatistics:
         """Return the statistics of a run in which nobody refused to score.
+
+        Parameters
+        ----------
+        params : ProtocolParams or None, optional
+            The run's **sifted** parameter set, used only to state
+            :attr:`honest_bound`. ``None`` leaves that bound unstated rather
+            than guessing one, because it is a function of the key length.
 
         Returns
         -------
@@ -1789,7 +1998,11 @@ class AbortStatistics:
             by_party={},
             structural=0,
             evidence=0,
-            honest_bound=2.0 * HONEST_ABORT_BUDGET,
+            honest_bound=(
+                None
+                if params is None
+                else evidence_abort_probability_bound(params)
+            ),
             shortfalls={},
         )
 
@@ -2645,7 +2858,13 @@ class TranscriptStatistics:
             by_party=by_party,
             structural=structural,
             evidence=evidence,
-            honest_bound=2.0 * HONEST_ABORT_BUDGET,
+            # From THIS run's own sifted parameters and THIS run's own
+            # configuration, never a constant: the bound is a function of n
+            # (see evidence_abort_probability_bound), and a run that did not
+            # exchange counts has no pooled floor and so no third term.
+            honest_bound=evidence_abort_probability_bound(
+                scored, counts_exchanged=transcript.counts_exchanged
+            ),
             shortfalls=shortfalls,
         )
 

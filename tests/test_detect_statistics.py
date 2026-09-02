@@ -78,6 +78,7 @@ from sih141.detect.statistics import (
     CountStatistic,
     TranscriptStatistics,
     chernoff_deviation_bound,
+    evidence_abort_probability_bound,
     pooled_check_qber,
     why_wings_agree_is_absent,
     wilson_interval,
@@ -470,27 +471,26 @@ def test_the_wilson_endpoints_are_exact_not_merely_small():
     assert wilson_interval(8000, 8000).high == 1.0
 
 
-def test_the_protocols_own_wilson_still_carries_the_float_dust():
-    """A finding, pinned so it cannot be fixed silently or forgotten quietly.
+def test_the_protocols_own_wilson_no_longer_carries_the_float_dust():
+    """The finding this test used to pin open is now closed. Kept as the pin.
 
     :mod:`sih141.attacks.statistics` was written because four copies of this
     interval had drifted and two carried this exact bug. The copy inside
     :func:`~sih141.protocol.checkrounds.estimate_qber` was not part of that
-    consolidation and still clamps with ``max``/``min``, so at zero errors its
-    lower endpoint is ``6.9e-18`` rather than ``0.0`` for some sample sizes.
-    Nothing in this phase can fix it -- the module belongs to the protocol
-    layer -- so the divergence is asserted rather than hidden, and this test
-    will fail loudly on the day somebody does fix it.
+    consolidation and clamped with ``max``/``min``, so at zero errors its lower
+    endpoint was ``6.938893903907228e-18`` rather than ``0.0``. This test
+    formerly asserted that divergence, so that it could not be fixed silently
+    or forgotten quietly; the Phase 4 reconciliation fixed it, and the test now
+    asserts the agreement instead.
+
+    It is worth keeping in this direction rather than deleting, because every
+    defended result in this project is ``0`` successes out of ``N`` -- so the
+    endpoint this covers is the one a published table quotes.
     """
     clean = [QberObservation(index, PauliBasis.Z, 1, 1) for index in range(50)]
-    protocol_low = estimate_qber(clean).interval.low
-    assert protocol_low == 6.938893903907228e-18
+    assert estimate_qber(clean).interval.low == 0.0
     assert wilson_interval(0, 50).low == 0.0
-    assert protocol_low > wilson_interval(0, 50).low
-    assert protocol_low < 1e-16, (
-        "the divergence is floating-point dust and nothing more; a larger gap "
-        "would mean the two closed forms had genuinely drifted apart"
-    )
+    assert estimate_qber(clean).interval.low == wilson_interval(0, 50).low
 
 
 def test_the_wilson_quantile_is_the_projects_own():
@@ -934,14 +934,51 @@ def test_a_starved_run_shows_the_gap_between_wire_and_log():
     assert declared.lower_tail_bound < declared.tail_bound
 
 
-def test_the_honest_abort_bound_is_the_derived_one():
-    """``2 * 2**-64``, from the floors' own Chernoff derivation."""
+def test_the_honest_abort_bound_is_a_function_of_n_and_not_a_constant():
+    """It used to be ``2 * 2**-64``. That was wrong in both directions.
+
+    The run-level union is over **three** events -- both per-verifier floors
+    *and* the pooled floor -- and :mod:`sih141.protocol.verify` derives
+    ``3 eps`` itself, so two terms was smaller than the union bound its own
+    derivation supports, i.e. **optimistic**. And a constant is wrong at the
+    short end regardless: at ``n = 24`` an honest evidence abort has
+    probability ``1.19e-04``, fifteen orders of magnitude above ``2 eps0``.
+
+    It is now :func:`~sih141.detect.statistics.evidence_abort_probability_bound`
+    of the run's own **sifted** parameters, and the structural threshold family
+    delegates to the same implementation rather than keeping a second copy --
+    pinned in ``tests/test_detect_reconciliation.py``.
+    """
+    # With no parameter set there is no honest number to put there, so the
+    # field says so rather than guessing one.
     empty = AbortStatistics.empty()
-    assert empty.honest_bound == 2.0 * HONEST_ABORT_BUDGET
+    assert empty.honest_bound is None
     assert empty.total == empty.structural == empty.evidence == 0
+
+    # A real run carries the bound its own sifted parameters imply.
     stats = TranscriptStatistics.from_transcript(_honest())
-    assert stats.aborts.honest_bound == 2.0 * HONEST_ABORT_BUDGET
     assert stats.aborts.total == 0
+    assert stats.aborts.honest_bound == evidence_abort_probability_bound(
+        stats.params
+    )
+
+    # The value is a function of n, and the point of the fix is that no single
+    # constant is right along it. At LENGTH = 96 the honest probability is
+    # 2.49e-17 -- five hundred times LARGER than the 2 * eps0 the field used to
+    # report, so the old constant was optimistic here; above n = 273 it settles
+    # on 3 * eps0, which is LARGER than 2 * eps0 for the different reason that
+    # the union is over three floor events and not two.
+    assert stats.params.key_length == 96
+    assert stats.aborts.honest_bound == pytest.approx(2.4904e-17, rel=1e-3)
+    assert stats.aborts.honest_bound > 2 * HONEST_ABORT_BUDGET
+
+    settled = evidence_abort_probability_bound(ProtocolParams(key_length=384))
+    assert settled == pytest.approx(3 * HONEST_ABORT_BUDGET, rel=1e-12)
+    assert settled > 2 * HONEST_ABORT_BUDGET
+
+    short = evidence_abort_probability_bound(ProtocolParams(key_length=24))
+    assert short > 1e-5
+    assert short > 1e12 * settled
 
 
 def test_a_replay_against_a_live_session_is_counted_not_scored():

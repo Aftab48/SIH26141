@@ -8,7 +8,7 @@
 > on the maintainer's explicit instruction. The permanent record is
 > `docs/METRICS.md` and the `docs/PHASE*.md` notes.
 
-**140 entries** — 38 finding · 32 decision · 28 issue · 22 fix · 18 note · 2 deadend
+**149 entries** — 39 finding · 33 decision · 28 issue · 24 fix · 23 note · 2 deadend
 
 
 ## Phase 0 — Scaffold
@@ -5648,3 +5648,531 @@ Attribution.supporting, which carries the evidence per hypothesis and lets a
 reader see that the depolariser arm backs channel-manipulation with five signals
 and the outside-forgery arm backs it with one -- the same information, without a
 score that would end up in a table as if it meant something.
+
+### `[+]` Route H closed, and it was seven spellings wide rather than one
+
+*fix · integrate:phase4 · 2026-09-02T15:05:37Z*
+
+CLOSED. Reproduced first, exactly as reported: L = 32, check_fraction = 0.25, session seed 555,
+one probe run per position of Bob's link, survivors {8, 19, 25, 30} = plan.rounds_by_position
+(Party.BOB) for bit 0. Precision 1.0000, recall 1.0000, base rate 0.1250.
+
+ONE CORRECTION TO THE REPRODUCTION, worth knowing because it cost a wrong first answer. A run
+distributes a public key for BOTH message bits, with a SEPARATE check plan for each. A probe
+that fires on (party, position) and not on (party, bit, position) therefore reads the
+INTERSECTION of the two plans, not either one: my first run recovered {25} alone -- precision
+1.0000, recall 0.2500 -- because 25 was the only position reserved for Bob on both bits. Pin
+the message bit.
+
+THE ROUTE WAS SEVEN SPELLINGS WIDE, NOT ONE, and this is the substantive finding. It was
+reported as a two-qubit state making teleport raise, and the proposed fix was one shape check.
+But the asymmetry was never about shape: it was that VALIDATION HAPPENED ON ONE BRANCH ONLY --
+a key round handed the mapped payload to teleport(), which validated it, and a check round
+discarded it unexamined. So every malformation teleport refuses is the same oracle. Measured at
+the same parameters, one probe run per position, each row precision 1.0000 recall 1.0000:
+
+  two-qubit state (the reported route)      nominated 4
+  unnormalised statevector                  nominated 4
+  non-Hermitian density matrix              nominated 4
+  density matrix with a negative eigenvalue nominated 4
+  NaN amplitude                             nominated 4
+  dimension 3 (not a power of two)          nominated 4
+  a bare string                             nominated 4
+
+A shape check would have closed one of seven.
+
+THE DESIGN DECISION, WHICH WAS MINE TO MAKE: _map_payload validates, and it validates by the
+SAME RULE teleport does -- not a narrower one. Three reasons.
+
+(1) The requirement is the SEAM'S CONTRACT, not teleport's precondition. PayloadMap's docstring
+already says "It must return a one-qubit state ... and never None". The None half was already
+enforced in _map_payload, by name, before the branch. The shape half was left to a downstream
+caller that only ONE BRANCH HAS. Enforcing half a contract at the seam and half of it below a
+branch is what made the branch observable.
+
+(2) A validator below a branch IS a branch-dependent observable, by construction. That is the
+general statement and it is why the fix has to be at or above the branch.
+
+(3) A narrower check leaves six spellings open; a wider one would refuse payloads the protocol
+may legitimately send -- a mixed preparation is how Phase 3 expresses an imperfect source -- and
+would silently delete an attack. So _map_payload calls the very function teleport calls
+(_payload_state), and there is exactly ONE definition of "a payload teleport accepts" in the
+tree. teleport's own check is NOT removed and must not be: it is public, it has callers that
+never come through here, and its precondition is its own. Two enforcement points, one rule.
+
+ORDER MATTERS: adopt FIRST, validate the COPY. Validating the seam's own object would have put
+the read tally back at 2 and undone route E. test_the_seam_is_still_read_exactly_once_after_
+the_new_check pins it at {1}.
+
+THE ERROR PATH, checked before it was changed as the previous round asked. Exception CLASS is
+unchanged (ValueError). Raise SITE moves to distribute.py:_map_payload and is now the same on
+both branches. Message changes and now names the seam and the hop, as the None message already
+did. Searched every test and every attack for a dependence on the old message or raise site:
+none. All three shipped _act_on_payload implementations return valid one-qubit states.
+
+SHOWN CLOSED, both readings of the constant, because "precision fell" must not be an artefact
+of an adversary made to guess the wrong side of a signal that is still there:
+  nominate the survivors  -> 0 positions, nothing to score
+  nominate the complement -> 32 positions, precision 0.1250 = exactly the per-link base rate
+Exactly one distinct terminal trace over all 32 positions, for all seven families.
+
+HONEST RUNS BIT-IDENTICAL, shown rather than argued: ten transcripts (L in {32,192,384} x
+check_fraction in {0,0.25} x both bits, plus explicit payload_map=None and identity_payload
+arms) hash identically under SHA-256 over transcript.to_dict() against a clean git-archive
+snapshot of HEAD. payload_map=None returns before the check, so this had to hold, and it does.
+
+### `[D]` Branch-blindness: the invariant behind A-F, H and I, asserted rather than patched
+
+*decision · integrate:phase4 · 2026-09-02T15:05:59Z*
+
+THE INVARIANT, and it is the thing this round is proudest of because it FOUND SOMETHING on its
+first run rather than merely restating what was already fixed.
+
+Four rounds have now each closed the current spelling of one idea -- a seam being CALLED (routes
+A-C), the answer it returned being READ (D, E), a mapping being CONSUMED (F), and whether the
+run SURVIVED (H) -- and each time the next spelling appeared. That is the signature of patching
+instances. The general statement:
+
+    BRANCH-BLINDNESS. An adversary at a seam observes the protocol ONLY through that seam's
+    INTERACTION TRACE -- the calls it receives, the reads made of the objects it hands over, and
+    how the run terminated. Any component of that trace which varies with the branch is a
+    channel of exactly the width of its variation. So over the positions of one link the trace
+    must take exactly ONE value. A constant carries no bits.
+
+A TEST CAN ASSERT THAT DIRECTLY, and does:
+test_a_seams_interaction_trace_is_constant_over_the_positions_of_a_link. Two axes, both state
+seams. The assertion is `len(set(traces)) == 1` -- no threshold, nothing to tune, and it cannot
+be satisfied by a detector that merely got harder to read.
+
+THE READ PROBE IS DELIBERATELY WIDER THAN THE ONE THAT FOUND D AND E. _CountingStatevector
+counts reads of `.data`. _TracingStatevector overrides __getattribute__ and records the ORDERED
+SEQUENCE OF EVERY PUBLIC ATTRIBUTE NAME the protocol touches. An adversary does not have to
+instrument the attribute the last round happened to leak through: dims(), num_qubits, purity()
+and to_operator() are all reads, and a branch that touched any one of them and no other would be
+just as legible. This makes the probe independent of which spelling comes next.
+
+IT FOUND ROUTE I ON ITS FIRST RUN. See the companion entry. That is the evidence that it is more
+than a restatement of the fixes already made.
+
+WHAT IT DOES NOT DO, stated plainly because a general-sounding test that quietly is not one is
+worse than an honest instance:
+
+(1) It quantifies over the probes that can be WRITTEN, not over every observable. It is a test,
+    not an impossibility proof. A genuinely new KIND of observable -- neither a call, nor a read
+    of a handed-over object, nor the run's terminal event -- needs a new probe, and the invariant
+    would then be asserted over that too. I did not find a way to quantify over all observables
+    from inside Python, and I do not believe there is one: the set of things an adversary can
+    compute from an object it owns is not enumerable.
+(2) It says NOTHING about wall-clock time. The trace is causal, not temporal, BY CONSTRUCTION.
+    Route G is excluded here for the same reason PHASE3.md section 12 excludes it, and an
+    assertion about a timing gap would be an assertion about the machine the suite runs on.
+(3) It is per-link and per-run. Correlations ACROSS the runs of a session are a different
+    observable and are not in scope.
+
+So: a genuine generalisation over the family A-F, H and I, not a proof of impossibility, and
+the boundary between those two is stated rather than blurred.
+
+THE POSITIVE CONTROL MATTERS AS MUCH AS THE ASSERTION. Each axis is scored by "how many distinct
+values did this observable take", so a probe that has STOPPED OBSERVING scores 1 and passes.
+Every one of these tests therefore carries a synthetic PRE-FIX trace through the same scorer and
+requires the check set back. That is the shape check (a) of the isolation suite failed silently
+for a whole phase for want of (PHASE3.md section 7).
+
+### `[*]` Route I: the resource seam's raise SITE named the branch, though both branches raised
+
+*finding · integrate:phase4 · 2026-09-02T15:06:22Z*
+
+FOUND AND CLOSED, in that order, by the branch-blindness test written to close route H. It fired
+on its first run.
+
+THE PREVIOUS ROUND'S CLAIM, and exactly which half of it was wrong. PHASE3.md section 12 said:
+"The resource_factory seam carries no equivalent, checked and stated: a malformed resource raises
+on BOTH branches -- teleport on a key round, observe_qber_round on a check one -- so there is no
+oracle there." The first half is TRUE and I re-measured it. The second half does not follow.
+
+Both branches raise ValueError. They raise it from DIFFERENT FUNCTIONS, because they spell the
+ARITY half of one shared precondition in two places: teleport._resource_density on a key round,
+checkrounds._as_resource on a check one. An adversary holding this seam is Python code in the
+same process; `except Exception as e: traceback.extract_tb(e.__traceback__)` is three lines.
+"Both branches raise" was never sufficient. "Both branches raise IDENTICALLY" is.
+
+MEASURED, L = 32, check_fraction = 0.25, session seed 555, one probe run per position of Bob's
+link, bit pinned:
+
+  one-qubit resource -> ValueError@session.py:_as_pair              n=4  precision 1.0000 recall 1.0000
+                     -> ValueError@teleport.py:_resource_density    n=28 precision 0.0000
+
+CONFIRMED PRESENT AT HEAD before this round touched anything -- run against a clean git-archive
+snapshot -- so it was FOUND, not introduced by the payload fix. The payload fix left it
+byte-identical, which is the other half of what the brief asked me to check.
+
+IT IS ONE FAMILY WIDE WHERE H WAS SEVEN, and the reason is instructive rather than lucky: the
+PHYSICALITY half of the precondition already routed through ONE shared helper
+(states._coerce_state) on both branches, so unnormalised / non-Hermitian / negative-eigenvalue /
+NaN / not-a-state all already refused from one place, at precision 0.1250 = the base rate. Only
+the arity check was spelled twice. Shared helpers are load-bearing for more than tidiness.
+
+THE FIX, same idea as H and no new rule: hoist the shared precondition above the branch, in
+_draw_resource, on the ADOPTED COPY. Both branches require exactly "as_density + num_qubits == 2",
+so this changes no accepted input and no honest number.
+
+_coerce_state IS CALLED RATHER THAN _resource_density, deliberately: it is the validator both
+branches already reach, and it does not build the density matrix that neither branch would use.
+Measured: 3.5 us against 10.2 us, on a position that costs about 486 us -- 0.7% rather than 2.1%.
+_adopt_state alone is 1.9 us for scale.
+
+Honest runs bit-identical after this too: the same ten SHA-256 hashes as before the payload fix
+and as at HEAD.
+
+WHAT IT SAYS ABOUT THE PREVIOUS ROUND'S CHECK, without blame -- it checked the right thing at the
+wrong resolution. "Did the run survive" is a two-valued observable; "how did the run terminate"
+is a richer one, and the traceback is part of it. The branch-blindness test now records the raise
+SITE with the exception class for exactly this reason, and its docstring says why.
+
+### `[-]` D7 audit: 22 of 22 derived, and the mechanical test that separates derived from fitted
+
+*note · integrate:phase4 · 2026-09-02T15:06:52Z*
+
+ALL 22 PASS, individually audited, and the audit is mechanical rather than a reading of
+docstrings. Three questions per threshold; a threshold that cannot answer all three is fitted
+whatever its prose says.
+
+Q1  IS THE NULL STATED? Checked as DATA, not as prose: every carrier has a mandatory non-empty
+    `null` field. 22/22.
+
+Q2a IS THE BOUND PROVEN OR MERELY ASSERTED? The tail at each shipped critical value recomputed
+    in fractions.Fraction RATIONAL ARITHMETIC -- no floating point, no reuse of the module's own
+    code -- and required to satisfy  true_tail <= reported_bound <= budget. 22/22. Examples:
+    matched_count_low at n=384 k=71 -> exact 6.6380e-11 == reported; qber chernoff at n=4114
+    k=131 -> exact 1.1521e-13 <= reported 1.2600e-10 <= budget 2.0000e-10 (loose, and honestly
+    so, because that member ships the Chernoff form on purpose).
+
+Q2b DOES IT MOVE WITH eps? THIS IS THE SHARP ONE and I think it is the right general test for
+    D7. A derived threshold is a FUNCTION of its budget; a number somebody chose is not. Swept
+    over eps from 1e-1 to 1e-27 and required to be non-constant AND monotone in the budget --
+    UNLESS the null is a point mass, in which case it must be constant AND its proven bound must
+    be EXACTLY 0.0 at every budget, which is a strictly stronger property. 22/22.
+
+    It separates derived from fitted WITHOUT LOOKING AT ANY ATTACK DATA, which is what makes it
+    the right shape of test for this convention: fitting is detected by the shape of the
+    dependence on the budget, not by comparing against data the detector must never see.
+    tests/test_detect_reconciliation.py parametrises it over 17 members.
+
+Q3  DOES THE PROVEN BOUND HOLD AGAINST THE MEASURED HONEST RATE? Yes, and reported in PHASE4.md
+    section 2 per member.
+
+TWO MEMBERS NEEDED JUDGEMENT AND ARE RECORDED RATHER THAN COUNTED QUIETLY:
+
+  evidence-abort fails a NAIVE reading of Q2b -- critical value is 1 at every budget. It is NOT
+  a constant. Its statistic is a count in {0,1,2} and any abort is already the event, so the
+  budget decides ADMISSIBILITY, not the critical value: below 3*2**-64 = 1.6263032587282567e-19
+  no key length reaches the budget and the check is WITHHELD (fires_at -> None) rather than
+  fired at a bar the derivation does not reach. Verified the switch happens exactly there. What
+  IS a function of n is the BOUND: 1.1881e-04 at n=24, 2.4904e-17 at n=96, 2.2523e-24 at n=136,
+  5.4212e-20 at n=137, 1.6263e-19 above n=273. Independently reproduced against the exact union
+  of three binomial lower tails where computable (n=300: exact 4.0667e-37 <= reported 1.6263e-19;
+  n=600: 1.7397e-34). So: PASS, with the reason written down. My audit rule was too crude for it,
+  not the other way round.
+
+  abort-shortfall returns 1 at every budget at or above 2**-64, and THE COLLAPSE IS THE RESULT.
+  The protocol's floors were already calibrated at that budget and spend all of it, so the abort
+  itself is the threshold and its magnitude adds no detection power. The knob only turns below
+  2**-64: 83 records at 1e-21, 216 at 1e-24, 341 at 1e-27. Reported as a collapse rather than
+  dressed up; claiming it separates anything at a usable budget would be exactly the fitting D7
+  forbids.
+
+NINE OF THE 22 HAVE POINT-MASS NULLS and cost EXACTLY ZERO at every budget and every key length:
+mismatch_rate (noiseless) x2, qber_errors (noiseless), fidelity/purity/concurrence (ideal),
+structural-abort, replay-refusal, run-shape. The cost is stated with each: it is a claim about a
+NOISELESS link, and on an honest run over a genuinely noisy channel those members fire on every
+link -- correctly, because the null was the wrong one for that deployment.
+
+### `[+]` Reconciling three parallel families: 62 missing exports, an inverted convention, two real bugs
+
+*fix · integrate:phase4 · 2026-09-02T15:07:20Z*
+
+Three families written in parallel by three hands. Each reported the same two integration
+problems and none could fix either from inside one family. Fixed here, plus two real bugs.
+
+1. SIXTY-TWO NAMES WERE MISSING FROM THE PACKAGE SURFACE. sih141/detect/__init__.py exported
+   `detector` and `statistics` symbols only; all three threshold families' exports were absent,
+   so `from sih141.detect import qber_threshold` failed. Checked for collisions across all five
+   submodules' __all__: THERE ARE NONE. __all__ now has 101 names and a test asserts every one
+   resolves.
+
+2. THE ONE GENUINELY DANGEROUS CONVENTION CLASH: `vacuous` (rate) and `reaches_its_statistic`
+   (channel) are THE SAME FACT WITH OPPOSITE SENSES. vacuous=True and reaches_its_statistic=False
+   both mean "this threshold cannot fire". A combiner reading one where it meant the other flips
+   "this sample can detect nothing" into "this sample is fine" -- silently, in the direction that
+   MANUFACTURES A CLEAN BILL OF HEALTH. Structural spells it a third way, as fires_at is None.
+   Shipped ThresholdView + threshold_view(): one vocabulary over all three carriers with
+   `can_fire` in ONE sense. It deliberately REFUSES to duck-type -- guessing from the attributes
+   present is precisely how the pair gets misread -- and the TypeError says so.
+
+3. THREE COPIES OF THE CHERNOFF LOWER-TAIL INVERSION had each been pinned against the protocol's
+   floor but NEVER AGAINST EACH OTHER, because no author owned all three. They agree exactly at
+   every (trials, eps) where the form applies, and reproduce both protocol floors to the integer.
+   Writing the test found A THIRD SPELLING OF "VACUOUS": the rate family returns -1 and the
+   structural family returns None. A caller reading -1 as a count would refuse every run. The
+   test now requires them to agree on WHEN the form has power as well as on the value.
+
+4. TWO EXACT BINOMIAL TAIL IMPLEMENTATIONS (rate sums through lgamma with a geometric remainder;
+   channel accumulates) now pinned against each other AND against fractions.Fraction rational
+   arithmetic, relative 1e-12, both tails.
+
+5. BUG FIXED -- THE PROTOCOL'S WILSON INTERVAL CARRIED FLOAT DUST. estimate_qber over a clean
+   50-round sample returned interval.low == 6.938893903907228e-18, not 0.0, because
+   _wilson_interval clamped with max(0.0, centre - spread) where the two terms are EQUAL IN EXACT
+   ARITHMETIC and the dust is positive. Every defended result in this project is 0 successes out
+   of N, so the dust landed on exactly the numbers a reader most needs to read plainly. Both
+   copies now clamp BY CASE. The statistics layer had pinned the divergence with a test named
+   ..._still_carries_the_float_dust "so it cannot be fixed silently"; that test now asserts the
+   agreement and is renamed. Six copies of a Wilson interval exist in the tree in total (four in
+   attacks, one in detect, one in protocol); the two that matter for Phase 4 numbers now agree to
+   the bit at both endpoints over a grid of sample sizes.
+
+6. BUG FIXED -- AbortStatistics.honest_bound WAS AN UNPROVEN CONSTANT. It was 2 * 2**-64,
+   documented as the run-level bound on evidence > 0. The union is over THREE events (both
+   per-verifier floors AND the pooled floor) and verify.py derives 3 eps itself, so the field was
+   SMALLER THAN THE UNION BOUND ITS OWN DERIVATION SUPPORTS. And a constant where the truth is a
+   function of n: 2.4904e-17 at n=96 and 1.1881e-04 at n=24, both far ABOVE 2 eps0. The
+   structural family's author flagged it and said "the fix is not 2.0 -> 3.0"; correct.
+   It is now computed from the run's own sifted params, and the shared per-floor term
+   (floor_shortfall_bound) lives in the statistics layer with thresholds_structural._floor_bound
+   DELEGATING to it -- so a run cannot be handed two different bounds for one event. Not a fourth
+   copy: one implementation, one caller each.
+
+   NOTE the honest edge case preserved in that consolidation: where NEITHER regime applies (a
+   sample too small for the Chernoff form to have power, and a floor above 1 so the event is not
+   {count == 0} either) the answer is 1.0, NOT eps0. Returning the budget there would be
+   ASSERTING a bound rather than deriving one.
+
+7. honest_bound is now float | None -- None when no parameter set is available, because the bound
+   is a function of n and there is no honest number to put there. Same shape the layer already
+   uses for an unmonitored link's summaries.
+
+tests/test_detect_reconciliation.py, 33 tests, is the pin for all of it.
+
+### `[-]` Seven mutations, seven RED, and which assertion caught each
+
+*note · integrate:phase4 · 2026-09-02T15:07:47Z*
+
+Seven one-idea reversions, each on its OWN COPY of the tree in the system temp directory (the
+working tree is never touched -- other agents are in it), each copy's relevant tests then run.
+ALL SEVEN GO RED. Recording WHICH assertion caught each, because that says whether the defence is
+guarded where it was meant to be.
+
+M1  a threshold's derivation replaced by a CONSTANT that separates this project's own honest and
+    attacked data at L=384 (return 100 if side=='upper' else 25) -> RED in 3s.
+    test_a_lower_threshold_is_certified_at_its_own_budget: the exact binomial tail at the
+    returned count is 0.9976 against a budget of 0.01. The certification test computes the tail
+    ITSELF, so a constant cannot pass by looking plausible.
+
+M2  the family-wise correction removed, every family handed the WHOLE budget (naive OR,
+    OVER-spending) -> RED in 3s. Caught NOT by a bound comparison but by an INVARIANT INSIDE THE
+    MODULE: FamilyBudget refuses to construct a split whose shares do not sum to eps, because the
+    union bound of C-1 is only a bound on eps when they do. "the shares sum to
+    2.0542101086242757e-18 and the budget is 1e-18". Stronger than catching it downstream: the
+    naive OR is UNREPRESENTABLE.
+
+M2b (added by me, because M2 alone leaves the other half untested) the union bound DROPPED while
+    the allocation is kept -- three families combined by max() instead of sum() -> RED in 79s.
+    test_the_composite_bound_is_the_sum_of_the_three_families: reports 2.3963533664906335e-10
+    where the sum is 3.3963533679543065e-10. This is the MORE DANGEROUS of the two directions --
+    a detector that UNDER-reports its own error rate -- and M2's guard does not catch it, so the
+    pair is needed.
+
+M3  AN ABORT FOLDED INTO THE REJECTION COLUMN: the NoVerdictCount.__add__ guard removed -> RED in
+    86s. test_a_no_verdict_count_refuses_to_be_added_to_a_verdict_count: DID NOT RAISE TypeError.
+    THIS IS CONSTRAINT 4 AND IT MATTERS MOST. Worth noting what stops it: the guard is a TYPE,
+    not a convention, and the test asserts the TypeError rather than asserting a number that
+    happens to come out right. Two more guards stand beside it (RunOutcome refuses bool(),
+    TranscriptStatistics.verifier raises KeyError rather than returning None).
+
+M4  the route-H payload validation reverted -> RED in 19s.
+    test_a_malformed_payload_no_longer_says_which_branch_a_position_took: "the terminal event
+    takes 2 values over one link's positions, so it names the branch: [6, 7, 18, 24, ...]" -- and
+    the failure message prints the check set, which is the right failure message for this bug.
+
+M5  the route-I resource validation reverted -> RED in 27s.
+    test_the_resource_seam_refuses_a_malformed_pair_from_one_place: two raise sites,
+    {'raised:ValueError:checkrounds.py:_as_resource',
+     'raised:ValueError:teleport.py:_resource_density'}.
+
+M6  the float dust put back in the protocol's Wilson interval -> RED in 3s.
+    test_the_two_wilson_intervals_agree_to_the_bit_at_both_endpoints.
+
+NO MUTATION SURVIVED, so there is no hole to report from this set. That is a statement about
+these seven and nothing more.
+
+### `[-]` Hand-off to Phase 5: eleven ways to misread a correct detector
+
+*note · integrate:phase4 · 2026-09-02T15:11:23Z*
+
+Everything a Phase 5 sweep can get wrong with a correct detector underneath it.
+
+1. PUBLISH Detection.false_positive_bound, NEVER eps. At L=384, check_fraction=0.25, eps=1e-9
+   they are 3.3964e-10 and 1e-9 -- a factor of 2.944. Quoting the budget overstates the
+   detector's own false-alarm rate by exactly that. Detection.slack_factor is the ratio.
+   Detection.evidence_bound is a THIRD number and a DIFFERENT STATEMENT -- post hoc, over the
+   signals that actually fired -- and must never be plotted as the detector's error rate.
+
+2. CHECK Detection.bound_is_unconditional BEFORE PLOTTING A ROC POINT. At a positive
+   channel_error_rate the rate family's mismatch members are conditioned on the run's observed
+   matched counts; the summed bound is then a bound on P(fire | matched counts), and eps is what
+   remains unconditionally true. True at the default noiseless null.
+
+3. GROUP BY Detection.grouping_key, NEVER AVERAGE OVER IT. Measured this round: recipient forgery
+   under COUNTS_AFTER_FORWARDING is a forgery Charlie SCORES and the composite names it alone;
+   under COUNTS_BEFORE_FORWARDING it is a denial of service Charlie REFUSES. A table mixing them
+   averages a forgery rate with a denial-of-service rate.
+
+4. withheld IS NOT cleared. On a run with no check rounds the whole channel family is
+   unevaluable and Detection.withheld says so in words. Half the budget is unspendable there
+   (composite proves 2.6499e-10 at L=192, slack 3.774) and LINK_ROSTER is deliberately NOT
+   resized to reclaim it -- the run's configuration is a constant under the null but not under
+   an adversary.
+
+5. run-shape signals are EXCLUDED from Detection.detected. A run-shape violation is a statement
+   about the transcript FILE, not about an adversary (from_dict defaults spent_rounds to ()), so
+   counting one would inflate a detection column with a plumbing fact. Use
+   Detection.detection_signals.
+
+6. FULL IMPERSONATION MUST APPEAR AS `undetectable-by-construction`, not as a blank and not as a
+   miss. The attribution is on every Detection with false_positive_bound=None and (AUTH) in its
+   rationale, and summary() always prints the line. A hypothesis silently missing from a table
+   reads as one that was ruled out.
+
+7. PUBLISH dominance_noise_level() BESIDE EVERY MISMATCH-RATE DETECTION RATE. At DEFAULT_PARAMS
+   and eps=1e-9 the crossover against s_a is 0.012119, BELOW the design noise level
+   2 s_a = 0.03125 -- so on a link as noisy as the scheme tolerates, the mismatch detector is
+   dominated by Bob's own cut and adds nothing. Against s_v it is 0.055354866, above it. All of
+   the detector's power at the noiseless default comes from assuming the link is quieter than
+   the protocol assumes.
+
+8. AT A TOY LENGTH THE CHANNEL FAMILY HAS FOUR WORKING MEMBERS, NOT FIVE. At L=384 with 24 CHSH
+   rounds and a share of 5e-11 the CHSH critical value is about -2.80 -- below the classical
+   bound -- so that sample can only see a resource whose correlations were INVERTED. Any ROC
+   curve drawn from this family at a toy length is measuring four members and should say so.
+
+9. THERE IS NO FALSE-NEGATIVE BOUND ANYWHERE IN THIS LAYER and there cannot be one from a
+   transcript. Every bound is under the honest null. Per-arm detection rates are measurements
+   with a sample size, not guarantees. A CLEAR CHANNEL SCREEN DOES NOT EXCLUDE A CHANNEL
+   ADVERSARY.
+
+10. THE STRUCTURAL FAMILY'S ROC IS DEGENERATE ABOVE eps = 3*2**-64 AND THAT IS DERIVED. Three of
+    its four checks have a bound of exactly 0 so no budget moves them, and the fourth is either
+    admissible at 1.6263e-19 or withheld outright. Two regimes, no curve. A smoother one would
+    have to be manufactured.
+
+11. NEW THIS ROUND: threshold_view() gives one vocabulary over all three carrier types, with
+    can_fire in ONE sense. Use it in any code that walks thresholds from more than one family.
+    The raw fields `vacuous` and `reaches_its_statistic` are INVERTED against each other.
+
+### `[-]` Five adversaries through the frozen detector: 18/19 arms at 40/40, and one arm that had not run
+
+*note · integrate:phase4 · 2026-09-02T15:16:56Z*
+
+L = 384, eps = 1e-9, 40 runs per arm, detect() reading a JSON round-tripped transcript and
+nothing else. Every threshold frozen before any of this ran. 1148s for the 22-arm sweep.
+
+HEADLINE. 18 of 19 attack arms at 40/40, 99% Wilson [0.8577, 1.0000]. The nineteenth is
+impersonation:full at 0/40, which is (AUTH) and not a miss. 0/120 honest runs raised an alarm,
+at a composite proven bound of 2.7818e-10 (unchecked) and 3.1464e-10 or 3.3964e-10 (checked).
+
+AGAINST THE PHASE 3 PROTOTYPE (4 of 5 at 100%, 0/80 false alarms): detection matched, and the
+OBSERVED false-alarm rate was replaced by a PROVEN one. The detection rate did NOT go down, and
+that is worth saying carefully rather than claiming a win: a derived threshold is normally less
+sensitive than a tuned one, and a lower rate here would have been the legitimate and more honest
+result. It did not happen because the separations are enormous -- a substituted declaration puts
+the mismatch rate at 1/2 against a null that is a POINT MASS AT 0 -- so the derived cut sits
+nowhere near the boundary. The derivation cost nothing in power HERE and would still have been
+the right choice if it had.
+
+DETECTION IS CARRIED BY THE MISMATCH SIGNAL, which is Phase 3 constraint 1 restated as a
+measurement: every channel arm is detected at check_fraction = 0.0, where the entire channel
+family is unevaluable and contributes nothing. The verifier rate really is the strongest and
+cheapest signal and needs no check rounds.
+
+WHERE THE COMPOSITE IS COARSE IT SAYS SO. Outside forgery, signing-seam impersonation,
+distribution-seam impersonation and all four channel attacks are each 40/40 and each named as
+the SAME five-way substitution group. That is the honest output of a transcript-only detector.
+One exception, and it is the channel family earning its place: on 1 of 40 runs of the p=0.10
+depolariser at check_fraction=0.25 the channel screen fired hard enough to name
+channel-manipulation ALONE.
+
+CONSTRAINT 5 IN THE DIRECTION THAT MATTERS: `recipient-forgery` appears in NO channel arm's
+named set, because that hypothesis REQUIRES an inflated matched count and a channel adversary
+moves no basis. Phase 3 measured depolarising noise producing repudiated == True with an honest
+Alice; the composite does not repeat it, and does not repeat it as a property of the deduction
+table rather than as a coincidence of these seeds.
+
+CONSTRAINT 6, MEASURED AGAIN: recipient forgery under COUNTS_AFTER_FORWARDING is named ALONE on
+count-high (Charlie's matched count -- the discriminator constraint 5 names); under
+COUNTS_BEFORE_FORWARDING it is caught on the STRUCTURAL forwarding-tamper signal, which the rate
+family alone would have missed, and named as the pair holding the forwarding hop.
+
+ONE ARM WAS MEASURED TWICE AND THE FIRST MEASUREMENT WAS WRONG -- RECORDED RATHER THAN QUIETLY
+FIXED. The replay arm first came out 0/40. That is a WIRING artefact, not a detector result:
+ReplayingForwarder(captures=None) mints its default capture at key_length = 24 (CAPTURE_PARAMS),
+and __call__ DECLINES a capture whose shape does not match the live declaration -- so at L = 384
+the adversary forwarded HONESTLY on every call and the arm measured nothing at all. The 0/40 was
+correct about the runs it produced and said nothing about the detector.
+
+Re-measured with the capture minted at the RUN'S OWN length (also the more faithful adversary --
+a genuine cross-session replay of a full-length declaration): 40/40 under both orderings, named
+{recipient-forgery, replay}, on forwarding-tamper (before) and forwarding-tamper + mismatch
+(after).
+
+THE LESSON GENERALISES AND IS THE REASON THIS IS JOURNALLED: AN ADVERSARY ARM THAT REPORTS ZERO
+SHOULD BE CHECKED FOR WHETHER IT RAN before it is published. This one only announced itself
+because every other arm in the same sweep was 40/40. A sweep where several arms are legitimately
+weak would have hidden it completely.
+
+### `[-]` Every figure in PHASE4.md regenerated from the code; two prose numbers caught wrong
+
+*note · integrate:phase4 · 2026-09-02T15:36:38Z*
+
+Every scientific figure quoted in docs/PHASE4.md is reproduced from the code by a script, not
+typed. 16 of 16 match to four significant figures:
+
+  rate family bound            2.3964e-10
+  channel family bound         1.0000e-10
+  composite L=384 f=0.25       3.3964e-10   (slack 2.944 against a 1e-9 budget)
+  composite L=192 f=0          2.6499e-10   (slack 3.774 -- half the budget unspendable)
+  composite L=384 f=0          2.7818e-10
+  B_evid n=24                  1.1881e-04
+  B_evid n=96                  2.4904e-17
+  B_evid n=384                 1.6263e-19   = 3 * 2**-64
+  shortfall bound n=384        3.7774e-20
+  matched_count_low  k=71      6.6380e-11
+  matched_count_high k=190     4.8376e-11
+  pooled_count_low   k=174     5.8530e-11
+  pooled_count_high  k=342     7.5676e-11
+  mismatch_rate p_e=0.01       3.2406e-11
+  qber p0=1/32 at n=24         1.3926e-12
+  chsh (McDiarmid) bound       5.0000e-11   = its share exactly, by construction
+
+WHY THIS IS WORTH AN ENTRY RATHER THAN A COMMIT MESSAGE. pyproject sets --doctest-modules over
+["tests","sih141"], so a number written as an executable example IS a live test and a number
+written in a .md file is NOT checked by anything. FIVE wrong prose numbers have shipped in this
+project. docs/ is exactly where the sixth would go.
+
+The threshold tables in PHASE4.md section 2 were GENERATED from the code rather than
+transcribed, for the same reason. The composite figures in section 4 are doctests in
+sih141/detect/detector.py and are only quoted here.
+
+TWO PROSE NUMBERS WERE CAUGHT WRONG DURING THIS ROUND, both by writing them as doctests instead:
+
+  (2/3)**267 -- I carried "5.4159e-48" over from a hand-off note. It is 9.6302e-48. The doctest
+  in floor_shortfall_bound failed on the first run. The note's number was never checked because
+  it lived in prose.
+
+  "Nine of the twenty-two thresholds are point masses" -- carried into README.md and PHASE4.md
+  before counting. It is TEN: nine budgeted members plus the free declaration_gap, which is also
+  a point mass at 0 and is exactly the one a count would forget because it costs nothing.
+  Corrected in both documents by querying the code.
+
+The lesson is the project's existing one and this round paid it again: A NUMBER THAT IS NOT
+EXECUTED IS A NUMBER THAT IS NOT CHECKED. Where a figure cannot be a doctest -- because it
+belongs in a document -- generate it, and re-verify it before publishing.

@@ -576,35 +576,40 @@ def test_a_run_without_the_count_exchange_bounds_two_events_not_three() -> None:
     assert not report.alarm_raised
 
 
-def test_the_layer_below_still_reports_two_epsilon_and_this_module_does_not() -> None:
-    """Pin the divergence so it cannot be fixed silently or forgotten quietly.
+def test_the_layer_below_now_agrees_and_the_two_share_one_implementation() -> None:
+    """The divergence this test used to pin OPEN is closed. Kept as the pin.
 
-    :attr:`~sih141.detect.statistics.AbortStatistics.honest_bound` is
-    ``2 * HONEST_ABORT_BUDGET``, described as the run-level bound on
-    ``evidence > 0``. The run-level union is over **three** events -- both
+    :attr:`~sih141.detect.statistics.AbortStatistics.honest_bound` used to be
+    the constant ``2 * HONEST_ABORT_BUDGET``, described as the run-level bound
+    on ``evidence > 0``. The run-level union is over **three** events -- both
     per-verifier floors and the pooled floor -- and
     :mod:`sih141.protocol.verify` derives ``3 eps`` for exactly that reason,
-    with ``tests/test_protocol_reconciliation.py`` asserting ``<= 3 * eps``.
-    ``2 eps`` is therefore smaller than the union bound its own derivation
-    supports and is not proven.
+    so ``2 eps`` was smaller than the union bound its own derivation supports
+    and was not proven. This test asserted the divergence so that it could not
+    be fixed silently or forgotten quietly.
 
-    This module computes its own and never reads that field. The day somebody
-    fixes the layer below, this test fails and says so, which is the point: it
-    is not asserting that ``2 eps`` is right.
+    The Phase 4 reconciliation fixed it, and fixed it the right way round: not
+    ``2.0 -> 3.0``, but computed from the run's own sifted parameters, because
+    the constant was wrong in both directions and only the function is right in
+    both. The two modules now share **one** implementation --
+    :func:`~sih141.detect.statistics.floor_shortfall_bound` -- so a run cannot
+    be handed two different bounds for one event.
     """
     stats = make_stats(3104)
-    assert stats.aborts.honest_bound == 2 * HONEST_ABORT_BUDGET
+    assert stats.aborts.honest_bound == evidence_abort_bound(stats.params)
     assert evidence_abort_bound(stats.params) == pytest.approx(
         3 * HONEST_ABORT_BUDGET, rel=1e-12
     )
-    assert evidence_abort_bound(stats.params) > stats.aborts.honest_bound
+    # Three terms, never two.
+    assert stats.aborts.honest_bound > 2 * HONEST_ABORT_BUDGET
 
 
-def test_the_layer_belows_constant_is_optimistic_at_short_key_lengths_too() -> None:
-    """At ``n = 96`` the truth is ``2.5e-17``, above the constant ``1.08e-19``.
+def test_the_bound_is_a_function_of_n_which_is_why_no_constant_was_right() -> None:
+    """At ``n = 96`` the truth is ``2.5e-17``, above the old constant ``1.08e-19``.
 
-    The second half of the same finding: the honest-abort probability is a
-    function of ``n``, and a constant cannot be right at both ends.
+    The second half of the same finding, and the reason the fix could not be
+    ``2.0 -> 3.0``: the honest-abort probability is a function of ``n``, and a
+    constant cannot be right at both ends.
     """
     short = ProtocolParams(key_length=96)
     assert evidence_abort_bound(short) > 2 * HONEST_ABORT_BUDGET

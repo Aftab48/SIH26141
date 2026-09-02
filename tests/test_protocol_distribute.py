@@ -47,6 +47,8 @@ from __future__ import annotations
 import dataclasses
 import json
 import math
+import os
+import traceback
 from collections import Counter
 
 import numpy as np
@@ -69,9 +71,11 @@ from sih141.protocol import (
     ideal_resource,
 )
 from sih141.core.paulis import PauliBasis
-from sih141.protocol.checkrounds import draw_check_plan
+from sih141.core.teleport import teleport
+from sih141.protocol.checkrounds import CheckRoundPlan, draw_check_plan
 from sih141.protocol.distribute import (
     _adopt_state,
+    _map_payload,
     distribute_to_recipient_with_checks,
 )
 
@@ -1282,3 +1286,508 @@ def test_adopt_state_keeps_the_state_and_drops_the_object() -> None:
     # validator downstream still produces its own message rather than one here.
     sentinel = object()
     assert _adopt_state(sentinel) is sentinel  # type: ignore[arg-type]
+
+
+# --------------------------------------------------------------------------- #
+# Route H, and the invariant behind the whole family                           #
+#                                                                              #
+# Four hardening rounds have now each closed the current spelling of one idea:  #
+# a seam being CALLED (routes A-C), the answer it returned being READ (D, E),   #
+# a mapping being CONSUMED (F), and whether the run SURVIVED (H). Each time a   #
+# spelling was closed the next one appeared, which is the signature of patching #
+# instances rather than the family.                                             #
+#                                                                              #
+# The general statement is that an adversary at a seam observes the protocol    #
+# ONLY through that seam's interaction trace -- the calls it receives, the      #
+# reads made of the objects it hands over, and how the run terminated -- so:    #
+#                                                                              #
+#     BRANCH-BLINDNESS. For every seam and every probe, the interaction trace   #
+#     at a position must not depend on the role the plan gave that position.    #
+#     Equivalently: over the positions of one link the trace takes exactly ONE  #
+#     distinct value. A constant carries no bits.                               #
+#                                                                              #
+# test_a_seams_interaction_trace_is_constant_over_the_positions_of_a_link       #
+# asserts that directly, over both state seams and over both axes of the trace, #
+# rather than asserting the current spelling. Its limits are stated in its own  #
+# docstring and they are real: it quantifies over the probes we can write, not  #
+# over every observable, and it deliberately says nothing about wall-clock time #
+# (route G, docs/PHASE3.md section 12).                                         #
+# --------------------------------------------------------------------------- #
+
+
+_MALFORMED_PAYLOADS: dict[str, object] = {
+    "two-qubit state": Statevector([1.0, 0.0, 0.0, 0.0]),
+    "unnormalised statevector": Statevector(np.array([2.0, 0.0])),
+    "non-Hermitian density matrix": DensityMatrix(
+        np.array([[0.5, 1.0], [0.0, 0.5]])
+    ),
+    "negative-eigenvalue density matrix": DensityMatrix(np.diag([2.0, -1.0])),
+    "non-finite amplitude": np.array([np.nan, 0.0], dtype=complex),
+    "dimension three": np.array([1.0, 0.0, 0.0]),
+    "not a state at all": "not a state at all",
+}
+"""Every malformation :func:`~sih141.core.teleport.teleport` refuses.
+
+Route H was reported as the first of these, but the asymmetry was never about
+shape -- it was that validation happened on the key branch **only**, so each of
+these recovered the check set at precision ``1.0000`` and recall ``1.0000`` at
+``L = 32``, ``check_fraction = 0.25``, session seed ``555``, against a per-link
+base rate of ``0.1250``. Seven spellings, one cause.
+"""
+
+_MALFORMED_RESOURCES: dict[str, object] = {
+    "one-qubit resource": Statevector([1.0, 0.0]),
+    "unnormalised pair": Statevector(np.array([2.0, 0.0, 0.0, 0.0])),
+    "negative-eigenvalue pair": DensityMatrix(
+        np.diag([2.0, 0.0, 0.0, -1.0])
+    ),
+    "non-finite pair": np.full(4, np.nan, dtype=complex),
+    "not a state at all": "not a state at all",
+}
+"""The same families on the *other* state seam, which never had the oracle.
+
+A malformed resource already raised on both branches -- ``teleport`` on a key
+round and ``observe_qber_round`` on a check one -- so there was nothing to
+close here. It is probed anyway, because "the fix left the resource seam
+undisturbed" is a claim, and a claim about a side channel is worth measuring
+rather than assuming.
+"""
+
+
+def _checked_link_plan(
+    params: ProtocolParams, seed: int
+) -> tuple[CheckRoundPlan, frozenset[int]]:
+    """Draw a plan and return it with the positions it reserved for Bob."""
+    plan = draw_check_plan(params, rng=np.random.default_rng(seed))
+    watched = frozenset(plan.rounds_by_position(Party.BOB))
+    assert watched, "the plan must designate something for this link to hide"
+    assert len(watched) < params.key_length, "and must not reserve everything"
+    return plan, watched
+
+
+def _terminal_event(
+    params: ProtocolParams,
+    plan: CheckRoundPlan,
+    *,
+    payload_map: object = None,
+    resource_factory: object = None,
+    seed: int = SEED,
+) -> str:
+    """Distribute one link once and report only how the run TERMINATED.
+
+    Parameters
+    ----------
+    params : ProtocolParams
+        The parameter set, which must reserve check rounds.
+    plan : CheckRoundPlan
+        The plan whose branch assignment is the secret under test.
+    payload_map, resource_factory : callable or None, optional
+        Keyword-only. The seam being probed; the other is left honest.
+    seed : int, optional
+        Keyword-only. The distribution stream's seed.
+
+    Returns
+    -------
+    str
+        ``"survived"``, or ``"raised:<class>:<module>:<function>"`` -- the
+        terminal event as an adversary at a seam reads it, *including where the
+        refusal came from*, because a refusal that moves between two raise
+        sites is still a two-valued observable even when its type does not
+        change.
+    """
+    kwargs: dict[str, object] = {}
+    if payload_map is not None:
+        kwargs["payload_map"] = payload_map
+    if resource_factory is not None:
+        kwargs["resource_factory"] = resource_factory
+    try:
+        distribute_to_recipient_with_checks(
+            _key(params),
+            params,
+            party=Party.BOB,
+            check_plan=plan,
+            rng=np.random.default_rng(seed),
+            **kwargs,  # type: ignore[arg-type]
+        )
+    except Exception as exc:  # noqa: BLE001 -- the probe reads exactly this
+        frame = traceback.extract_tb(exc.__traceback__)[-1]
+        return (
+            f"raised:{type(exc).__name__}:"
+            f"{os.path.basename(frame.filename)}:{frame.name}"
+        )
+    return "survived"
+
+
+def test_a_malformed_payload_no_longer_says_which_branch_a_position_took() -> None:
+    """Route H, closed: the terminal event is constant over the positions.
+
+    A payload seam returning one malformed state at one position used to turn
+    *did the run raise* into a clean read of that position's branch, because a
+    key round handed the mapped payload to
+    :func:`~sih141.core.teleport.teleport`, which validated it, while a check
+    round discarded it unexamined. One exact bit per run, with no
+    instrumentation and no statistics.
+
+    The payload precondition is now enforced in
+    :func:`~sih141.protocol.distribute._map_payload`, above the branch, so
+    every position of the link terminates identically. The assertion is on the
+    *number of distinct outcomes* rather than on which outcome, because that is
+    what closes the route: it would be equally closed if every position
+    survived.
+
+    Both readings of the constant are scored, which is the part that keeps the
+    result honest -- "precision fell" must not be an artefact of the adversary
+    having been made to guess the wrong side of a signal that is still there.
+    """
+    params = _params(48, check_fraction=0.25)
+    plan, watched = _checked_link_plan(params, SEED + 130)
+    positions = frozenset(range(params.key_length))
+
+    for name, bad in _MALFORMED_PAYLOADS.items():
+        outcomes = {
+            position: _terminal_event(
+                params,
+                plan,
+                payload_map=(
+                    lambda state, context, position=position, bad=bad: (
+                        bad if context.position == position else state
+                    )
+                ),
+            )
+            for position in positions
+        }
+        distinct = set(outcomes.values())
+        assert len(distinct) == 1, (
+            f"the terminal event under a {name} payload takes "
+            f"{len(distinct)} values over one link's positions, so it names "
+            f"the branch: "
+            f"{sorted(p for p in outcomes if outcomes[p] == 'survived')}"
+        )
+        assert distinct == {"raised:ValueError:distribute.py:_map_payload"}, (
+            f"a {name} payload must be refused at the seam, above the branch; "
+            f"got {distinct}"
+        )
+
+        # Both ways round, scored against ground truth the probe may not read.
+        survivors = frozenset(p for p in outcomes if outcomes[p] == "survived")
+        assert not survivors, f"a {name} payload still survives somewhere"
+        complement = positions - survivors
+        assert len(complement & watched) / len(complement) == pytest.approx(
+            len(watched) / params.key_length
+        ), "guessing the other way round must land exactly on the base rate"
+
+    # Positive control on the same scorer. The PRE-FIX shape of this
+    # observable must hand the check set straight back, so a probe that has
+    # quietly stopped distinguishing anything cannot pass the assertions above
+    # by observing nothing -- which is exactly how one isolation check failed
+    # silently for a whole phase (docs/PHASE3.md section 7).
+    pre_fix = {
+        position: ("survived" if position in watched else "raised")
+        for position in positions
+    }
+    assert {p for p in pre_fix if pre_fix[p] == "survived"} == watched
+
+
+def test_the_resource_seam_refuses_a_malformed_pair_from_one_place() -> None:
+    """Route I: the resource seam's raise SITE named the branch. Now closed.
+
+    The previous round checked that a malformed resource raises on **both**
+    branches and concluded the resource line carried no equivalent of route H.
+    The first half is true and this test still asserts it. The second half did
+    not follow, and the branch-blindness probe below found the gap on its first
+    run: both branches raised ``ValueError``, but from two different functions,
+    because they spell the *arity* half of one shared precondition in two
+    places -- :func:`~sih141.core.teleport._resource_density` on a key round
+    and :func:`~sih141.protocol.checkrounds._as_resource` on a check one. An
+    adversary holding this seam is code in the same process and reads a
+    traceback in three lines.
+
+    Measured before the fix, at ``L = 32``, ``check_fraction = 0.25``, session
+    seed ``555``: a one-qubit resource refused from ``teleport`` at every key
+    position and from ``session._as_pair`` at every check position --
+    precision ``1.0000``, recall ``1.0000`` against a base rate of ``0.1250``.
+    Confirmed present at ``HEAD`` before this round touched anything, so it was
+    found rather than introduced.
+
+    It was one family wide where route H was seven, because the *physicality*
+    half of the precondition already routed through one shared helper on both
+    branches. Hoisting the arity check to the seam introduces no new rule and
+    changes no accepted input.
+
+    The raise *site* is therefore part of what is asserted, not just the
+    exception class: a refusal that moves between two functions is a
+    two-valued observable however uniform its type.
+    """
+    params = _params(48, check_fraction=0.25)
+    plan, watched = _checked_link_plan(params, SEED + 133)
+
+    for name, bad in _MALFORMED_RESOURCES.items():
+        outcomes = {
+            position: _terminal_event(
+                params,
+                plan,
+                resource_factory=(
+                    lambda context, position=position, bad=bad: (
+                        bad if context.position == position else ideal_resource()
+                    )
+                ),
+            )
+            for position in range(params.key_length)
+        }
+        distinct = set(outcomes.values())
+        assert len(distinct) == 1, (
+            f"a {name} names the branch through its terminal event: "
+            f"{sorted(distinct)}"
+        )
+        assert distinct == {"raised:ValueError:distribute.py:_draw_resource"}, (
+            f"a {name} must be refused at the seam, above the branch, so that "
+            f"the traceback is the same object on both; got {distinct}"
+        )
+        # The route-H half of the claim, which was always true here: nothing
+        # malformed survives either branch.
+        assert "survived" not in distinct
+
+    # Positive control: the PRE-FIX shape of this observable -- the same
+    # exception class from two different sites -- must hand the check set back.
+    pre_fix = {
+        position: (
+            "raised:ValueError:session.py:_as_pair"
+            if position in watched
+            else "raised:ValueError:teleport.py:_resource_density"
+        )
+        for position in range(params.key_length)
+    }
+    assert len(set(pre_fix.values())) == 2
+    assert {
+        p for p in pre_fix if pre_fix[p].endswith("_as_pair")
+    } == watched
+
+
+def test_the_payload_precondition_is_the_one_teleport_enforces() -> None:
+    """The seam refuses exactly what ``teleport`` refuses -- no more, no less.
+
+    A *narrower* check leaves the route open in every spelling it does not
+    cover, which is what a bare shape check would have done: six of the seven
+    malformations in :data:`_MALFORMED_PAYLOADS` are not shape errors. A
+    *wider* one refuses payloads the protocol may legitimately send -- a mixed
+    preparation, say -- and would silently delete an attack Phase 3 relies on
+    being expressible.
+
+    So the rule is not restated in ``distribute``; ``_map_payload`` calls the
+    very function ``teleport`` calls, and this pins the agreement both ways.
+    """
+    context = ResourceContext(party=Party.BOB, message_bit=0, position=3)
+    honest = Statevector([1.0, 0.0])
+
+    for name, bad in _MALFORMED_PAYLOADS.items():
+        with pytest.raises(ValueError, match="teleport cannot send"):
+            _map_payload(lambda state, ctx, bad=bad: bad, honest, context)
+        with pytest.raises(ValueError):
+            teleport(bad, resource=ideal_resource())  # type: ignore[arg-type]
+        assert name  # carried for the failure message only
+
+    # Everything teleport accepts still goes through untouched, mixed states
+    # included: a maximally mixed payload is how Phase 3 expresses an imperfect
+    # source, and it must not have become an error.
+    for good in (
+        honest,
+        Statevector(np.array([1.0, 1.0]) / math.sqrt(2.0)),
+        DensityMatrix(np.eye(2) / 2.0),
+    ):
+        sent = _map_payload(lambda state, ctx, good=good: good, honest, context)
+        assert np.allclose(np.asarray(sent.data), np.asarray(good.data))
+        teleport(sent, resource=ideal_resource(), rng=np.random.default_rng(1))
+
+
+def test_the_seam_is_still_read_exactly_once_after_the_new_check() -> None:
+    """The new validation must not put the read tally back where route E was.
+
+    ``_map_payload`` adopts first and validates the **copy**, so the seam's own
+    object is still touched exactly once. Validating the seam's object instead
+    would have been the natural way to write it and would have restored a tally
+    of two -- constant, so not a leak in itself, but one edit away from being
+    one again, and it would have thrown away the property adoption exists to
+    give.
+    """
+    params = _params(64, check_fraction=0.25)
+    plan, _ = _checked_link_plan(params, SEED + 131)
+    tally: Counter = Counter()
+
+    def payload(state: object, context: ResourceContext) -> Statevector:
+        return _CountingStatevector(
+            Statevector(state).data, tally, context.position
+        )
+
+    distribute_to_recipient_with_checks(
+        _key(params),
+        params,
+        party=Party.BOB,
+        payload_map=payload,
+        check_plan=plan,
+        rng=np.random.default_rng(SEED + 132),
+    )
+    assert set(tally) == set(range(params.key_length))
+    assert set(tally.values()) == {1}, (
+        f"the payload seam's answer is now read {sorted(set(tally.values()))} "
+        f"times; adoption must remain the only read of the seam's own object"
+    )
+
+
+class _TracingStatevector(Statevector):
+    """A state that records the **name** of every public attribute touched.
+
+    Strictly wider than :class:`_CountingStatevector`, which counts reads of
+    ``data`` alone. An adversary does not have to instrument the attribute the
+    last round happened to leak through: ``dims()``, ``num_qubits``,
+    ``purity()`` and ``to_operator()`` are all reads, and a branch that touched
+    any one of them and no other would be just as legible as a branch that read
+    ``data`` twice. Recording the ordered sequence of names makes the probe
+    independent of which spelling comes next.
+
+    A subclass rather than a wrapper, so it passes every ``isinstance`` check
+    and every coercion the protocol makes: what is under test is the read
+    pattern, not a rejection path.
+    """
+
+    def __init__(self, data: object, trace: list[str]) -> None:
+        object.__setattr__(self, "_trace", trace)
+        super().__init__(data)
+
+    def __getattribute__(self, name: str) -> object:
+        if not name.startswith("_"):
+            try:
+                object.__getattribute__(self, "_trace").append(name)
+            except AttributeError:  # during __init__, before _trace exists
+                pass
+        return object.__getattribute__(self, name)
+
+
+def test_a_seams_interaction_trace_is_constant_over_the_positions_of_a_link() -> None:
+    """BRANCH-BLINDNESS, asserted directly instead of one more instance of it.
+
+    Routes A-F and H are one statement in four spellings: an adversary at a
+    seam observes the protocol only through that seam's **interaction trace**
+    -- which calls it received, what was read of the objects it handed over,
+    and how the run terminated -- and any component of that trace which varies
+    with the branch is a channel of exactly the width of its variation. So the
+    property to assert is not "the payload is read once" or "a malformed
+    payload raises on both branches" but:
+
+        over the positions of one link, the trace takes exactly ONE value.
+
+    A constant carries no bits, whatever an adversary does with it, so a test
+    that pins constancy needs no threshold and cannot be satisfied by a
+    detector that merely got harder to read.
+
+    Two axes are swept, on both state seams:
+
+    * **reads** -- a probe recording the ordered sequence of every public
+      attribute name the protocol touches, which subsumes the ``data`` counter
+      that found routes D and E without presupposing that ``data`` is the
+      attribute the next leak arrives through;
+    * **termination** -- routes of the shape of H, covered by the malformed
+      families above and asserted again here through the same scorer, so both
+      axes are stated in one place.
+
+    Limits, stated because a general-sounding test that quietly is not one is
+    worse than an honest instance:
+
+    1. It quantifies over the probes that can be **written here**, not over
+       every observable. It is a test, not an impossibility proof. A genuinely
+       new *kind* of observable -- one that is neither a call, nor a read of a
+       handed-over object, nor the run's terminal event -- needs a new probe,
+       and the invariant would then be asserted over that too.
+    2. It says nothing about **wall-clock time**. The trace is causal, not
+       temporal, by construction. Route G is excluded here for the same reason
+       it is excluded in ``docs/PHASE3.md`` section 12, and an assertion about
+       a timing gap would be an assertion about the machine the suite runs on.
+    3. It is per-link and per-run. Correlations *across* runs of a session are
+       a different observable and are not in scope.
+    """
+    params = _params(48, check_fraction=0.25)
+    plan, watched = _checked_link_plan(params, SEED + 134)
+    positions = frozenset(range(params.key_length))
+
+    # -- axis 1: reads, on both state seams ------------------------------- #
+    for seam in ("payload_map", "resource_factory"):
+        traces: dict[int, list[str]] = {
+            position: [] for position in positions
+        }
+
+        def payload(state: object, context: ResourceContext) -> Statevector:
+            return _TracingStatevector(
+                Statevector(state).data, traces[context.position]
+            )
+
+        def factory(context: ResourceContext) -> Statevector:
+            return _TracingStatevector(
+                ideal_resource().data, traces[context.position]
+            )
+
+        distribute_to_recipient_with_checks(
+            _key(params),
+            params,
+            party=Party.BOB,
+            check_plan=plan,
+            rng=np.random.default_rng(SEED + 135),
+            **{seam: payload if seam == "payload_map" else factory},
+        )
+
+        distinct = {tuple(trace) for trace in traces.values()}
+        assert len(distinct) == 1, (
+            f"the {seam} seam's object is read differently depending on the "
+            f"branch, so the read trace names the check set. Traces seen: "
+            f"{sorted(distinct)}; the positions with the minority trace are "
+            f"{sorted(p for p in traces if tuple(traces[p]) != max(distinct, key=lambda t: sum(tuple(v) == t for v in map(tuple, traces.values()))))}"
+        )
+        assert distinct != {()}, (
+            f"the {seam} probe recorded nothing at all, so its constancy is "
+            f"vacuous -- the seam must be read at least once per position"
+        )
+
+    # -- axis 2: termination, on both state seams ------------------------- #
+    for label, seam, bad in (
+        ("payload", "payload_map", Statevector([1.0, 0.0, 0.0, 0.0])),
+        ("resource", "resource_factory", Statevector([1.0, 0.0])),
+    ):
+        outcomes = {
+            position: _terminal_event(
+                params,
+                plan,
+                **{
+                    seam: (
+                        (
+                            lambda state, context, position=position, bad=bad: (
+                                bad if context.position == position else state
+                            )
+                        )
+                        if seam == "payload_map"
+                        else (
+                            lambda context, position=position, bad=bad: (
+                                bad
+                                if context.position == position
+                                else ideal_resource()
+                            )
+                        )
+                    )
+                },
+            )
+            for position in positions
+        }
+        assert len(set(outcomes.values())) == 1, (
+            f"the {label} seam's terminal event names the branch: "
+            f"{sorted(set(outcomes.values()))}"
+        )
+
+    # -- the control, for both axes at once ------------------------------- #
+    #
+    # Each axis is scored by "how many distinct values did this observable
+    # take", so a probe that has stopped observing scores 1 and passes. The
+    # control is the same scorer applied to a synthetic PRE-FIX trace, which
+    # must take two values and must hand back exactly the check set.
+    pre_fix = {
+        position: ("watched" if position in watched else "signing")
+        for position in positions
+    }
+    assert len(set(pre_fix.values())) == 2
+    assert {p for p in pre_fix if pre_fix[p] == "watched"} == watched

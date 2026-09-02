@@ -36,14 +36,14 @@ inequalities. That yields a *provable* false-acceptance bound rather than an obs
 
 ## Threat model
 
-| Attack | What the adversary does | Detection signal | Measured (Phase 3) |
-| --- | --- | --- | --- |
-| **Forgery**, outside | Produces a signature without the signer's private key | Basis-mismatch count exceeds threshold; success decays exponentially in key length | mismatch `0.4956`/`0.5018` on a predicted `1/2`; acceptance `5/800` vs `0.0042` |
-| **Forgery**, forging recipient | Forwards his own measured log as the signature | Mismatch hits the `1/12` symmetrisation floor, *and* the matched count doubles to `2L/3` | acceptance `96/300 = 0.320` vs a predicted `0.3456` |
-| **Impersonation** | Poses as the signer during key distribution or signing | Mismatch rate — and *only* the mismatch rate; the matched counts do not move at all | `0/40` accepted at QBER ≈ `1/2` for either seam alone; `200/200` accepted for **both** seams, which assumption (AUTH) excludes and nothing detects |
-| **Replay** | Re-sends a previously valid (message, signature) pair | Consumed-records ledger; round identifier on every declaration | `100/100` → `0/100` with the defence; cross-session `0.115` → `0/100` |
-| **Channel manipulation** | Tampers with entanglement distribution (intercept-resend, kept share, injected noise) | Per-link QBER rises; CHSH falls from 2√2 — and the *per-link* form is what names the compromised party | QBER `0.0994`/`0.3306`/`0.3335` on predictions `p/2`, `1/3`, `1/3` |
-| **Count starvation** | A recipient understates his own matched count and denies the other a verdict | The declared count as a z-score: any successful starvation sits below `−11.54` honest standard deviations, at every key length | denial `20/20`, deterministic and free — one integer |
+| Attack | What the adversary does | Detection signal | Measured (Phase 3) | Detected (Phase 4) |
+| --- | --- | --- | --- | --- |
+| **Forgery**, outside | Produces a signature without the signer's private key | Basis-mismatch count exceeds threshold; success decays exponentially in key length | mismatch `0.4956`/`0.5018` on a predicted `1/2`; acceptance `5/800` vs `0.0042` | `40/40` detected, named as the substitution group |
+| **Forgery**, forging recipient | Forwards his own measured log as the signature | Mismatch hits the `1/12` symmetrisation floor, *and* the matched count doubles to `2L/3` | acceptance `96/300 = 0.320` vs a predicted `0.3456` | `40/40` both orderings; named **alone** after-forwarding, on Charlie's matched count |
+| **Impersonation** | Poses as the signer during key distribution or signing | Mismatch rate — and *only* the mismatch rate; the matched counts do not move at all | `0/40` accepted at QBER ≈ `1/2` for either seam alone; `200/200` accepted for **both** seams, which assumption (AUTH) excludes and nothing detects | `40/40` for either seam alone; **`0/40` for both**, reported as `undetectable-by-construction` under (AUTH) |
+| **Replay** | Re-sends a previously valid (message, signature) pair | Consumed-records ledger; round identifier on every declaration | `100/100` → `0/100` with the defence; cross-session `0.115` → `0/100` | `40/40` both orderings, named with recipient forgery — both hold the forwarding hop |
+| **Channel manipulation** | Tampers with entanglement distribution (intercept-resend, kept share, injected noise) | Per-link QBER rises; CHSH falls from 2√2 — and the *per-link* form is what names the compromised party | QBER `0.0994`/`0.3306`/`0.3335` on predictions `p/2`, `1/3`, `1/3` | `40/40` on all four attacks, at `check_fraction` `0.0` **and** `0.25` |
+| **Count starvation** | A recipient understates his own matched count and denies the other a verdict | The declared count as a z-score: any successful starvation sits below `−11.54` honest standard deviations, at every key length | denial `20/20`, deterministic and free — one integer | `40/40` both orderings, named **alone** |
 
 ## Security claims, stated honestly
 
@@ -59,6 +59,12 @@ bound quoted without its hypothesis is not a bound. Numbers are at `DEFAULT_PARA
 | **Non-repudiation**, a-priori | **`1.4e−09`** | **Nothing.** The three matched-count floors `verify.py` enforces, not an assumption about the signer. |
 | **Non-repudiation**, per completed run | `6.9e−10` on a healthy run | **Nothing.** Conditions on the run's own evidence, `M = m_B + m_C`. |
 | Robustness — honest run aborts | `< 1e−9` on a 1% depolarising channel | Standard channel model. The matched-count floors add `8.0e−31`. |
+
+Phase 4 adds a fourth, of a different kind — a bound on the *detector*, not on the protocol:
+
+| Property | Bound | Rests on |
+| --- | --- | --- |
+| **False alarm**, whole composite detector, per run | `3.3964e−10` at `L = 384`, `f = 0.25`, budget `1e−9` | A union bound over three families whose budgets are split by a written-down allocation. No independence is assumed, and none is available. Publish `Detection.false_positive_bound`, never the budget: they differ by `2.944×` here. |
 
 ### The correction a reader should know about
 
@@ -152,6 +158,53 @@ the *ordering* of Phase C′ — not the ledger and not the round binding — an
 is now written down. Both obvious repairs are worse: spending only on acceptance would give
 an adaptive adversary unlimited tries at one round.
 
+## What Phase 4 found
+
+The detection engine. Every threshold comes from a **stated null and a named inequality**,
+inverted at a false-positive budget passed in as an argument — never from a number that
+separated the attack data. Full account in [`docs/PHASE4.md`](docs/PHASE4.md).
+
+**The distinction that whole phase exists to defend.** A fitted detector reports "97%
+accurate on our data". This one reports *"the probability of a false alarm is at most
+`3.3964e-10`, and here is the derivation"*. That is not a stylistic preference: a threshold
+chosen because it separates the attack runs you happen to have silently caps the scheme's
+information-theoretic security at whatever your test set contained. Convention **D7** forbids
+it, and the test suite enforces it mechanically rather than by review — every threshold is
+required to be a *function of its budget*, swept across ten decades, unless its null is a
+point mass, in which case its proven false-positive probability must be **exactly zero**.
+
+**All five adversary families detected, `0/120` false alarms.** At `L = 384` and a budget of
+`1e-9`, 40 runs per arm: 18 of the 19 attack arms are at `40/40` with 99% Wilson intervals of
+`[0.8577, 1.0000]`. The nineteenth is *full* impersonation at `0/40`, which is assumption
+**(AUTH)** and is reported as `undetectable-by-construction` rather than left blank — a
+hypothesis silently missing from a table reads as one that was ruled out. Detection is carried
+by the verifier's own mismatch rate: every channel attack is caught at `check_fraction = 0.0`,
+where the whole channel family is unevaluable and contributes nothing.
+
+**Ten of the twenty-two thresholds cost exactly nothing.** Their nulls are point masses: on a
+noiseless honest run the event is outside the outcome space, not merely improbable, so a
+detector firing on it has a false-positive probability of exactly `0` at every budget and
+every key length. The cost is stated with the claim — it is a claim about a *noiseless* link,
+and on a genuinely noisy honest channel those same members fire, correctly, because the null
+was the wrong one for that deployment.
+
+**Publish `Detection.false_positive_bound`, never `eps`.** The composite rule is a union bound
+over three families whose budgets are split by a written-down allocation. At `L = 384`,
+`check_fraction = 0.25` and `eps = 1e-9` the three families *prove* `3.3964e-10` together —
+quoting the budget instead would overstate the detector's own false-alarm rate by a factor of
+`2.944`. The uncorrected OR of the same members proves `1.3442e-09` against the same budget:
+it overspends by a third while every component still looks correct on its own.
+
+**Route H is closed, and it was seven times wider than reported.** Phase 3 left one
+check-round side channel open with a proposed one-line shape check. Reproducing it first
+showed the asymmetry was never about shape — validation happened on one branch only, so
+*every* malformation `teleport` refuses named the branch at precision `1.0000`. The shipped
+fix validates the seam's answer above the branch against the precondition both branches share.
+The test written to close it then found a **ninth** route on its first run, and the general
+statement behind all of them is now asserted directly rather than patched instance by
+instance: *any component of a seam's interaction trace that varies with the branch is a
+channel, so the trace must take exactly one value over the positions of a link.*
+
 ### The rule that makes the numbers mean anything
 
 Convention **D6**: every adversary takes its own `numpy.random.Generator` and never derives
@@ -197,7 +250,18 @@ the last two together, and the session a channel isolation probe runs. Each turn
 tests red and only those tests; the two seam mutations were measured against the *whole* suite
 and cost 10 failures and 6.
 
-Full suite: **2169 passed in 12 min 29 s**, up from 1421 at the end of Phase 2.
+Phase 4 adds **seven more**, each applied to its own copy of the tree: a threshold's derivation
+replaced by a constant, the family-wise correction removed in both directions (over-spending and
+under-reporting), **an abort folded into the rejection column**, the two route closures reverted,
+and the float dust put back in the protocol's Wilson interval. All seven go red. The third is
+Phase 3 constraint 4 and it is caught by a *type* rather than by a number that happens to come
+out right — `NoVerdictCount` refuses `+` with anything but another `NoVerdictCount`, so
+`rejected + refused` and `sum(...)` both raise.
+
+Full suite: **3036 passed, 0 failed, 0 skipped** — up from `2174` at the end of Phase 3 and
+`1421` at the end of Phase 2. Wall clock `2274 s` on this machine, measured while other
+verification scripts were running, so treat it as an upper bound; the load-bearing figure is
+`3036 / 3036`.
 
 ## Roadmap
 
@@ -207,7 +271,7 @@ Full suite: **2169 passed in 12 min 29 s**, up from 1421 at the end of Phase 2.
 | 1 | Quantum core — Pauli algebra, Bell states, projective measurement, teleportation | ✅ Complete |
 | 2 | QDS protocol — key distribution, signing, verification, transferability | ✅ Complete |
 | 3 | Attack suite — the four adversaries above, plus count starvation and realistic channel noise | ✅ Complete |
-| 4 | Detection engine — QBER, CHSH, mismatch statistics, Hoeffding-derived thresholds | ⬜ |
+| 4 | Detection engine — QBER, CHSH, mismatch statistics, **derived** thresholds and a family-wise bound | ✅ Complete |
 | 5 | Evaluation — forgery probability vs. key length, ROC, FAR/FRR, benchmarks | ⬜ |
 | 6 | Web dashboard — live attack/detection demo | ⬜ |
 | 7 | Submission docs — mathematical modelling and security analysis | ⬜ |
@@ -268,6 +332,19 @@ sih141/attacks/    the adversaries (Phase 3)
   channel.py       depolarising twirl, intercept-resend, kept share — on both the
                    entanglement line and the payload line, targetable per party
   starvation.py    a recipient who understates his own matched count
+sih141/detect/     the detection engine (Phase 4)
+  statistics.py    everything a detector may legitimately read, extracted from a
+                   JSON round-tripped transcript and nothing else — each statistic
+                   carrying the honest-run null it is read against
+  thresholds_rate.py        the rate and count family: mismatch rate, the two
+                   matched counts, the Phase C′ wire counts, the pooled count
+  thresholds_channel.py     the channel family: check-round QBER, CHSH, and the
+                   three resource diagnostics — per link, per bit, never pooled
+  thresholds_structural.py  the structural family: aborts, replay refusals and run
+                   shape, three of them at a false-positive probability of exactly
+                   zero
+  detector.py      the composite rule, the allocation of the budget over the three
+                   families, and the union bound that recombines them
 tests/             pytest suite
 docs/              engineering notes per phase
 ```
@@ -304,3 +381,17 @@ docs/              engineering notes per phase
    in the attack suite compares against a band of four sampling standard errors at the
    *predicted* rate. A tolerance chosen by eye either passes a broken attack or fails a
    correct one on an ordinary draw, and both failures are silent.
+8. **Thresholds are derived, never tuned** (Phase 4, convention D7). Every threshold this
+   project ships comes from a null distribution written down and a named concentration
+   inequality inverted at a false-positive budget the caller passes in. You may look at
+   honest-run data to *check* that a derived threshold behaves as derived; you may not look
+   at attack data to *choose* one. The rule is enforced mechanically rather than by review:
+   each threshold is swept across ten decades of budget and required to move with it, unless
+   its null is a point mass — in which case its proven false-positive probability must be
+   exactly zero, which is a stronger claim and is asserted as one.
+9. **The detector reads a JSON round-tripped transcript and nothing else** (Phase 4). Not the
+   session object, not the adversary, not any harness state. A detection rate measured by
+   something that can see the adversary's log is not a detection rate, it is a restatement of
+   the ground truth. `TranscriptStatistics.from_transcript` is *defined* as
+   `from_json(t.to_json())`, so the boundary is the code rather than a convention, and a test
+   reads the package's own source to assert it never imports `sih141.attacks`.

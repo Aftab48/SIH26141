@@ -186,8 +186,8 @@ key is drawn at full length and sifted afterwards.
 The one thing this module has to get right is that **nothing distinguishes a
 check round from a key round on the wire**, because an adversary who could tell
 them apart would behave on the ones that are watched and misbehave on the ones
-that are not, and every estimate here would be a fiction. Four invariants
-secure it, and all four are tested:
+that are not, and every estimate here would be a fiction. Five invariants
+secure it, and all five are tested:
 
 * **Every seam is called on every position**, in the same order, with the same
   :class:`ResourceContext`, before the branch is taken. That is the
@@ -221,6 +221,30 @@ secure it, and all four are tested:
   asserts that the same scorer *does* recover the set from a deliberately
   unbalanced control, so a probe that has stopped measuring anything cannot
   pass quietly.
+* **A malformed answer is refused identically on both branches.** With the
+  calls and the reads equalised, *whether the run survived* became the next
+  spelling of the same idea: a key round handed the mapped payload to
+  :func:`~sih141.core.teleport.teleport`, which validated it, while a check
+  round discarded it unexamined, so one malformed payload at one position named
+  that position's branch exactly (route H). It was reported as a two-qubit
+  state, but the asymmetry was never about shape -- **validation happened on
+  one branch only**, so all seven malformation families ``teleport`` refuses
+  recovered the check set at precision 1.0 and recall 1.0. Both state seams now
+  validate at the seam, above the branch, against the precondition the branches
+  share: :func:`_map_payload` calls the payload validator ``teleport`` itself
+  calls, and :func:`_draw_resource` checks the two-qubit precondition that
+  ``teleport`` and
+  :func:`~sih141.protocol.checkrounds.observe_qber_round` were each spelling
+  separately -- which is how the *raise site* of a malformed resource was still
+  naming the branch after its exception class had stopped (route I). The
+  general statement, and the test that asserts it rather than the instance, is
+  in ``docs/PHASE3.md`` section 12: any component of a seam's interaction trace
+  that varies with the branch is a channel, so the trace must take exactly one
+  value over the positions of a link.
+  ``test_a_malformed_payload_no_longer_says_which_branch_a_position_took``,
+  ``test_the_resource_seam_refuses_a_malformed_pair_from_one_place`` and
+  ``test_a_seams_interaction_trace_is_constant_over_the_positions_of_a_link``
+  pin it, each with a pre-fix control.
 * **Exactly three variates are consumed per position, on both branches.** A key
   round spends them on the recipient's basis draw, the Bell measurement inside
   :func:`~sih141.core.teleport.teleport`, and the recipient's projective
@@ -310,8 +334,14 @@ from qiskit.quantum_info import DensityMatrix, Statevector
 from sih141.core.measure import projective_measure
 from sih141.core.paulis import PauliBasis
 from sih141.core.rng import resolve_rng
-from sih141.core.states import BellState, StateLike, bell_state
-from sih141.core.teleport import teleport
+from sih141.core.states import BellState, StateLike, _coerce_state, bell_state
+# `_payload_state` is imported rather than reimplemented for the same reason
+# `teleport` imports `_coerce_state` from `states`: so that "a payload teleport
+# would accept" has exactly ONE definition in the tree. `_map_payload` enforces
+# it above the branch and `teleport` enforces it again for its other callers;
+# two enforcement points, one rule, and no way for them to drift apart
+# (:ref:`payload-seam`).
+from sih141.core.teleport import _payload_state, teleport
 from sih141.protocol.checkrounds import (
     CheckLog,
     CheckRoundPlan,
@@ -622,11 +652,90 @@ def _map_payload(
     TypeError
         If ``payload_map`` is not callable.
     ValueError
-        If it returned ``None``. ``teleport`` would raise on ``None`` anyway,
-        but from inside the payload validator and without saying which position
-        or which recipient produced it; a seam is worth naming when it
-        misfires, because the alternative is an attack author reading a
-        traceback about state coercion.
+        If it returned ``None``, or anything
+        :func:`~sih141.core.teleport.teleport` would refuse as a payload --
+        wrong qubit count, unnormalised, non-Hermitian, not positive
+        semidefinite, non-finite, not a power-of-two dimension, or not a state
+        at all. Raised **here**, above the branch, on every position, which is
+        the whole point: see the note below.
+
+    Notes
+    -----
+    **The validation is above the branch because a validator below one is an
+    oracle.** This is route H of :ref:`check-round-lockstep`, and it is the
+    fourth spelling of one idea. A key round used to be the only branch that
+    looked at the mapped payload at all -- it handed it to
+    :func:`~sih141.core.teleport.teleport`, which validated it -- while a check
+    round discarded it unexamined. So *whether the run survived* named the
+    branch, exactly and with no statistics: a seam that returned one malformed
+    payload at one position learned that position's role from the presence or
+    absence of a traceback.
+
+    It was reported as a two-qubit state making ``teleport`` raise, but the
+    asymmetry was never about shape. It was that **validation happened on one
+    branch only**, so every malformation ``teleport`` refuses was the same
+    oracle. Measured at ``L = 32``, ``check_fraction = 0.25``, session seed
+    ``555``, one probe run per position of Bob's link, scored against that
+    link's reserved set: a two-qubit state, an unnormalised statevector, a
+    non-Hermitian density matrix, one with a negative eigenvalue, a ``NaN``
+    amplitude, a dimension-3 array and a bare string each recovered the check
+    set at precision ``1.0000`` and recall ``1.0000`` against a base rate of
+    ``0.1250`` -- seven spellings, not one.
+
+    The fix is therefore not a shape check but the *whole* payload
+    precondition, applied at the seam and identically on both branches, using
+    the very function ``teleport`` uses so the two cannot diverge. The
+    validated object is **discarded**: what is returned is the adopted copy,
+    unchanged, so no honest number moves. Adoption happens first and validation
+    reads the copy, so the seam's own object is still read exactly once and
+    route E stays closed.
+
+    ``teleport``'s own check is not removed and must not be. It is a public
+    function with callers that never come through here, and its precondition is
+    its own; what this adds is enforcement of *this seam's* contract at *this
+    seam*, which is where the ``None`` half of the same contract was already
+    enforced.
+
+    Examples
+    --------
+    All seven measured spellings of route H are refused by one rule, in one
+    place, with one message -- which is what makes this a fix to the family
+    rather than to the instance that was reported:
+
+    >>> import numpy as np
+    >>> from qiskit.quantum_info import DensityMatrix, Statevector
+    >>> from sih141.protocol.distribute import _map_payload, ResourceContext
+    >>> from sih141.protocol.params import Party
+    >>> context = ResourceContext(
+    ...     party=Party.BOB, message_bit=0, position=7)
+    >>> malformed = [
+    ...     Statevector([1.0, 0.0, 0.0, 0.0]),                  # two qubits
+    ...     Statevector(np.array([2.0, 0.0])),                  # unnormalised
+    ...     DensityMatrix(np.array([[0.5, 1.0], [0.0, 0.5]])),  # non-Hermitian
+    ...     DensityMatrix(np.diag([2.0, -1.0])),                # negative eig
+    ...     np.array([np.nan, 0.0], dtype=complex),             # non-finite
+    ...     np.array([1.0, 0.0, 0.0]),                          # dimension 3
+    ...     "not a state at all",
+    ... ]
+    >>> def refused(bad):
+    ...     try:
+    ...         _map_payload(lambda state, ctx: bad,
+    ...                      Statevector([1.0, 0.0]), context)
+    ...     except ValueError as exc:
+    ...         return str(exc).startswith(
+    ...             "payload_map returned a state teleport cannot send, "
+    ...             "for Bob at key position 7 of message bit 0")
+    ...     return False
+    >>> [refused(bad) for bad in malformed]
+    [True, True, True, True, True, True, True]
+
+    A valid payload is returned untouched, and the honest line never reaches
+    the check at all -- ``payload_map=None`` returns first, which is why an
+    honest run is bit-identical either side of this change:
+
+    >>> sent = _map_payload(None, Statevector([1.0, 0.0]), context)
+    >>> sent.data.round(6)
+    array([1.+0.j, 0.+0.j])
     """
     if payload_map is None:
         return payload
@@ -647,7 +756,23 @@ def _map_payload(
             f"identity_payload(state, context) -- to send the eigenstate "
             f"unaltered."
         )
-    return _adopt_state(mapped)
+    adopted = _adopt_state(mapped)
+    try:
+        # Validate the ADOPTED COPY, never the seam's own object: the copy is
+        # what a key round would have teleported, and reading the seam's object
+        # a second time here would put the read tally back at 2 (route E).
+        _payload_state(adopted)
+    except (TypeError, ValueError) as exc:
+        # Same exception class, same raise site, same message, on both
+        # branches. `raise ... from exc` keeps teleport's own diagnosis
+        # readable for the attack author while the seam and the hop are named
+        # here, exactly as they are for a `None` return.
+        raise ValueError(
+            f"payload_map returned a state teleport cannot send, for "
+            f"{context.party.value} at key position {context.position} of "
+            f"message bit {context.message_bit}: {exc}"
+        ) from exc
+    return adopted
 
 
 def _resolve_factory(
@@ -790,11 +915,8 @@ def _draw_resource(
     -------
     StateLike
         What the factory returned, **adopted** by :func:`_adopt_state` -- same
-        representation, same numbers, a copy this module owns. Its physicality
-        and qubit count are still checked downstream, by
-        :func:`sih141.core.teleport.teleport` on a key round and by
-        :func:`~sih141.protocol.checkrounds.observe_qber_round` or
-        :func:`~sih141.protocol.checkrounds.observe_chsh_round` on a check one.
+        representation, same numbers, a copy this module owns -- and validated
+        here, above the branch, against the precondition both branches share.
 
         The adoption is the fix for the resource read-count side channel: the
         factory's object used to be read once on a key round and twice on a
@@ -812,7 +934,42 @@ def _draw_resource(
         If the factory returned ``None``. Forwarding it would silently select
         the *ideal* pair inside :func:`~sih141.core.teleport.teleport`, so a
         mis-wired attack would look like a perfect channel and a Phase 3 test
-        would pass vacuously.
+        would pass vacuously. Also if it returned anything that is not a
+        physical two-qubit state -- see the note below.
+
+    Notes
+    -----
+    **Route I: the raise site was the branch, even though both branches
+    raised.** Route H was closed on the payload line by validating above the
+    branch, and the same probe was then pointed at this seam. A malformed
+    resource does raise on both branches -- which is what the previous round
+    checked, and it is true -- but the two branches spell the *arity* half of
+    the same precondition in two different functions, so the traceback named
+    the branch even when the exception class did not. Measured at ``L = 32``,
+    ``check_fraction = 0.25``, session seed ``555``, one probe run per
+    position of Bob's link: a one-qubit resource refused from
+    ``teleport._resource_density`` at every key position and from
+    ``session._as_pair`` at every check position -- precision ``1.0000``,
+    recall ``1.0000`` against a base rate of ``0.1250``. An adversary holding
+    this seam is code in the same process and reads a traceback in three
+    lines, so "both branches raise" was never sufficient; "both branches raise
+    *identically*" is.
+
+    It is narrower than route H was -- one malformation family rather than
+    seven, because the *physicality* half of the precondition already routed
+    through one shared helper (:func:`~sih141.core.states._coerce_state`) on
+    both branches and so already refused from one place. Only the qubit count
+    was spelled twice: :func:`~sih141.core.teleport._resource_density` on a key
+    round, :func:`~sih141.protocol.checkrounds._as_resource` on a check one.
+    Both spell *the same rule* -- ``as_density`` followed by
+    ``num_qubits == 2`` -- so hoisting it here introduces no new rule and
+    changes no accepted input; it moves an existing shared precondition above
+    the branch that made its location observable.
+
+    ``_coerce_state`` is called rather than ``_resource_density`` because it is
+    the validator both branches already reach, and because it does not build
+    the density matrix neither branch would use: ``3.5 us`` per position
+    against ``10.2 us``, on a position that costs about ``486 us``.
     """
     resource = (
         resource_factory(context)  # type: ignore[call-arg]
@@ -829,7 +986,23 @@ def _draw_resource(
             f"from a clean channel. Return ideal_resource() explicitly if a "
             f"clean pair is what you meant."
         )
-    return _adopt_state(resource)
+    adopted = _adopt_state(resource)
+    try:
+        # The ADOPTED COPY again, never the factory's own object: reading that
+        # a second time here would put the resource read tally back at 2 and
+        # undo route D.
+        if _coerce_state(adopted).num_qubits != 2:
+            raise ValueError(
+                f"a resource must be a two-qubit state (the shared entangled "
+                f"pair), got {_coerce_state(adopted).num_qubits} qubits."
+            )
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"resource_factory returned a state the protocol cannot use, for "
+            f"{context.party.value} at key position {index} of message bit "
+            f"{context.message_bit}: {exc}"
+        ) from exc
+    return adopted
 
 
 def _resolve_verifier(party: Party | str) -> Party:

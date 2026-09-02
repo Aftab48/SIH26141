@@ -79,8 +79,9 @@ is read exactly once at every position; the timing route is **not** closed, is o
 simulator's scope by an argument set out in full in §12, and carries the named assumption
 **(NO-TIMING)** that every check-round statistic in this document depends on. Closing the three
 turned up an eighth route — a malformed payload raises on a key round and is discarded on a
-check round, so "did the run survive" is the branch — which is reported rather than fixed, with
-its threat model and its one-line remedy, in §12. Nothing an honest or an attacked run computes
+check round, so "did the run survive" is the branch — which was reported rather than fixed at
+the time and has since been **closed in Phase 4**, along with a ninth found by the test written
+to close it. Both, and the invariant behind the whole family, are in §12. Nothing an honest or an attacked run computes
 changed: transcripts, verdicts, check logs and adversary logs are byte-identical to `adee91b`
 at every seed tried, honest, monitored and attacked.
 
@@ -916,9 +917,14 @@ Four exceptions, named so that the sentence above stays true. §12's read-count 
 spare-the-watched figures are reproduced by
 `test_no_seam_learns_the_check_set_by_counting_its_own_reads`,
 `test_the_payload_seams_answer_is_read_once_on_both_branches` and
-`test_a_spare_the_watched_adversary_no_longer_finds_the_watched_rounds`. §12's route-H figure
-is reproducible from the probe, parameters and seed printed beside it, and is pinned by **no**
-test, because that route is reported rather than fixed. §12's route-G timing and equalisation-cost figures are pinned by
+`test_a_spare_the_watched_adversary_no_longer_finds_the_watched_rounds`. §12's route-H and route-I
+figures are reproducible from the probe, parameters and seed printed beside them, and both
+routes are now pinned by tests —
+`test_a_malformed_payload_no_longer_says_which_branch_a_position_took`,
+`test_the_resource_seam_refuses_a_malformed_pair_from_one_place` and
+`test_a_seams_interaction_trace_is_constant_over_the_positions_of_a_link`, each carrying a
+synthetic pre-fix control so that a probe which has stopped observing cannot pass by observing
+nothing. §12's route-G timing and equalisation-cost figures are pinned by
 no test **and cannot be** — a wall-clock assertion is an assertion about the machine, and would
 be flaky by construction. §9.4's two CHSH half-widths are **derived** — the algebra is printed with them —
 and the 300-seed distribution quoted against them is a measurement made once, for the
@@ -943,13 +949,14 @@ reason about either. What is new is that one side channel **inside** the harness
 measured, and is being left open on purpose — so the boundary has to be stated where a reader
 will meet it, rather than inferred from the absence of a section.
 
-### The eight routes, and where each one ended up
+### The nine routes, and where each one ended up
 
 An adversary who learns which positions are check rounds can spare exactly those and corrupt
 the rest: the published QBER goes to zero over a key that is damaged just as badly. Seven
-routes to that knowledge were found across two hardening rounds, and an eighth turned up while
-the second round was closing the others. Six are closed; two are open and each is open for its
-own reason, set out below the table.
+routes to that knowledge were found across two hardening rounds, an eighth turned up while the
+second round was closing the others, and a ninth was found in Phase 4 by the test written to
+close the eighth. **Eight are closed; one — timing — is open, and is out of scope for the
+reason set out below the table.**
 
 | | Route | How it worked | Status |
 | --- | --- | --- | --- |
@@ -960,7 +967,8 @@ own reason, set out below the table.
 | E | payload read-count | the mapped payload was read by `teleport` on a key round and by nothing on a check round: *being used* replaced *being called* | **closed** — same adoption |
 | F | monitor mapping consumed | the mapping was **iterated** only where a `ChannelSample` was built | **closed** — consumed at every hop, in `_call_monitor` |
 | G | **timing** | a check round measures both wings; a key round teleports and measures one. The wall-clock gap between consecutive seam calls classifies the branch, with no instrumentation of any kind | **open, and out of scope — this section** |
-| H | **the raise oracle** | a malformed payload — a two-qubit state where one is expected — makes `teleport` raise on a key round and is silently discarded on a check round, so *whether the run survived* is the branch. One bit per run, exact | **open, reported not fixed — below** |
+| H | **the raise oracle** | a malformed payload makes `teleport` raise on a key round and is silently discarded on a check round, so *whether the run survived* is the branch. One bit per run, exact — and **seven** malformation families wide, not the one that was reported | **closed** — the payload precondition is enforced at the seam, above the branch |
+| I | **the raise *site*** | a malformed *resource* raises on both branches, but from two different functions, so the traceback named the branch even though the exception class did not | **closed** — found by the branch-blindness test, fixed the same way |
 
 D, E and F each recovered the whole set at precision `1.0000` and recall `1.0000` against a
 per-link base rate of `0.1250`, in one pass, with no statistics: an adversary returned an
@@ -1070,31 +1078,118 @@ discharge, because it does not model the apparatus at all. Saying so is the poin
 section: the exclusion is a statement about what has been modelled, not a claim that the
 problem does not exist.
 
-### Route H, found while closing D–F, reported rather than fixed
+### Routes H and I, closed in Phase 4 — and route H was seven times wider than reported
 
-`_map_payload` accepts whatever the seam returns; a **key** round then hands it to `teleport`,
-which refuses anything but a one-qubit state, and a **check** round discards it unexamined. So
-a payload map that returns a two-qubit state at exactly one position turns "did the run raise"
-into a clean read of that position's branch. Measured at `L = 32`, `check_fraction = 0.25`,
-session seed `555`: probing all 32 positions of Bob's link recovers `{8, 19, 25, 30}`, which is
-that link's reserved set exactly — precision `1.0000`, recall `1.0000`.
+**Route H as it was reported.** `_map_payload` accepts whatever the seam returns; a **key**
+round then hands it to `teleport`, which refuses anything but a one-qubit state, and a
+**check** round discards it unexamined. So a payload map that returns a two-qubit state at
+exactly one position turns "did the run raise" into a clean read of that position's branch.
+Reproduced before anything was changed, at `L = 32`, `check_fraction = 0.25`, session seed
+`555`: probing all 32 positions of Bob's link recovers `{8, 19, 25, 30}`, that link's reserved
+set exactly — precision `1.0000`, recall `1.0000`, against a per-link base rate of `0.1250`.
 
-It is left open, and the reason is that it is a **different and weaker threat model** than
-A–G, not that it is hard to close. Each probe destroys the run it is made in, so the adversary
-learns one bit and forfeits the session; to turn that into a spare-the-watched attack it must
-re-run the *same recipient stream* `L` times and then attack it once more. Inside this harness
-that is a fixed seed. In a deployment it is the recipients reusing their randomness across
-sessions, which they must not do for reasons that have nothing to do with this route. The
-`resource_factory` seam carries no equivalent, checked and stated: a malformed *resource*
-raises on both branches — `teleport` on a key round, `observe_qber_round` on a check one — so
-there is no oracle there.
+**The asymmetry was never about shape, and that is why the proposed one-line fix was not the
+right one.** A shape check would have closed one spelling. The actual cause is that
+**validation happened on one branch only**, so *every* malformation `teleport` refuses was the
+same oracle. Measured at the same parameters, one probe run per position:
 
-The fix, if it is wanted, is one shape check: refuse a mapped payload that is not one qubit in
-`_map_payload`, before the branch, so the refusal is identical on both. That is the same
-principle that closed D–F and it costs an array-shape comparison per position. It is not
-applied here because it changes an error path — which exception a mis-wired attack meets, and
-where — and that is a decision for whoever owns the next round rather than a side effect of
-this one.
+| malformed payload | nominated | precision | recall |
+| --- | --- | --- | --- |
+| two-qubit state (the reported route) | 4 | `1.0000` | `1.0000` |
+| unnormalised statevector | 4 | `1.0000` | `1.0000` |
+| non-Hermitian density matrix | 4 | `1.0000` | `1.0000` |
+| density matrix with a negative eigenvalue | 4 | `1.0000` | `1.0000` |
+| `NaN` amplitude | 4 | `1.0000` | `1.0000` |
+| dimension 3 (not a power of two) | 4 | `1.0000` | `1.0000` |
+| a bare string | 4 | `1.0000` | `1.0000` |
+
+Seven spellings, one cause. A shape check would have left six of them open.
+
+**What shipped.** `_map_payload` adopts the seam's answer as before, then validates the
+**copy** against the payload precondition `teleport` itself enforces — by calling the very
+function `teleport` calls, so there is exactly one definition of "a payload teleport accepts"
+in the tree and the two cannot drift. The refusal is therefore identical on both branches:
+same exception class (`ValueError`, unchanged), same raise site (`distribute.py:_map_payload`),
+same message. Adoption happens *first* and the validation reads the copy, so the seam's own
+object is still read exactly once and route E stays closed.
+
+`teleport`'s own check is not removed and must not be: it is a public function with callers
+that never come through here, and its precondition is its own. Two enforcement points, one
+rule. The seam is where the *contract* is enforced — the `None` half of the same contract was
+already enforced there — and the general reason is the one in the next subsection: a validator
+placed below a branch **is** a branch-dependent observable.
+
+**Route I, which the closing test found on its first run.** The previous round checked that a
+malformed *resource* raises on **both** branches and concluded the resource line carried no
+equivalent. The first half is true; the second did not follow. Both branches raised
+`ValueError`, but from two different functions, because they spell the *arity* half of one
+shared precondition in two places — `teleport._resource_density` on a key round and
+`checkrounds._as_resource` on a check one. An adversary holding that seam is code in the same
+process and reads a traceback in three lines. Measured at the same parameters, and confirmed
+present at `HEAD` before this round touched anything, so it was found rather than introduced:
+a one-qubit resource refused from `teleport` at every key position and from `session._as_pair`
+at every check position — precision `1.0000`, recall `1.0000`.
+
+It was **one** family wide where H was seven, because the *physicality* half of the
+precondition already routed through one shared helper (`states._coerce_state`) on both
+branches and so already refused from one place. Hoisting the arity check to `_draw_resource`
+introduces no new rule and changes no accepted input.
+
+**What it cost.** Nothing an honest run can see, and this is shown rather than argued.
+`payload_map=None` returns before the payload check, so an honest run never reaches it; the
+resource check costs one `_coerce_state` per position, `3.5 µs` against a position that costs
+about `486 µs`, and `_coerce_state` is called rather than `_resource_density` precisely because
+it is the validator both branches already reach and does not build a density matrix neither
+branch would use (`10.2 µs`). Ten honest transcripts — `L ∈ {32, 192, 384}`,
+`check_fraction ∈ {0, 0.25}`, both message bits, plus explicit `payload_map=None` and
+`identity_payload` arms — hash **identically** under SHA-256 over `transcript.to_dict()` on
+either side of the change.
+
+**What the shipped validation guarantees.** For every position of every link, and for every
+object a seam can return: the mapped payload is refused if and only if `teleport` would refuse
+it, from one place, with one message; the drawn resource is refused if and only if it is not a
+physical two-qubit state, from one place, with one message. So the run's terminal event is a
+**constant** over the positions of a link, and a constant carries no bits. Scored both ways
+round, because "precision fell" must not be an artefact of an adversary made to guess the wrong
+side of a signal that is still there: nominating the survivors nominates nothing at all, and
+nominating the complement nominates every position at precision `0.1250`, which is exactly the
+per-link base rate. That is the same collapse routes D, E and F made (`1.0000 → 0.1250`).
+
+### The invariant behind A–F, H and I — asserted, not another instance
+
+Four rounds each closed the current spelling of one idea — a seam being **called** (A–C), the
+answer it returned being **read** (D, E), a mapping being **consumed** (F), and whether the run
+**survived** (H) — and each time the next spelling appeared. That is the signature of patching
+instances rather than the family. The general statement is:
+
+> **BRANCH-BLINDNESS.** An adversary at a seam observes the protocol only through that seam's
+> **interaction trace** — the calls it receives, the reads made of the objects it hands over,
+> and how the run terminated. Any component of that trace which varies with the branch is a
+> channel of exactly the width of its variation. So: over the positions of one link, the trace
+> must take exactly **one** value. A constant carries no bits.
+
+`test_a_seams_interaction_trace_is_constant_over_the_positions_of_a_link` asserts that
+directly, on both state seams and on both axes of the trace. The read probe records the ordered
+sequence of every **public attribute name** the protocol touches, rather than counting reads of
+`data` — an adversary does not have to instrument the attribute the last round happened to leak
+through, and `dims()`, `num_qubits` and `purity()` are all reads. The test needs no threshold:
+it asserts that the number of distinct traces is one, and carries a positive control that
+requires a synthetic **pre-fix** trace to hand the check set straight back, so a probe that has
+quietly stopped observing cannot pass by observing nothing.
+
+It found route I on its first run, which is the evidence that it is more than a restatement.
+
+Its limits are real and are stated rather than glossed:
+
+1. **It quantifies over the probes that can be written, not over every observable.** It is a
+   test, not an impossibility proof. A genuinely new *kind* of observable — neither a call, nor
+   a read of a handed-over object, nor the run's terminal event — needs a new probe, and the
+   invariant would then be asserted over that too.
+2. **It says nothing about wall-clock time.** The trace is causal, not temporal, by
+   construction. Route G is excluded here for the same reason it is excluded above, and an
+   assertion about a timing gap would be an assertion about the machine the suite runs on.
+3. **It is per-link and per-run.** Correlations *across* the runs of a session are a different
+   observable and are not in scope.
 
 ### What the exclusion costs — the conditioning, stated once and plainly
 
@@ -1105,9 +1200,9 @@ this one.
 > what closing routes A–F bought and what
 > `test_a_spare_the_watched_adversary_no_longer_finds_the_watched_rounds` asserts. Without it,
 > a timing-capable adversary **in this harness** can still spare the watched rounds, and the
-> published channel statistics would then understate the damage — to zero, in the limit. The
-> same conditioning covers route H, whose extra precondition — an adversary able to replay one
-> recipient stream `L` times — is stated with it above.
+> published channel statistics would then understate the damage — to zero, in the limit.
+> Timing is now the **only** route this assumption is carrying: routes H and I were closed in
+> Phase 4 and need no conditioning.
 
 Cite it the way §3 cites **(AUTH)**: as a stated assumption with a named boundary, not as an
 oversight.
@@ -1140,7 +1235,7 @@ Two things bound how much that assumption is carrying.
 | `tests/test_phase3_isolation_suite.py` | 52 tests, **14 s** |
 | `tests/test_attack_isolation.py` | 49 tests, **3 s** |
 | one `DEFAULT_PARAMS` session | minutes — out of reach for any repeated-trials measurement |
-| the **whole suite** (`python -m pytest`) | **2174 passed in 787.24s (0:13:07)** — was `2169 in 749.94s` before §12's four new tests and one new doctest |
+| the **whole suite** (`python -m pytest`) | **2174 passed in 787.24s (0:13:07)** — was `2169 in 749.94s` before §12's four new tests and one new doctest. *Phase 4 supersedes this: `3036 passed` — see `docs/PHASE4.md`.* |
 
 The heavy shipped tables (800 impersonation sessions at `L = 192`, 8 minutes; 2000 outside
 forgeries at `L = 30`) are **not** in the unit suite. What is in the suite is a smaller live
