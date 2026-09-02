@@ -8,7 +8,7 @@
 > on the maintainer's explicit instruction. The permanent record is
 > `docs/METRICS.md` and the `docs/PHASE*.md` notes.
 
-**120 entries** — 30 finding · 28 decision · 28 issue · 19 fix · 13 note · 2 deadend
+**140 entries** — 38 finding · 32 decision · 28 issue · 22 fix · 18 note · 2 deadend
 
 
 ## Phase 0 — Scaffold
@@ -4299,3 +4299,1352 @@ change a null without changing the sentence, and it fails.
 
 Final state: 88 tests in tests/test_detect_statistics.py plus the module
 doctests, all green; isolation smoke suite green.
+
+### `[D]` Structural thresholds: three checks at exactly zero, one at 3*2^-64
+
+*decision · impl:thresholds-structural · 2026-09-02T00:49:15Z*
+
+The structural family is four checks, and three of them are free.
+
+sih141/detect/thresholds_structural.py ships the STRUCTURAL half of the Phase 4
+threshold work: aborts, refusals and the shape of a run. Every threshold is a
+function of a false-positive budget eps, so a Phase 5 ROC sweep is a sweep over
+budgets rather than over knobs, and every one carries a null, a named
+inequality and a proven bound.
+
+WHAT WAS DERIVED
+
+  1. structural aborts -- null: point mass at 0. Each of the four reasons in
+     STRUCTURAL_ABORT_REASONS is an equality test on data the honest protocol
+     fixes (one session identifier stamped on both sides; one ledger asked
+     once; a provenance slot the shipped exchange always fills; two hashes of
+     one declaration). The event is outside the honest run's outcome space, so
+     P = 0 EXACTLY and the derived operating point is "fire at count >= 1" for
+     every eps in (0, 1). Same argument for replay refusals and for the six
+     run-shape equalities.
+
+  2. evidence aborts -- the only check in the family with a number.
+     {evidence >= 1} is contained in E_B u E_C u E_M with
+     E_R = {m_R < m_min} and E_M = {M < M_min}, because
+       EMPTY_MATCHED_SET(R)       subset of E_R      (m_min >= 1 always)
+       BELOW_FLOOR(R)             = E_R
+       COUNTERPART_BELOW_FLOOR(R) = E_(other R)
+       POOLED_BELOW_FLOOR(R)      = E_M
+     Union bound over the three. Each term in two exact regimes:
+       floor  > 1: {m < m_min} subset of {m <= (1-d0) mu} since ceil(x)-1 < x,
+                   so P <= exp(-d0^2 mu / 2) = eps0 by multiplicative Chernoff
+       floor == 1: the event is {m = 0}, probability exactly (1-p)^n
+     and the smaller of the two is taken where both apply -- which matters: at
+     n = 267 the floor is still 1 while the Chernoff form already applies, and
+     (2/3)^267 = 5.4e-48 against eps0 = 5.4e-20.
+
+     B_evid(n) = 2 b(n, m_min) + b(2n, M_min), and it is NOT MONOTONE IN n. An
+     exact term is replaced by the much looser Chernoff term the moment a floor
+     starts to bite, so it steps UP at n = 137 (pooled floor first exceeds 1)
+     and again at n = 273 (per-verifier floor):
+        n =  24   1.1881e-04
+        n =  96   2.4904e-17
+        n = 136   2.2523e-24
+        n = 137   5.4212e-20
+        n = 272   5.4210e-20
+        n = 273   1.6263e-19  = 3 eps0, and constant above
+     minimum_sifted_length therefore certifies the WHOLE TAIL -- smallest n
+     with B_evid(m) <= eps for every m >= n -- not the first n that fits.
+     19 at 1e-3, 36 at 1e-6, 53 at 1e-9, 87 at 1e-15, 104 at 1e-18.
+
+  3. THERE IS A BUDGET BELOW WHICH THE CHECK CANNOT BE OPERATED AT ALL.
+     B_evid tends to 3 eps0 = 1.6263e-19 and stays there, so for eps < 3 eps0
+     no key length reaches it. The threshold is then WITHHELD -- fires_at is
+     None and fires() returns False at every count -- rather than fired at a bar
+     the derivation does not reach. That is a genuine ROC point (true-positive
+     rate zero, by derivation) and it is the reason eps has to be an argument.
+     exact=True on evidence_abort_bound sums the tails instead of bounding
+     them and gives 8.0154e-31 at DEFAULT_PARAMS, matching the protocol's own
+     three-tail figure.
+
+     minimum_sifted_length deliberately has NO exact option, and the reason is
+     the quantifier: the closed form has a proven asymptote so "for every
+     m >= n" can be settled by a finite search, while the exact tail INCREASES
+     with key length (4.1e-37 at L=600 against 2.5e-31 at DEFAULT_PARAMS,
+     because the floor sits a fixed number of standard deviations below the
+     mean) and its limit has no closed form here. A finite search cannot
+     certify that quantifier, so the option is absent rather than wrong.
+
+  4. per reason, because "how strong is an abort" has eight answers.
+     abort_reason_bound: 0 exactly for the four structural, exact (1-p)^n for
+     EMPTY_MATCHED_SET, b(n, m_min) for BELOW_FLOOR and
+     COUNTERPART_BELOW_FLOOR, b(2n, M_min) for POOLED_BELOW_FLOOR. They are NOT
+     a partition to be summed: COUNTERPART_BELOW_FLOOR at Bob and BELOW_FLOOR
+     at Charlie are the SAME EVENT, so a per-(party, reason) table that totalled
+     them would double count. The run-level number is the union over the three
+     events.
+
+  5. the shortfall, and its collapse. {shortfall >= s} = {count <= floor - s},
+     so the same Chernoff tail inverts to
+       c(eps) = floor(mu - sqrt(2 mu ln(1/eps)))    s(eps) = max(1, floor - c)
+     AND IT COLLAPSES TO 1 AT EVERY eps >= 2**-64. The floors were calibrated
+     at the honest-abort budget and therefore already spend the whole of any
+     practical budget: the abort IS the threshold and its magnitude adds no
+     detection power. The knob only turns below 2**-64 -- 258 records at
+     DEFAULT_PARAMS and eps = 1e-25, 815 at 1e-40. Shipped because it is the
+     derived answer and Phase 5 sweeps the whole range; reported as a collapse
+     because claiming it separates anything at a usable budget would be exactly
+     the sort of thing this phase exists not to claim.
+
+"EVIDENCE WAS THIN" AGAINST "SOMEBODY MADE IT THIN" -- THE QUESTION RESOLVES
+
+The distinction the brief asks for does not need a second statistic. On a run
+whose floors bite, an honest evidence abort has probability at most 1.6263e-19,
+so an evidence abort IS somebody's doing at that false-positive cost, full stop.
+What remains is WHOSE, which is attribution and not detection: attribute_aborts
+reads it off the reason and the shortfall. A verifier refusing with
+COUNTERPART_BELOW_FLOOR names the OTHER verifier as the short one; own-count
+reasons name himself; the pooled reason names the pair and nobody in
+particular; the four structural reasons name no count at all.
+
+MEASURED (checking derived behaviour, never choosing a number), L = 384,
+m_min = 22, M_min = 106, eps = 1e-9 unless stated:
+
+  honest L=192, 100 runs               0 alarms, 0 shape violations
+  honest L=384, 40 runs                0 alarms  (also at eps 1e-3 and 1e-18)
+  honest L=384, eps = 1e-20            0 alarms, evidence check WITHHELD
+  count starvation, before-forwarding  40/40 evidence-abort
+  count starvation, after-forwarding   40/40 evidence-abort
+
+Under starvation the refusal is always COUNTERPART_BELOW_FLOOR at the denied
+verifier, shortfall 3..9 against a floor of 22 (the LEAST_IMPLAUSIBLE starver
+aims just under the headroom), and the per-refusal bound at the observed count
+runs around 1e-21 to 1e-23 -- below eps0, as the derivation says it must be.
+
+NEW RESULT WORTH HAVING: RECIPIENT FORGERY IS CAUGHT BY A STRUCTURAL ABORT, AT
+FALSE-POSITIVE PROBABILITY EXACTLY ZERO. A forwarding hop that substitutes a
+declaration makes the two Phase C' counts describe two declarations, and the
+digest check refuses on COUNTS_FROM_TWO_DECLARATIONS -- a STRUCTURAL reason, so
+the bound is 0, not 1.6e-19. Measured 40/40 under EACH count ordering, and the
+two orderings refuse at different verifiers (Charlie under
+COUNTS_BEFORE_FORWARDING, Bob under COUNTS_AFTER_FORWARDING), which is why they
+are reported as two groups and never averaged. This is a second, cheaper route
+to the same adversary Phase 3 caught on Charlie's matched count.
+
+THE THREE THAT STAY QUIET, CORRECTLY: a depolariser at 0.60 and an
+intercept-resend on Bob's link raise nothing, because the matched set is decided
+by BASIS agreement and a channel attack corrupts EIGENVALUES -- no floor moves.
+An outside forger raises nothing either and is REJECTED, which is a verdict and
+another family's business. Impersonation raises nothing at any scope, which is
+assumption (AUTH) restated as a measurement rather than argued around.
+
+THE NO-VERDICT API FIGHTS BACK RATHER THAN BEING DOCUMENTED
+
+Constraint 4 is absolute and prose does not enforce it, so:
+  - RunOutcome (ACCEPTED / REJECTED / REFUSED / NOT_ASKED) raises TypeError on
+    bool(). "if outcome:" and "if not accepted:" are the two shapes that fold a
+    refusal into a rejection and both now stop.
+  - NoVerdictCount is an int that refuses "+" with anything but another
+    NoVerdictCount -- so tally.rejected + tally.refused raises, and so does
+    sum(), which starts at 0. Deliberate totals go through
+    NoVerdictCount.total.
+  - OutcomeTally has four counts and NO field that sums two of them, and
+    merge() refuses two tallies whose count_exchange_timing differs, which is
+    Phase 3's other pooling rule enforced by the type.
+  - StructuralAlarm carries no accepted and no rejected field, and
+    StructuralReport.detection_alarms excludes RUN_SHAPE, which is a statement
+    about the transcript FILE and not about any adversary.
+
+Nothing in the family is conditioned on (NO-TIMING): every statistic it reads is
+a property of the key or of the run's own bookkeeping, never of the check-round
+sample. Worth stating because LinkStatistics is.
+
+FILES: sih141/detect/thresholds_structural.py, tests/test_detect_structural.py.
+Nothing in sih141/detect/__init__.py was touched -- two other threshold agents
+are writing at the same moment; the exports are listed in the hand-off note.
+
+### `[*]` AbortStatistics.honest_bound understates a proven bound, and is a constant where the truth is a function of n
+
+*finding · impl:thresholds-structural · 2026-09-02T00:49:47Z*
+
+AbortStatistics.honest_bound is 2 * 2**-64 where the union is over three events.
+
+WHERE. sih141/detect/statistics.py, AbortStatistics.honest_bound, set at both
+construction sites to 2.0 * HONEST_ABORT_BUDGET and documented as "the
+run-level bound on evidence > 0 under the honest null", with the class
+docstring saying "an honest verifier trips one with probability at most 2**-64
+and an honest run with probability at most honest_bound".
+
+WHY IT IS NOT PROVEN. The four members of EVIDENCE_ABORT_REASONS are implied by
+three distinct events, not two:
+
+    E_B = {m_B < m_min}     E_C = {m_C < m_min}     E_M = {M < M_min}
+
+    EMPTY_MATCHED_SET(R)       subset of E_R
+    BELOW_FLOOR(R)             = E_R
+    COUNTERPART_BELOW_FLOOR(R) = E_(other R)
+    POOLED_BELOW_FLOOR(R)      = E_M
+
+M_min > 2 m_min strictly wherever either floor is non-degenerate (verify.py's
+pooled-floor section proves the margin is (2 - sqrt 2) A and grows like sqrt L),
+so E_M is not implied by E_B u E_C and is not implied by their complement
+either: all three are genuinely distinct events, each bounded by eps0. The
+union bound gives 3 eps0 = 1.6263e-19, not 2 eps0 = 1.0842e-19.
+
+This is not a new derivation. sih141/protocol/verify.py already says it, in the
+matched-count-floor section: "an honest run -- two verifiers plus the pooled
+check of pooled-floor -- with probability at most 3 eps by a union bound", and
+tests/test_protocol_reconciliation.py asserts whole_run <= 3.0 *
+HONEST_ABORT_BUDGET. The detect layer's copy has one term fewer than the layer
+it is summarising.
+
+SECOND HALF OF THE SAME FINDING: THE VALUE IS A CONSTANT WHERE THE TRUTH IS A
+FUNCTION OF n. The floors degenerate to 1 at short keys, where the only
+reachable evidence reason is an empty matched set and the honest probability is
+exactly (1-p)^n. That is 2.4904e-17 at n = 96 and 1.1881e-04 at n = 24, both
+ABOVE the constant 2 eps0, so the field is optimistic at the short end as well
+as at the long one. A detector firing on an abort at a demonstration key length
+is not making a 2**-64 claim, and a Phase 5 table that quoted honest_bound
+there would be off by thirteen orders of magnitude in the wrong direction.
+
+WHAT THIS MODULE DOES ABOUT IT. thresholds_structural.evidence_abort_bound
+computes its own union from the run's own sifted n, in the two exact regimes,
+and never reads AbortStatistics.honest_bound. Its answers:
+
+    n =  24   1.1881e-04       (both floors degenerate; exact)
+    n =  96   2.4904e-17       (both floors degenerate; exact)
+    n = 136   2.2523e-24
+    n = 137   5.4212e-20       (pooled floor first exceeds 1)
+    n = 272   5.4210e-20
+    n = 273   1.6263e-19       (per-verifier floor exceeds 1; constant above)
+
+and with counts_exchanged=False the pooled term drops and the asymptote is
+2 eps0 -- which is the one case where the layer below's constant is right, and
+it is right for a reason the field does not record.
+
+PINNED SO IT CANNOT BE FIXED SILENTLY OR FORGOTTEN QUIETLY.
+tests/test_detect_structural.py::test_the_layer_below_still_reports_two_epsilon_and_this_module_does_not
+asserts the current value AND asserts that this module's bound is the larger,
+provable one. The day somebody fixes statistics.py, that test fails and says
+which side was right -- deliberately, on the pattern the same file already uses
+for the protocol's Wilson float dust. It is not asserting that 2 eps is
+correct.
+
+NOT FIXED HERE. sih141/detect/statistics.py belongs to the layer-one author and
+two other threshold agents are writing into the same package this moment; a
+one-line constant change that moved a documented bound under three concurrent
+readers is not worth the collision. The fix, when somebody takes it, is to
+compute honest_bound from the run's own params -- the layer already has scored,
+minimum_matched_count and minimum_pooled_matched_count in _extract -- rather
+than to change 2.0 to 3.0, because the constant is wrong in both directions and
+only the function is right in both.
+
+### `[D]` Five channel thresholds, four exactly-zero nulls, and the union bound that pays for the fifth
+
+*decision · impl:thresholds-channel · 2026-09-02T00:53:21Z*
+
+FAMILY: the five CHANNEL thresholds, all derived, none tuned.
+
+sih141/detect/thresholds_channel.py ships QBER, CHSH (detection and
+certificate), fidelity, purity and concurrence. Every one is a function of a
+false-positive budget eps and of nothing else except the link's own sample size
+and one externally supplied noise level p0. No number in the module was chosen
+because it separated anything; each is a closed-form inversion whose algebra is
+printed in the module docstring and whose numbers are doctests.
+
+THE NULLS AND THE INEQUALITIES
+
+  1. QBER. Conditional on the check plan the link's QBER rounds are independent
+     trials, so H0(p0) is Binomial(n, q0) with q0 = p0/2 (the protocol's own
+     check-round identity). Conditioning is free: a bound that holds for every
+     plan holds on average over plans, and the plan is drawn from the
+     recipients' stream so it is independent of the channel. Three inversions
+     ship - exact binomial tail (default), multiplicative Chernoff, additive
+     Hoeffding - because the choice is worth a factor of 2.3 in detection power
+     at the same proven budget (see the finding entry).
+  2. CHSH detection. H0(p0) has E[S] = (1-p0) 2 sqrt 2. S is a function of
+     N independent round outcomes with bounded differences 2/n_c per round of
+     cell c, so sum_i c_i^2 = 4 sum_c 1/n_c and McDiarmid gives
+     P(S <= S0 - t) <= exp(-t^2 / (2 sum_c 1/n_c)), inverting to
+     t(eps) = sqrt(2 ln(1/eps) sum_c 1/n_c).
+  3. CHSH certificate. Different null - S_true <= 2 - and the OTHER tail:
+     observing S > 2 + t(eps) licenses "entangled on arrival" and licenses it
+     wrongly with probability at most eps. It is marked is_alarm=False and
+     screen_link refuses to evaluate it, because failing to certify is not a
+     detection; a short sample cannot certify anything, and a screen that
+     counted a missing certificate as an alarm would publish a detection rate
+     equal to its own sample-size problem.
+  4/5. Fidelity, purity, concurrence: Hoeffding for bounded means,
+     P(mean <= mu0 - t) <= exp(-2 n t^2 / (b-a)^2), inverting to
+     t(eps) = (b-a) sqrt(ln(1/eps) / (2n)). Spans are [0,1], [1/4,1] and [0,1];
+     the purity span is 1/4 narrower because Tr(rho^2) >= 1/d, which is worth a
+     third of the half-width and is a theorem rather than a preference.
+
+WHAT eps BUYS AND WHAT IT DOES NOT
+
+Four of the five nulls are point masses at p0 = 0, and their proven bound is
+EXACTLY ZERO at every eps - the budget buys nothing because there is nothing
+left to buy. So the whole five-member screen at eps = 1e-09 costs 2.00e-10:
+one fifth of the budget, spent entirely on CHSH, which is the one member whose
+ideal null is not degenerate (the +-1 outcomes are random on a perfect pair).
+A screen that reported its budget instead would overstate its own
+false-positive rate by a factor of five, in the direction that looks
+conservative and is simply wrong.
+
+THE UNION BOUND IS PART OF THE DERIVATION, NOT AN AFTERTHOUGHT
+
+screen_link takes a budget for the WHOLE screen and divides it evenly over the
+members the transcript makes evaluable; the run-level budget must be divided
+again over the up-to-four links, which is what divide_budget exists for. The
+even split is legitimate because, under the null, which members are evaluable
+is fixed by the check plan and the run's configuration and never by the
+channel. Four screens at eps apiece is a run-level rate of 4 eps, and that is
+the arithmetic a Phase 5 ROC curve gets wrong if nobody writes it down.
+
+PER LINK, NEVER POOLED, AND CONDITIONED ON (NO-TIMING)
+
+Constraint 3 is enforced by absence: the module exports nothing that takes more
+than one link's sample, and a test asserts it. Every statistic here is a
+check-round statistic, so every claim is conditioned on the adversary being
+unable to infer the check set from timing; the module carries (NO-TIMING) as
+its own labelled section and a test fails if the citation disappears from the
+module or from chsh_threshold, qber_threshold or screen_link.
+
+REFUSALS ARE NOT VERDICTS, AGAIN, IN CHANNEL CLOTHES
+
+ChannelThreshold.fires(None) raises rather than returning False, and
+ChannelScreen keeps `unavailable` in a separate mapping from `cleared`. An
+unmonitored link, an undefined CHSH statistic and a separable honest null are
+all recorded as "could not look", never as "looked and it was fine".
+
+### `[*]` Inequality choice is worth 2.3x, point masses are forced, and fidelity is in the family by a theorem
+
+*finding · impl:thresholds-channel · 2026-09-02T00:53:52Z*
+
+Five things learned while deriving the channel family. None of them came from
+looking at attack data; three are theorems and two are measurements on honest
+runs, which is the only direction convention D7 permits.
+
+1. THE CHOICE OF INEQUALITY IS WORTH A FACTOR OF 2.3 IN DETECTION POWER, AT AN
+   IDENTICAL PROVEN BUDGET. At one CHECKED_PARAMS link's 4114 QBER rounds,
+   eps = 1e-09, tolerated p0 = 1/32 (so q0 = 1/64), the thresholds are
+
+       exact binomial tail   k = 118
+       Chernoff (multiplicative)  k = 128
+       Hoeffding (additive)  k = 271
+
+   The additive form is charged for a variance of n/4 where the truth is
+   n q0 (1 - q0), and at a QBER's small q0 that is most of the sample thrown
+   away. A report that quoted Hoeffding's number as "the" threshold would be
+   understating this scheme's channel sensitivity by more than a factor of two
+   while claiming exactly the same false-positive probability. All three ship;
+   `exact` is the default. The module's own qber_bound (LinkStatistics) is
+   Hoeffding, which is right for *reporting* an interval and is not what a
+   threshold should be inverted from.
+
+2. THE POINT-MASS NULLS ARE FORCED, NOT ASSUMED. A bounded random variable
+   whose mean sits on its own supremum is a point mass there: V <= b and
+   E[V] = b give E[b - V] = 0 with b - V >= 0, so V = b almost surely. So
+   "on an ideal run every check round has fidelity, purity and concurrence
+   exactly 1" is a consequence of the two statements "these quantities are at
+   most 1" and "their honest mean is 1", not a separate modelling choice. The
+   same argument gives the QBER point mass at 0 from the other end. Worth
+   writing down because it is what makes the exactly-zero false-positive bound
+   a derivation rather than an assertion, and because it says precisely what
+   the bound rests on: the honest mean, and nothing else.
+
+   The corollary is that the MINIMUM is available under a point-mass null and
+   nowhere else. Under the point mass the minimum carries the same exactly-zero
+   bound and is sharper - an attack touching one round in a thousand moves it
+   and barely moves the mean - but the minimum of n bounded variables has no
+   law that follows from their mean alone, so under a Hoeffding null only the
+   mean has a threshold. purity_threshold and its siblings switch which field
+   they name for exactly that reason, and the returned object says which.
+
+3. FIDELITY IS NOT OPTIONAL IN THIS FAMILY, AND THE REASON IS A THEOREM.
+   Tr(rho^2) is invariant under every unitary and concurrence under every
+   *local* unitary, so a channel that merely rotates the travelling half leaves
+   purity and concurrence at 1.0 exactly while the pair is no longer Phi+ at
+   all. A resource family built on those two alone is blind to the whole
+   unitary class by an invariance argument, not by bad luck. Fidelity to Phi+
+   is not a local-unitary invariant and is what moves. (This is the structural
+   explanation of the twirl measurement the statistics layer's author recorded:
+   fidelity 0.604 with purity and concurrence both still 1.0.)
+
+4. THE TWO CHECK-ROUND LAWS HOLD ON HONEST NOISY RUNS, MEASURED. Honest runs
+   with a Werner resource_factory (not an adversary - the seam draws no
+   randomness, closes over no session state and treats every position alike):
+
+       p = 0.10   check-round QBER 28/576 = 0.0486   against p/2 = 0.0500
+       p = 0.30   check-round QBER 84/576 = 0.1458   against p/2 = 0.1500
+       mean fidelity 0.9250 and 0.7750, against 1 - 3p/4 exactly
+
+   and CHSH against (1-p) 2 sqrt 2 at 20000 direct rounds: z = -0.37 at p = 0,
+   -0.31 at p = 0.1, -1.33 at p = 0.3. A per-link Bell sample is two dozen
+   rounds and has a standard error of a few tenths, which is why the law is
+   also checked away from the session where it can actually be resolved.
+
+   The three Werner closed forms the noise-tolerant nulls are stated at -
+   F = 1 - 3p/4, Tr(rho^2) = 1 - 3p/2 + 3p^2/4, C = max(0, 1 - 3p/2) - agree
+   with ChannelSample's own numerical eigendecomposition to 1e-12 at eight
+   strengths.
+
+5. FALSE-POSITIVE MEASUREMENT: 0 of 48 honest links fired at every budget from
+   1e-15 to 1e-02. The proven bound predicts it: only CHSH costs anything, so
+   the expected number of false alarms across the whole sample is 48 * eps/5,
+   which is 0.094 at the loosest budget tested and 9.6e-09 at 1e-09. Zero is
+   what the derivation says, and the test asserts the arithmetic as well as the
+   count so that "nothing fired" is a prediction rather than a property of the
+   seeds.
+
+   AND THE COST OF THE NOISELESS CLAIM IS MEASURED TOO: every point-mass
+   threshold fires on EVERY link of an honest run at p = 0.1 and p = 0.3.
+   That is not a misfire - the null said noiseless and the link is not - and
+   the honest reading is that the null was the wrong one for that deployment.
+   Hand the family the noise level and the same runs go quiet at a budget of
+   0.05. This is what "it is a claim about a noiseless link" costs, as a test
+   rather than as prose.
+
+### `[*]` The channel family measured after freezing: perfect attribution, the invariance theorem as data, and a toy-length trap
+
+*finding · impl:thresholds-channel · 2026-09-02T00:59:17Z*
+
+MEASURED AFTER THE DERIVATIONS WERE FROZEN. Every threshold in
+sih141/detect/thresholds_channel.py was derived, doctested and committed to a
+file before any of this was run; nothing below changed a single number, and the
+test file tests/test_detect_channel.py contains no adversary at all. This is
+reported because it is what Phase 5 will measure and because two of the results
+are the module's own theorems coming back as data.
+
+SCREEN AT eps = 1e-09, L = 384, check_fraction = 0.25, three seeds, target Bob,
+noiseless null (tolerated_depolarising = 0):
+
+  attack                       Bob        Charlie   which members fired
+  ---------------------------  ---------  --------  ----------------------------
+  Pauli twirl p = 0.60         6/6 links  0/6       min_fidelity, qber_errors
+  Pauli twirl p = 0.05         6/6        0/6       min_fidelity, qber_errors
+  intercept-resend             6/6        0/6       + min_concurrence
+  kept-share swap              6/6        0/6       + min_concurrence, min_purity
+
+ATTRIBUTION IS PERFECT AND IS THE POINT. Bob 6/6 and Charlie 0/6 on every one.
+Phase 3's third constraint - per-link, never pooled - is what buys that; a
+pooled rate would have reported the average of a broken channel and a clean one
+and attributed nothing.
+
+THE TWIRL'S SIGNATURE IS THE INVARIANCE THEOREM, MEASURED. A Pauli twirl
+applies ONE Pauli per round, so each round's pair is still pure and still
+maximally entangled: min_purity and min_concurrence stay at 1.0 and do not
+fire, at strength 0.60, on every link. Only fidelity and the QBER arm move.
+That is exactly why fidelity is in this family - Tr(rho^2) is invariant under
+every unitary and concurrence under every local one, so a resource family built
+on those two alone is blind to the whole unitary class by a theorem - and the
+argument was written into the module docstring before the measurement was made.
+Intercept-resend inverts the pattern: concurrence collapses (the recipient is
+handed a product state) while purity stays at 1.0 (the resent state is pure).
+Kept-share swap moves all four. Three attacks, three distinct signatures, none
+of them fitted.
+
+AND THE LIMITATION, WHICH IS A SAMPLE-SIZE FACT AND NOT A THRESHOLD FACT.
+At tolerated_depolarising = 0.05 the p = 0.60 twirl goes UNDETECTED at L = 384:
+0/6 links. That is not the derivation being weak, it is a link with 24 QBER
+rounds and 48 monitored rounds being asked for a distribution-free statement at
+2e-10. The two numbers side by side:
+
+  per-link sample          QBER threshold      a p=0.60 twirl produces
+  L = 384,  f = 0.25        k = 10 of 24        7.2 errors      -> misses
+  CHECKED_PARAMS            k = 172 of 4114     1234 errors     -> fires
+
+  per-link sample          fidelity threshold  a p=0.60 twirl produces
+  L = 384,  f = 0.25        mean <= 0.4802      0.5500          -> misses
+  CHECKED_PARAMS            mean <= 0.9257      0.5500          -> fires
+
+So A PHASE 5 TABLE RUN AT A TOY LENGTH WOULD UNDERSTATE THE NOISE-TOLERANT ARM
+BADLY, in a way that looks like a detector weakness and is a check-budget
+choice. The noiseless arm is unaffected - its threshold is one error and one
+non-ideal round at every length - which is why the two arms must be reported as
+two rows and never averaged. CHECKED_PARAMS exists precisely so the sample is
+bought rather than the weaker number quietly published; the same discipline
+applies to any table drawn from this family.
+
+### `[D]` Derive the rate and count thresholds from eps, and say which half of the bound is conditional
+
+*decision · rate-and-count thresholds · 2026-09-02T01:02:23Z*
+
+FAMILY: the rate-and-count thresholds, in sih141/detect/thresholds_rate.py.
+Six budgeted thresholds plus one free structural test, every one of them a
+function of a false-positive budget eps rather than a constant.
+
+WHAT IS SHIPPED, AND ON WHAT PROOF
+
+  r_R, per verifier   e_R | |M_R| = m ~ Binomial(m, p_e).  p_e is an ARGUMENT,
+                      defaulting to 0 -- the noiseless point mass, under which
+                      firing on e_R >= 1 has false-positive probability exactly
+                      zero.  Upper tail only.
+  |M_R|, both tails   Binomial(n, 1/|B|) unconditionally over the coins.  Lower
+                      = evidence denial, upper = recipient forgery.
+  declared count      Same null, different observable, separate roster slot: a
+                      starver moves the wire integer and leaves his own verdict
+                      count alone.
+  M = m_B + m_C       Binomial(2n, 1/|B|), exact BY CONSERVATION, never by
+                      convolving the two marginals (given the records they have
+                      correlation -1).
+  declaration_gap     Free.  Two integers that must be equal being unequal is
+                      not a deviation under any null; bound exactly 0.
+
+n is the SIFTED length throughout (TranscriptStatistics.params.key_length).
+
+THE INVERSIONS (module docstring D-1, D-2; algebra written out there)
+
+  lower  Chernoff  d = sqrt(2 ln(1/eps)/mu),  k = floor((1-d) mu)
+         Hoeffding t = sqrt(N ln(1/eps)/2),   k = floor(mu - t)
+         exact     bisection on the binomial cdf
+  upper  Chernoff  mu d^2 - a d - 2a = 0 with a = ln(1/eps);
+                   d = (a + sqrt(a^2 + 8 mu a)) / (2 mu),  k = ceil((1+d) mu)
+         Hoeffding k = ceil(mu + t)
+         exact     bisection on the upper tail
+
+method="sharpest" (the default) evaluates all three at the same eps and keeps
+the most sensitive threshold any of them PROVES, recording which won.  That is
+selection over proofs, not over separations: every candidate is admissible on
+its own before any data exists.  It is the only "pick the best number" D7
+permits and the docstring says why.
+
+TWO THINGS THE DERIVATION HAD TO GET RIGHT AND WHICH ARE EASY TO GET WRONG
+
+1. CONDITIONING IS NOT FITTING, but it has to be argued.  The mismatch
+   threshold is a function of the observed |M_R|.  The bound survives by the
+   tower rule -- P(fire) = E[P(e_R >= k(|M_R|) | |M_R|)] <= E[eps] = eps --
+   because the inner bound holds for EVERY value of the conditioning variable.
+   What would make it fitting is a dependence on the statistic being tested or
+   on any attack observation, and there is neither.  A test asserts the ten
+   count thresholds are byte-identical across two different honest runs of the
+   same parameter set, and that the two mismatch thresholds track |M_R| and
+   nothing else.
+
+2. HALF THE FAMILY BOUND IS CONDITIONAL AND THE OBJECT NOW SAYS SO.  The union
+   bound over the fixed 12-name roster at eps/12 each gives P(fire) <= eps
+   unconditionally, always.  But RateCountThresholds.false_positive_bound
+   reports the sum of what the members actually PROVE, which is tighter -- and
+   two of those twelve terms are functions of the run's matched counts.  At
+   channel_error_rate = 0 they are exactly zero for every |M_R| and the sum is
+   unconditional; at a positive noise level the sum bounds P(fire | the matched
+   counts) and eps is what stays unconditionally true.  Hence
+   bound_is_unconditional, a boolean rather than a paragraph, because it
+   decides which of two numbers a Phase 5 ROC may be plotted at and that is not
+   a decision to leave to whether somebody read the docstring.
+
+MEASURED, NOT CHOSEN.  Honest corpus, L=192, 100 runs, one family per run:
+
+    eps        proven bound     measured
+    1e-9       0.0000           0/100
+    1e-3       0.0006           0/100
+    0.1        0.0715           0/100
+    0.5        0.3856          14/100
+    0.9        0.7259          32/100
+
+The loose rows are the ones that mean anything: a 0/100 at eps=1e-9 is what a
+correct derivation gives AND what a derivation whose thresholds are accidentally
+unreachable gives, so the test that can actually fail measures at eps=0.5 and
+asks whether 14/100 is surprising under a proven per-run bound of 0.3856.  It is
+not.  No threshold was adjusted at any point.
+
+### `[*]` Both protocol matched-count floors invert the loosest of three valid inequalities
+
+*finding · rate-and-count thresholds · 2026-09-02T01:02:44Z*
+
+Not mine to fix -- sih141/protocol/verify.py is not this phase's file, and the
+change is not a one-liner -- but it should not be lost either.
+
+BOTH MATCHED-COUNT FLOORS ARE DERIVED FROM THE LOOSEST OF THE THREE AVAILABLE
+INEQUALITIES.  minimum_matched_count and minimum_pooled_matched_count invert the
+multiplicative Chernoff lower tail at eps = 2**-64.  At q = 1/|B| = 1/3 that
+form is dominated by both the distribution-free Hoeffding bound and the exact
+binomial tail, so a floor derived from either would be strictly HIGHER at the
+SAME budget.  Critical counts (largest count that trips the rule, i.e. m_min - 1):
+
+    L         m_min-1    Hoeffding    exact      | M_min-1    exact pooled
+    192       0          -2           11         | 21         49
+    360       16         30           44         | 94         130
+    600       66         84           100        | 211        256
+    1200      211        236          256        | 533        594
+    115200    36554      36801        36951      | 74189      74749
+
+Computed by floor_comparison() in sih141/detect/thresholds_rate.py, which is
+doctested, and pinned whole by test_the_floor_comparison_table_is_the_one_in_the
+_docstring so the table cannot drift.  The detect module's own chernoff inversion
+reproduces m_min - 1 and M_min - 1 to the integer at every length where the form
+has power, through a completely separate code path -- so this is a statement
+about which proof was used, not a disagreement about arithmetic.
+
+WHY IT MIGHT MATTER, STATED CAREFULLY.  A looser floor is SAFE: it aborts honest
+runs less often than the budget allows and every bound the scheme publishes still
+holds.  What it costs is the margin M_min - 2 m_min = (2 - sqrt 2) A, the
+quantity that closes the split-coin provenance route of verify.py's
+:ref:`pooled-floor`.  That margin is bought at the loosest available exchange
+rate.  And at L = 192 the shipped per-verifier floor degenerates to 1 -- abort
+only on an empty matched set -- because the multiplicative form is vacuous at
+d >= 1, while the exact tail at the same 2**-64 certifies a floor of 12 (critical
+count 11).  P(Bin(192,1/3) <= 11) = 2.10e-20 <= 2**-64 = 5.42e-20, checked
+against exact rational arithmetic.  So the "no statistical power to spend below
+L = 266" note in verify.py is a property of the CHERNOFF FORM, not of the run.
+
+WHY I DID NOT TOUCH IT.  Raising either floor reaches
+enforced_repudiation_bound, the (2 - sqrt 2) A margin argument, the eps ** (3 -
+2 sqrt 2) limit, DEFAULT_PARAMS' published 1.4139e-09, and every doctest that
+quotes 36555 / 74190.  That is a protocol change with a security argument
+attached, not a tightening.  It belongs to whoever owns verify.py, with the
+margin argument re-derived in whichever form is chosen.
+
+Detect's own thresholds default to method="sharpest" and therefore to the exact
+tail, so the DETECTOR is not paying this cost; only the protocol's abort rule is.
+
+### `[*]` The mismatch rate detects a one-link channel attack and cannot attribute it
+
+*finding · rate-and-count thresholds · 2026-09-02T01:03:01Z*
+
+Phase 3's constraint 3 says: do not pool the two links' CHECK LOGS, because
+per-link QBER is the only statistic that both detects a party-targeted channel
+attack and ATTRIBUTES it.  Working on the mismatch-rate threshold turned up the
+harder version of that sentence.
+
+THE MISMATCH RATE IS ALREADY POOLED, BY THE PROTOCOL, AND CANNOT BE UN-POOLED.
+
+Phase A' swaps records between the two recipients.  A record damaged on Bob's
+link is therefore held by Charlie about half the time.  The check LOGS are never
+swapped, which is exactly why they attribute; the RECORDS are, which is exactly
+why r_R does not.  Measured, depolariser at strength 0.30 aimed at Bob's link
+alone, L = 384, check_fraction = 0.25, 8 runs:
+
+    run   r_B          r_C          check QBER  Bob     Charlie
+    0     4/96         6/90                     3/24    0/24
+    1     7/104        6/94                     3/24    0/24
+    2     11/88        6/90                     6/24    0/24
+    3     7/104        5/100                    4/24    0/24
+    4     4/88         9/90                     3/24    0/24
+    5     14/98        2/88                     7/24    0/24
+    6     6/90         13/96                    4/24    0/24
+    7     6/95         11/94                    5/24    0/24
+
+The check logs name the link on EVERY run -- Charlie 0/24 without exception.
+The mismatch counts do not: on runs 4, 6 and 7 Charlie's is the LARGER of the
+two, on a run where only Bob's link was ever touched.
+
+CONSEQUENCE FOR THE ROSTER NAMES.  A roster entry "mismatch_rate:Bob" names the
+VERIFIER WHO SCORED, never the link that was touched.  A Phase 5 table that read
+it as an attribution would be reporting which recipient the symmetrisation coins
+happened to hand a damaged record to.  That is now said in the argument's own
+docstring, in the module's findings section (F5), and pinned by
+test_the_mismatch_rate_detects_a_targeted_channel_but_cannot_attribute_it --
+which asserts BOTH that both verifiers show mismatches and that Charlie's count
+is the larger one on at least one run, so a future change that made r_R
+accidentally attribute would fail here rather than pass quietly.
+
+Detection is unharmed: at eps = 1e-9 the noiseless-null threshold fires on both
+verifiers on 10/10 intercept-resend runs and 9/10 depolariser-at-0.10 runs.  It
+is only the party label that carries no information about the link.
+
+### `[*]` At the noise level s_a was sized for, the r_R detector is dominated by Bob's own cut
+
+*finding · rate-and-count thresholds · 2026-09-02T01:03:21Z*
+
+The brief asked for the r_R threshold to be reasoned about RELATIVE to s_a =
+1/64 and s_v = 1/16, and for a statement of what it means to flag a run the
+protocol accepted.  Here is the answer, and it is less comfortable than
+"the detector is stricter than the verifier".
+
+s_a AND s_v ARE NOT FALSE-POSITIVE BUDGETS.  s_a is a NOISE budget -- it permits
+2 s_a = 3.125% depolarising noise in the resource -- and s_v sits at 0.75 of the
+recipient-forger floor 1/12 to buy an unforgeability exponent.  Neither carries a
+stated honest-run firing probability and neither is a function of eps.  So the
+verifier asks "is this signature acceptable under the scheme's noise and forgery
+budgets" and the detector asks "is this link the link the null describes".  They
+are different questions, a run can be accepted and flagged at once, and a flag is
+NOT a rejection.  (Constraint 4 one layer out: RateCountVerdict has no accepted
+or rejected field at all, and a test asserts its key set, so a caller cannot fold
+the two together by mistake.)
+
+THE QUANTITY THAT SAYS WHETHER THE DETECTOR ADDS ANYTHING is the dominance
+crossover: the largest link error rate p_e at which the derived threshold still
+sits at or below the party's own cut.  Above it, every run the detector flags the
+verifier already rejected, and the detector's marginal information is zero.
+dominance_noise_level() computes it by bisection over the null family and the
+budget -- no data, no transcript, no attack.
+
+    |M_R| = 38400 (DEFAULT_PARAMS), eps = 1e-9:
+        against s_a = 0.015625   crossover p_e = 0.012119
+        against s_v = 0.0625     crossover p_e = 0.055355
+        design noise level 2 s_a = 0.03125
+
+THE DESIGN NOISE LEVEL IS ABOVE THE CROSSOVER.  On a link running as noisy as
+the scheme was sized to tolerate, an r_R detector at eps = 1e-9 is DOMINATED by
+Bob's own acceptance test.  All of its power comes from assuming the link is
+quieter than the protocol assumes.  That sentence belongs beside every detection
+rate published from this statistic, which is why dominance_noise_level is a
+shipped function and not a note.
+
+AND THE CONVERSE, MEASURED.  Depolarising noise at p = 0.03, just inside the
+budget, L = 384: six of twelve runs were accepted by BOTH verifiers and flagged
+by the noiseless-null mismatch threshold.  Every one of those flags is a true
+statement -- the link is not noiseless -- and not one of them is a rejection.
+Handing the same threshold the noise level it is actually running at
+(channel_error_rate = 0.03125) moves the critical count off 1 and the flags go
+away.  That is the whole reason p_e is an argument with a stated default rather
+than a number this module invents; layer one's finding 2 says a transcript with
+check_fraction = 0 does not carry it, so it has to come from outside or the
+claim has to be a noiseless one, out loud.
+
+A curiosity worth recording because it will look like a coincidence otherwise:
+at |M_R| = 64 the noiseless threshold's rate is exactly 1/64 = s_a.  The
+noiseless detector is exactly one mismatch stricter than Bob's cut at that
+matched-set size.
+
+### `[-]` What averaging the two count-exchange orderings would cost, as a number
+
+*note · rate-and-count thresholds · 2026-09-02T01:03:36Z*
+
+Phase 3's constraint 6 says do not pool runs across count_exchange_timing.  This
+family gives the number that pooling would average, which is worth having in one
+place before a Phase 5 table is built.
+
+RECIPIENT FORGERY, L = 600, eps = 1e-9, 20 runs per ordering, forwarder =
+RecipientForger, everything else identical:
+
+    COUNTS_AFTER_FORWARDING    flagged 20/20
+        Bob refuses (20/20), Charlie reaches a verdict (20/20)
+        fired: matched_count_high:Charlie 20/20
+               declared_count_high:Charlie 20/20
+               mismatch_rate:Charlie      20/20
+
+    COUNTS_BEFORE_FORWARDING   flagged 0/20
+        Charlie refuses (20/20), Bob reaches a verdict (20/20)
+        fired: nothing
+
+A table averaging the two arms would publish a 50% detection rate for an
+experiment that is 100% detection in one arm and 100% denial-of-service in the
+other, and the 0/20 in the second arm is CORRECT: in that ordering nothing forged
+ever reaches a verifier, so there is nothing for a detector to see and Bob's
+numbers are indistinguishable from honest.  Reporting his clean run as a missed
+detection would be inventing a failure.
+
+MADE MECHANICAL RATHER THAN REMEMBERED.  RateCountVerdict.grouping_key carries
+(count_exchange_timing, symmetrised, counts_exchanged, signer_saw_recipient_logs,
+security_claim) and nothing in the layer aggregates over any of them.  A Phase 5
+aggregator groups on that tuple.  test_the_two_orderings_answer_differently_and
+_are_never_averaged pins the two arms separately, including which party refuses
+in each.
+
+RELATED, SAME SHAPE: refusals are not non-detections either.  In the AFTER arm
+Bob refuses on every run; he contributes no observation to the verdict at all and
+appears only in not_scored.  Counting his refusal as a clean run would deflate a
+false-positive rate and counting it as a detection would inflate a detection
+rate.  Same for count starvation, where the starver is Charlie and the party
+DENIED a verdict is Bob -- and where declaration_gap is None rather than 0,
+because without Bob's verdict there is no pooled total to compare the wire
+integers against and a manufactured zero would read as "the declarations agreed".
+
+### `[-]` CHSH contributed nothing at the toy length, and that is a sample-size fact worth stating before Phase 5 reads it as one about CHSH
+
+*note · impl:thresholds-channel · 2026-09-02T01:19:33Z*
+
+CORRECTION AND ADDITION to the post-freeze measurement entry, which said
+"kept-share swap moves all four" without saying which four.
+
+CHSH FIRED ON NOTHING, IN ANY OF THE FOUR ATTACK CONFIGURATIONS. Every
+detection at L = 384 came from the QBER arm and the three resource summaries;
+the Bell arm contributed exactly zero. That is not a defect and it is not
+surprising once the arithmetic is read: at 24 CHSH rounds per link and a screen
+budget of 1e-09 split five ways, the McDiarmid half-width is
+t = sqrt(2 ln(1/2e-10) * sum_c 1/n_c) which puts the critical value at about
+-2.4 -- below zero, and therefore below the classical bound. A threshold there
+fires only on a resource whose correlations have been INVERTED, so it cannot
+see an adversary who merely destroys the entanglement and leaves S near zero.
+The module documents this (chsh_threshold's Examples, and the
+`channel-sizing` section) and the threshold object reports it, but it is worth
+saying flatly here because a Phase 5 table would otherwise read "CHSH detected
+0 of 4 attacks" as a statement about CHSH rather than about a 24-round sample.
+
+WHAT THIS MEANS FOR A PHASE 5 TABLE. The Bell arm is the most expensive member
+of the channel family and the only one whose ideal null is not a point mass, so
+it is also the only one that a short run silences completely. The other four
+work at any length under the noiseless null. Two consequences:
+
+  1. Any ROC curve drawn from this family at a toy length is measuring four
+     members, not five, and should say so.
+  2. If a run is being sized for the Bell arm specifically, the number to hit is
+     in chsh_certificate_threshold's docstring: 967 balanced rounds to certify a
+     violation of the classical bound distribution-free at eps = 1e-09, against
+     420 under normal theory. Per link that means about 1934 CHSH rounds in the
+     run, which CHECKED_PARAMS supplies four times over (4114-4115 per link).
+
+The correct reading of the earlier entry's table is therefore: the four members
+that fired are qber_errors, min_fidelity, min_purity and min_concurrence; chsh
+was evaluated on every link, cleared on every link, and had no power to do
+anything else at that sample size.
+
+### `[-]` Integrator note: exports for thresholds_rate, and the cross-family union bound
+
+*note · rate-and-count thresholds · 2026-09-02T01:25:43Z*
+
+sih141/detect/__init__.py was deliberately NOT edited -- three threshold agents
+were writing at the same moment and an __init__ is the one file all three would
+have collided in.  Whoever integrates the three families should add the
+following to sih141/detect/__init__.py.  Nothing else in the package needs
+changing; thresholds_rate imports only sih141.detect.statistics and
+sih141.protocol, and a test asserts the package still names sih141.attacks
+nowhere.
+
+    from sih141.detect.thresholds_rate import (
+        EXACT_TRIALS_LIMIT,
+        INEQUALITIES,
+        RATE_COUNT_FREE_TESTS,
+        RATE_COUNT_ROSTER,
+        DerivedThreshold,
+        RateCountThresholds,
+        RateCountVerdict,
+        binomial_tail_bound,
+        critical_count,
+        declared_count_threshold,
+        dominance_noise_level,
+        floor_comparison,
+        forgery_separation_sigma,
+        matched_count_threshold,
+        mismatch_rate_threshold,
+        pooled_count_threshold,
+    )
+
+and the same sixteen names plus "thresholds_rate" into __all__.
+
+NAME COLLISIONS TO CHECK BEFORE SPLATTING THEM IN.  Three of these are generic
+enough that a sibling family may well have picked the same word:
+
+    DerivedThreshold        the carrier: name, statistic, null, inequality,
+                            side, budget, trials, null_probability,
+                            critical_count, false_positive_bound, derivation,
+                            vacuous; plus fires(), claim(), to_dict().
+    binomial_tail_bound     forward direction, side= and method=
+    critical_count          the inversion, eps= side= method=
+
+If a sibling ships its own DerivedThreshold with a different shape, DO NOT
+merge them by hand at integration time -- promote one to a shared module and
+have both delegate, or keep both under module-qualified names.  A carrier whose
+fields mean slightly different things in two families is exactly how a Phase 5
+table ends up quoting one family's budget against another family's bound.  The
+three-copies-of-Wilson note in detect/statistics.py is the precedent for how
+this project prefers to handle it: duplicate deliberately, pin the copies
+against each other in a test, and say so.
+
+ONE CROSS-FAMILY ARITHMETIC POINT THE INTEGRATOR OWNS.  Each family's eps is
+its own family budget.  If a Phase 5 detector fires when ANY of the three
+families fires, the overall false-positive bound is the SUM of the three
+families' bounds, not any one of them -- another union bound, over three
+constants that are each already a union bound.  So a detector at a target
+budget E should hand each family E/3 (or a stated split), not E.  There is
+nowhere in a single family to enforce that, which is why it is written here.
+
+### `[-]` Measured honest-run false-positive rates, per member, against each proven bound
+
+*note · rate-and-count thresholds · 2026-09-02T01:36:56Z*
+
+The D7 corollary in full: honest-run data may CHECK a derived threshold.  Every
+number below was measured AFTER the thresholds were derived and not one of them
+was allowed to move a threshold.  200 honest runs, L = 192, message bit
+alternating, one family per run built by RateCountThresholds.for_transcript.
+
+At the operating point a Phase 5 table would quote:
+
+    eps = 1e-9      proven bound   measured
+    every member    <= 6.7e-11        0/200
+    FAMILY           4.8035e-10       0/200
+
+That row proves less than it looks like it does -- 0/200 is what a correct
+derivation gives AND what a derivation whose thresholds are accidentally
+unreachable gives.  So the check that can actually fail is taken at a budget
+where firing is possible:
+
+    eps = 0.5                     proven bound   measured
+    mismatch_rate:Bob               0.0000e+00      0/200
+    mismatch_rate:Charlie           0.0000e+00      0/200
+    matched_count_low:Bob           3.7446e-02      7/200
+    matched_count_low:Charlie       3.7446e-02      0/200
+    matched_count_high:Bob          4.0493e-02     11/200
+    matched_count_high:Charlie      4.0493e-02      8/200
+    declared_count_low:Bob          3.7446e-02      7/200
+    declared_count_low:Charlie      3.7446e-02      0/200
+    declared_count_high:Bob         4.0493e-02     11/200
+    declared_count_high:Charlie     4.0493e-02      8/200
+    pooled_count_low                3.5872e-02      1/200
+    pooled_count_high               3.8012e-02      9/200
+    declaration_gap (free)          0.0000e+00      0/200
+    FAMILY                          3.8564e-01     31/200
+
+READ THE 11/200 CORRECTLY.  11/200 = 0.055 sits ABOVE the 0.0405 bound as a
+point estimate, and that is not a violation: the bound is on the PER-RUN firing
+probability and 11 successes out of 200 at p = 0.0405 has mean 8.1 and standard
+deviation 2.8, so P(>= 11) is about 0.2.  The tests do not eyeball this.  They
+compute the surprise -- the number of fires is stochastically dominated by
+Binomial(runs, bound), so binomial_tail_bound(fires, runs, bound, side="upper")
+is a rigorous bound on it -- and fail only if the observation is more surprising
+than 1e-9 under the derivation.  That is a check with no tuned tolerance in it:
+widening it would mean accepting a more surprising result, not a wider band.
+
+WHAT THE TWO ZERO ROWS ARE.  mismatch_rate contributes exactly 0.0 to the family
+bound at either budget because the default null is the noiseless point mass, and
+under a point mass the false-positive probability is zero rather than small.
+declaration_gap likewise: two integers that must be equal being unequal is not a
+deviation under any null.  Both are real detectors -- the mismatch member fires
+20/20 on signing-seam impersonation and 10/10 on intercept-resend -- they simply
+cost nothing from the budget, which is why the family bound at eps = 0.5 is
+0.386 rather than 0.5.
+
+THE FAMILY BOUND IS LOOSE BY CONSTRUCTION and the table shows how loose: 0.386
+proven against 0.155 measured.  Two sources, both understood and neither
+fixable without weakening the claim -- the union bound assumes the worst about
+dependence between twelve members that are strongly dependent (declared and
+matched move together on an honest run, which is exactly why the two columns
+agree row for row above), and each member's threshold is an integer while its
+budget is not.
+
+### `[+]` Correct the L=192 Hoeffding entry in the floor-comparison table, and its units
+
+*fix · rate-and-count thresholds · 2026-09-02T01:42:49Z*
+
+The journal is append-only, so this corrects rather than edits.
+
+In "Both protocol matched-count floors invert the loosest of three valid
+inequalities" the L = 192 Hoeffding entry is given as -2.  That is the RAW
+closed form, floor(mu - t) = floor(64 - 65.26) = -2.  What
+sih141.detect.thresholds_rate.floor_comparison() actually returns there is -1,
+because the module clamps every unreachable lower-tail threshold to a single
+canonical -1 rather than reporting how far below zero the arithmetic went.  Both
+values say the same thing -- at L = 192 the Hoeffding form certifies nothing at
+2**-64 and the derived detector is silent -- but only -1 is the number the code
+prints, and a table whose entry does not match the function that computes it is
+the beginning of a folklore figure.
+
+Correct row, all columns being CRITICAL COUNTS:
+
+    L        protocol   hoeffding   exact   | protocol pooled   exact pooled
+    192      0          -1          11      | 21                49
+    360      16         30          44      | 94                130
+    600      66         84          100     | 211               256
+    115200   36554      36801       36951   | 74189             74749
+
+Nothing else in that entry changes, and the finding it reports is unaffected:
+the shipped floors still invert the loosest of the three inequalities at every
+length where any of them has power.
+
+Caught while reconciling the module docstring's copy of the same table, which
+had the matching bug in a worse form -- its first column was m_min (a floor)
+while the rest were critical counts, so the two adjacent columns a reader would
+compare were off by one against each other.  Both are now critical counts
+throughout, the docstring says so in as many words, and
+test_the_floor_comparison_table_is_the_one_in_the_docstring pins all four
+columns of all four rows against floor_comparison() plus an explicit assertion
+that protocol_matched == minimum_matched_count(params) - 1.  Five wrong prose
+numbers have already shipped in this project; this is the sixth caught before
+it did.
+
+### `[*]` The -11.54 starvation z-score is a value at DEFAULT_PARAMS, not a constant
+
+*finding · rate-and-count thresholds · 2026-09-02T01:46:16Z*
+
+Small, and exactly the failure mode this project has already paid for five
+times.
+
+sih141/detect/statistics.py's PooledStatistics docstring says the quietest
+denying declaration "sits about -11.54 honest standard deviations below the
+mean at every key length, which is why starvation does not get cheaper as L
+grows".  The conclusion is right and the number is a value, not a constant:
+
+    L         least_implausible_z(params)
+    360       -11.6276
+    600       -11.6047
+    1200      -11.5738
+    115200    -11.5375
+
+-11.54 is its value at DEFAULT_PARAMS.  It is flat in L -- which is the whole
+point being made, and the point survives -- but "at every key length" reads as
+"constant", and a Phase 5 table that quoted -11.54 for an L = 360 sweep point
+would be quoting a figure that is off in the second decimal for no reason.
+
+The authority is sih141.attacks.starvation.least_implausible_z, which computes
+it.  It is prose in both places because detect must not import attacks (the
+boundary this phase exists to have), so a doctest is not available to pin it
+from inside detect.  What I did in thresholds_rate.py instead: state it as
+"around -11.5, and essentially flat in L", name the function as the authority,
+and say in as many words that the figure should be read from the function
+rather than from the sentence.  The layer-one wording is not mine to change and
+is not wrong about anything load-bearing; this entry exists so that whoever
+does a Phase 6 prose sweep knows it is on the list.
+
+GENERAL POINT WORTH THE ENTRY.  The project's rule is "load-bearing numbers go
+in doctests".  There is a category the rule does not reach: numbers that belong
+to a module the citing module is forbidden to import.  Every such figure is
+prose by construction, on both sides of the boundary, and the only defences
+available are (a) cite the function that computes it instead of restating its
+output, and (b) say which parameter set the quoted value belongs to.  detect
+has at least two of these -- this one, and the 9.8-sigma / 240-sigma forgery
+separations, which I could pin because forgery_separation_sigma recomputes them
+from the protocol's own parameters rather than quoting Phase 3.
+
+### `[-]` Integrator note, corrected: no name collisions across the three families, but three copies of the Chernoff tail
+
+*note · rate-and-count thresholds · 2026-09-02T01:53:27Z*
+
+Correcting my own integrator note, now that all three threshold modules exist in
+the tree and their exports can actually be compared rather than guessed at.
+
+GOOD NEWS FIRST: THERE IS NO NAME COLLISION.  I warned that DerivedThreshold,
+binomial_tail_bound and critical_count were generic enough that a sibling family
+might have claimed the same words.  None did.  The three __all__ lists are
+disjoint:
+
+  thresholds_rate        EXACT_TRIALS_LIMIT, INEQUALITIES, RATE_COUNT_FREE_TESTS,
+                         RATE_COUNT_ROSTER, DerivedThreshold,
+                         RateCountThresholds, RateCountVerdict,
+                         binomial_tail_bound, critical_count,
+                         declared_count_threshold, dominance_noise_level,
+                         floor_comparison, forgery_separation_sigma,
+                         matched_count_threshold, mismatch_rate_threshold,
+                         pooled_count_threshold
+  thresholds_channel     ChannelThreshold, ChannelScreen, CheckRoundShare,
+                         divide_budget, qber_threshold, chsh_threshold, ... (20)
+  thresholds_structural  StructuralThreshold, StructuralReport, StructuralCheck,
+                         chernoff_lower_tail_count, point_mass_threshold, ... (26)
+
+So the __init__ can splat all three straight in.  My earlier "do not merge the
+carriers by hand" advice still stands as advice; it just is not needed today.
+
+WHAT IS ACTUALLY DUPLICATED IS THE ARITHMETIC, NOT THE NAMES.  At least three
+independent implementations of the same two ideas now sit side by side:
+
+  the Chernoff lower tail   thresholds_rate._chernoff_critical (lower branch)
+                            thresholds_structural.chernoff_lower_tail_count
+                            sih141.protocol.verify._chernoff_floor
+  a budget split            thresholds_rate: eps / len(RATE_COUNT_ROSTER)
+                            thresholds_channel.divide_budget
+
+This is the three-copies-of-Wilson situation again (detect/statistics.py's own
+note on it is the precedent), and the project's stated preference is to
+duplicate DELIBERATELY, pin the copies against each other in a test, and say so
+-- not to merge on sight.  thresholds_rate already pins its copy against the
+protocol's: test_the_chernoff_inversion_reproduces_both_protocol_floors asserts
+the derived critical count equals minimum_matched_count(params) - 1 and
+minimum_pooled_matched_count(params) - 1 at five key lengths.  A cross-family
+test doing the same between the three detect copies would cost one function and
+would catch the day one of them drifts.  Somebody who owns all three should
+write it; no single family can.
+
+THE CROSS-FAMILY UNION BOUND FROM MY EARLIER NOTE IS UNCHANGED AND IS THE MORE
+IMPORTANT OF THE TWO POINTS.  Each family's eps is its own family budget.  A
+detector that fires when ANY of the three families fires has a false-positive
+bound equal to the SUM of the three, so a target budget E must be split (E/3, or
+by a stated rule) before it is handed to each.  No family can enforce that from
+inside itself.
+
+### `[+]` Correct the threshold count: seven kinds across twelve roster slots, not six
+
+*fix · rate-and-count thresholds · 2026-09-02T02:06:22Z*
+
+Append-only journal, so this corrects rather than edits.  Counting slip in the
+opening line of "Derive the rate and count thresholds from eps, and say which
+half of the bound is conditional".
+
+It says "Six budgeted thresholds plus one free structural test".  There are
+SEVEN budgeted threshold KINDS, occupying TWELVE roster slots:
+
+  kind                    slots   tail    statistic
+  mismatch_rate             2     upper   e_R, per verifier
+  matched_count_low         2     lower   |M_R|, evidence denial
+  matched_count_high        2     upper   |M_R|, recipient forgery
+  declared_count_low        2     lower   Phase C' wire integer, starvation
+  declared_count_high       2     upper   Phase C' wire integer, inflation
+  pooled_count_low          1     lower   M = m_B + m_C
+  pooled_count_high         1     upper   M = m_B + m_C
+  ------------------------------------------------------------------
+  7 kinds                  12
+  declaration_gap           -     free    declared pooled - verdict pooled
+
+The twelve is the number that matters, because it is the denominator of the
+budget split: each roster member is derived at eps / len(RATE_COUNT_ROSTER) =
+eps / 12, and the union bound of D-4 is stated over exactly those twelve.  The
+rest of that entry is right, the roster constant in the module is right, the
+per-member table in "Measured honest-run false-positive rates, per member" lists
+all twelve correctly, and RateCountThresholds.for_params refuses to build a
+family whose member set is not exactly RATE_COUNT_ROSTER -- in both directions,
+since an extra member would be summed into the reported bound without a budget
+of its own.  Only the summary sentence was wrong.
+
+### `[D]` The composite rule: a union bound, an allocation that pays the structural family only what it can prove, and the slack stated
+
+*decision · impl:detector · 2026-09-02T03:06:35Z*
+
+THE PROBLEM. Three families of derived thresholds now exist -- rate-and-count
+(12 budgeted members + 1 free), structural (4 checks) and channel (5 members per
+link, up to 4 links). Each is individually sound. Firing when ANY of them fires
+is not: the family-wise error rate of an OR is the sum, not the max, and nothing
+inside a component would ever say so. Measured on one honest checked run at
+L=384, check_fraction=0.25, eps=1e-9: an uncorrected OR -- every member scored at
+the full eps, which is what "each threshold is individually sound at eps" means
+-- proves 1.3442e-09 against a budget of 1e-09. It overspends by a third. That
+number is a doctest in sih141/detect/detector.py so it cannot drift.
+
+THE CORRECTION: a union bound (C-1). No independence is available and none is
+assumed. The families are dependent by construction -- the rate family and the
+structural family both read the matched counts, and every channel screen on a
+run shares the symmetrisation coins with every rate member. Sidak needs
+independence and would buy a factor of about 1 + eps/2, i.e. nothing at
+eps = 1e-9. Holm and Simes need p-values; a derived threshold has a BOUND on a
+tail, not a p-value, and four of the members are point masses whose only
+attainable p is 0 or 1, so a step-down procedure fed upper bounds is not the
+procedure whose level was proven. Dropping members that stayed quiet on the runs
+we have is the one route that is forbidden outright -- that is fitting.
+
+THE ALLOCATION (C-2), which is the only place a choice was made, and it is made
+before any run exists. A union bound constrains only that the shares SUM to eps.
+The structural family's proven bound does not depend on its share: three of its
+four checks are point masses with bound exactly 0 at every budget, and the
+fourth has bound B_evid(n), a function of n and of whether Phase C' ran. Its
+share decides one thing only -- whether the evidence-abort check is ADMISSIBLE,
+which it is iff B_evid(n) <= share. So:
+
+    eps_struct = min(B_evid(n), eps/3)
+    eps_rate   = eps_chan = (eps - eps_struct) / 2
+
+The cap at eps/3 is what makes this never worse than the even split: each of the
+other two then receives at least (eps - eps/3)/2 = eps/3. At DEFAULT_PARAMS
+B_evid = 1.6263e-19, so at any budget a report would use the structural family
+is FREE to four significant figures and the split is a half each.
+
+THE CHANNEL ROSTER IS FIXED AT FOUR (C-3), two recipients times two message
+bits, whether or not the run publishes four -- the same discipline D-4 applies
+to the rate family's twelve. A roster sized to the run makes each member's
+budget a function of the data. There is a second reason here that D-4 does not
+have: the run's configuration is a constant under the NULL but not under an
+adversary, so a distributor who suppressed the check plan would otherwise be
+choosing the detector's own allocation. The cost is finding G1 below.
+
+WHAT IT PROVES, and the slack, stated rather than absorbed (C-4). L = 384,
+check_fraction = 0.25, eps = 1e-9:
+
+    rate family (12 members)      2.3964e-10   10 live members at eps/24
+    structural family (4)         1.6263e-19   1 live member, 3 point masses
+    channel family (4 screens)    1.0000e-10   1 live member per screen
+    composite                     3.3964e-10   against a budget of 1e-09
+
+a slack factor of 2.944. Three things spend the slack and all three are
+point-mass nulls: the two mismatch members are exactly zero under the noiseless
+null; three of four structural checks and the free declaration_gap test are
+exactly zero at every budget; four of the five members of every channel screen
+are point masses, so a screen costs what CHSH alone costs -- one fifth of its
+share. Quoting eps where the composite proves 3.3964e-10 would overstate the
+detector's own false-positive rate by a factor of three. Both numbers are on
+Detection; false_positive_bound is the proven one and the one a ROC point
+belongs at.
+
+MEASURED, on honest runs only (D7's permitted direction). 40 honest runs at
+L=384 with no check rounds and 16 at L=384 with check_fraction=0.25, each scored
+at eps = 1e-3, 1e-6, 1e-9 and 1e-18: zero detections, 224 scorings. Separately at
+a deliberately loose eps = 0.5, where the composite's own proven bound is 0.1772
+(plain) and 0.2434 (checked) and several members are genuinely live: 4/40 and
+2/16 fired, both comfortably inside the bound, and the test asserts the
+observation is not more surprising than 1e-9 under Binomial(trials, bound). A
+loose budget survived on honest data is a stronger statement than a tight one,
+because at 1e-9 almost nothing CAN fire.
+
+AND THE COMPANION POWER CHECK, so that "zero alarms" is not achieved by a
+detector that cannot fire. Every one of the twelve rate members and every
+channel member the composite builds is fed an observation at and one step past
+its own critical value and required to fire; none is vacuous at this length and
+budget. A hand-broken transcript -- one mismatch inserted into an otherwise
+honest run through dataclasses.replace, not an adversary -- is required to be
+detected.
+
+FILES: sih141/detect/detector.py (new), sih141/detect/__init__.py (exports),
+tests/test_detect_detector.py (new, 79 tests).
+
+### `[*]` What the composite discriminates, what it cannot, and why each is a mechanism rather than a measurement
+
+*finding · impl:detector · 2026-09-02T03:06:35Z*
+
+Detection says something was wrong. Phase 3's constraint 5 is that
+transcript.repudiated cannot say WHAT: plain depolarising noise at p = 0.10
+produced repudiated == True with a completely honest Alice. This layer
+generalises the discriminator that does work -- Charlie's matched count -- into
+a table, and the emphasis is on TABLE. It contains no numbers, it is written
+from the protocol's mechanics with a citation per row, and there is nothing in
+it that could be fitted because there is nothing in it to fit.
+
+TWO RELATIONS PER HYPOTHESIS, and the second is load-bearing.
+
+  predicts      -- signal kinds this position produces by construction.
+  leaves intact -- signal kinds whose NULL this position does not disturb.
+
+"Leaves intact" is deliberately a stronger and more checkable claim than "cannot
+cause". If H leaves S's null intact then P(S fires | H) is bounded by the same
+b_S that bounds it under the honest null, so observing S EXCLUDES H, and
+excludes it wrongly with probability at most b_S. An exclusion in this module
+therefore carries a derived confidence. An ATTRIBUTION does not, and the object
+says so in those words: "adversary A rather than adversary B" has no null, so
+there is no inequality to invert, and Attribution.false_positive_bound on a
+SUPPORTED row is a statement against the honest null only.
+
+A third relation, kept deliberately small: `requires`, kinds a position produces
+with probability essentially one. Only two rows have one. The signature-
+substitution row requires MISMATCH -- a declaration drawn independently of the
+records survives a matched position with probability 1/2
+(analysis.FORGER_MATCHED_MISMATCH_PROBABILITY), so the mismatch count is zero
+with probability 2**-|M_R|. The recipient-forgery row requires MISMATCH and
+COUNT_HIGH -- he declares from his own raw log, which moves the receiving
+verifier's count from n/3 to 2n/3, sqrt(n/2) standard deviations, with the
+derived upper-tail threshold strictly between the two means. Nothing was put in
+`requires` that was read off a particular adversary OBJECT's parameters; that
+would be its behaviour wearing a derivation's clothes. The clause is waived
+entirely on any run where a verifier reached no verdict, because a required
+signal may then simply never have been looked for -- "we could not look" read as
+"we looked and it was fine" is the mistake the channel screen keeps a whole
+field for.
+
+THE ONE RULE THAT KEEPS NOISE OUT OF AN ATTRIBUTION. MISMATCH and CHANNEL never
+appear in any adversary row's "leaves intact" set, because a merely NOISY HONEST
+LINK produces both -- finding F6 of the rate family measured six of twelve
+honest runs at p = 0.03 firing the noiseless-null mismatch threshold while both
+verifiers accepted. A table that excluded a hypothesis on those two kinds would
+be excluding it on the channel's noise level. HypothesisPredicate refuses to be
+constructed that way, and a test tries it from the wrong side. The null row is
+the one exception, and it needs the exception: for the null itself a mismatch
+firing IS the departure the threshold was built to bound.
+
+MEASURED, LAST, once every threshold and every row was frozen. Twenty runs per
+arm at L = 384, eps = 1e-9, scored through the JSON boundary like everything
+else. Detection rate, then what the report names:
+
+  honest (no check)              0/20   honest
+  honest (checked)               0/20   honest
+  impersonation: FULL (AUTH)     0/20   honest
+  outside forgery               20/20   {outside-forgery, imp-signing,
+  impersonation: signing seam   20/20    imp-distribution, replay,
+  impersonation: distribution   20/20    channel-manipulation}
+  depolariser p=.60 (no check)  20/20   same five
+  depolariser p=.60 (checked)   20/20   same five
+  intercept-resend              20/20   same five
+  recipient forgery [after]     20/20   {recipient-forgery}          <- alone
+  recipient forgery [before]    20/20   {recipient-forgery, replay}
+  count starvation              20/20   {count-starvation}           <- alone
+  replay forwarder (L=24)       20/20   {recipient-forgery, replay}
+
+WHAT SEPARATES, AND WHY. Count starvation and recipient-forgery-after-forwarding
+are each named ALONE, and both for mechanical reasons rather than measured ones:
+a count in the lower tail plus an evidence abort is out of reach of every
+position except the count-exchange seam, and a count in the UPPER tail is out of
+reach of every position except a recipient forging from his own log. The second
+is Phase 3's constraint 5 restated as a property of the detector, and the
+channel arms are where it earns its keep: a depolariser is never named a
+recipient forgery, because the recipient-forgery row REQUIRES an inflated count
+and a channel adversary moves no basis, so no count moves. The
+Attribution for it comes back UNSUPPORTED with missing_requirements =
+(count-high) -- withheld rather than refuted, because a signal that did not fire
+carries no bound.
+
+WHAT DOES NOT SEPARATE, said rather than guessed:
+
+  (a) FULL impersonation is UNDETECTABLE BY CONSTRUCTION, reported with status
+      Support.UNDETECTABLE on every run, never supported and never excluded,
+      carrying assumption (AUTH). Constraint 7 kept as a row in the table rather
+      than a hole in it -- a hypothesis silently missing from a report reads as
+      one that was ruled out.
+  (b) Outside forgery, signing-seam impersonation and distribution-seam
+      impersonation are ONE signature. ImpersonationScope says in its own
+      docstring that the signing scope IS the external forger of analysis
+      section 3 reached by seizing a seam. Attribution.indistinguishable_from
+      names the group on all three.
+  (c) Recipient forgery and replay are not separable when only the forwarding-
+      tamper signal fires: both hold the Bob-to-Charlie hop, and
+      ReplayingForwarder says itself that the session rebinds whatever a
+      forwarder returns to the live round, so a replay reaches Charlie carrying
+      the LIVE identifier and no ledger entry is ever spent twice. LEDGER is
+      therefore predicted and NOT required for replay, which is the structural
+      family's one-directional-soundness caveat inherited one layer out.
+  (d) The channel family separates a channel adversary in the SUPPORT direction
+      only. With check rounds a depolariser fires the per-link members and a
+      signer-seam forger does not, so the evidence differs -- but a clear screen
+      never excludes a channel cause, because this layer bounds false positives
+      and never false negatives, and because a noisy honest link fires the same
+      members.
+
+FINDING G3, stated because it is the shape of the whole phase: there is no
+false-negative bound anywhere in this layer and there cannot be one from a
+transcript. Every number is under the honest null. The table above is a
+MEASUREMENT with a sample size, grouped by count_exchange_timing and never
+pooled across it; it is not a guarantee, and a disappointing rate would be a
+finding about the protocol's observability rather than a licence to move
+anything.
+
+### `[+]` Two wrong rows in the deduction table, found by running the arms, fixed from the protocol's own text
+
+*fix · impl:detector · 2026-09-02T03:06:35Z*
+
+Logged in full because the process matters as much as the outcome, and because
+"the table was written from mechanics and never touched again" would be a nicer
+sentence than a true one.
+
+The deduction table was written first, from the protocol's mechanics, before any
+adversary arm was run. The arms were then run as a plumbing smoke test. Two rows
+were WRONG, both wrong in a way that produced plausible output rather than a
+crash, and both were found by that run. Neither fix moved a number; each is
+justified by a citation to code this module does not own, and each stands on its
+own without the arm that exposed it.
+
+(1) THE NULL ROW EXCLUDED ITSELF FROM ITS OWN RULE. The rule that keeps a
+noisy honest link from excluding an adversary -- MISMATCH and CHANNEL never go
+in a "leaves intact" set -- had been applied to the HONEST row too. So on a run
+where only the mismatch member fired, HONEST came back SUPPORTED alongside every
+adversary. The detector was reporting "consistent with: honest" on a run it had
+just detected.
+
+The fix is a distinction worth having written down. The carve-out exists because
+a noisy honest link produces MISMATCH and CHANNEL under a NOISELESS null; that
+is a statement about an ADVERSARY hypothesis being excluded on the channel's
+noise level. The honest hypothesis is the null itself, and for it a mismatch
+firing IS the departure the threshold was built to bound, excluded with exactly
+that threshold's proven bound. Where the null was mis-stated -- a noiseless null
+over a genuinely noisy honest link -- that exclusion is a FALSE POSITIVE, which
+is finding F6 of the rate family, and it is reported rather than prevented.
+HypothesisPredicate now carries `is_null`, the guard skips exactly that row, and
+a test asserts the honest row is the only one with the exception.
+
+(2) ONE SIGNAL KIND WAS DOING TWO JOBS. DECLARATION_CONFLICT lumped three abort
+reasons together: declaration_gap and COUNT_OF_UNRECORDED_PROVENANCE, which are
+acts of the COUNT-EXCHANGE seam, with COUNTS_FROM_TWO_DECLARATIONS, which is an
+act of the FORWARDING HOP. sih141/protocol/verify.py draws that line itself, in
+its own words: of COUNT_OF_UNRECORDED_PROVENANCE, "the party who supplies that
+count is an adversary in this threat model"; of COUNTS_FROM_TWO_DECLARATIONS,
+"the adversary here is Bob -- or whoever holds the Bob-to-Charlie hop". Lumping
+them meant a count starver and a recipient forger predicted the same kind, so
+neither could exclude the other, and the before-forwarding arm came back
+"consistent with: count-starvation, recipient-forgery" on a run where the only
+evidence was a second declaration on the hop -- which a count-exchange seam
+cannot produce.
+
+Splitting FORWARDING_TAMPER out of DECLARATION_CONFLICT is a reading of that
+docstring, not of any arm. With the split, COUNT_STARVATION leaves
+FORWARDING_TAMPER intact and the before-forwarding arm names
+{recipient-forgery, replay} -- the two positions that actually hold the hop.
+
+WHAT I WOULD SAY TO AN AUDITOR ABOUT D7. No number in detector.py came from
+attack data; every threshold is imported from the three families below and every
+budget is a function of (n, eps, whether Phase C' ran). The table has no
+numbers. Both fixes above changed the SHAPE of a deduction and each is
+independently justified by a quotable sentence in the module the mechanism lives
+in. What the arms did was find that I had made two mistakes, which is what
+running things is for. The line D7 draws is at CHOOSING A NUMBER because it
+separates data, and neither fix is on the far side of it. The line I would not
+cross, and did not: if the recipient-forgery arm had come back UNSUPPORTED I
+would have reported it as a finding about observability, not relaxed
+`requires`.
+
+THIRD THING, not a bug, a decision made and then reversed. I considered a
+`Detection.best_supported` convenience that ranked the supported hypotheses by
+how much evidence backed each, so a demo could print one name instead of five.
+Dropped. A ranking with no null behind it is a heuristic, a heuristic that
+scores hypotheses against observations is a classifier, and a classifier is the
+exact thing this phase exists not to build. What ships instead is
+Attribution.supporting, which carries the evidence per hypothesis and lets a
+reader see that the depolariser arm backs channel-manipulation with five signals
+and the outside-forgery arm backs it with one -- the same information, without a
+score that would end up in a table as if it meant something.
