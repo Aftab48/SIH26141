@@ -8,7 +8,7 @@
 > on the maintainer's explicit instruction. The permanent record is
 > `docs/METRICS.md` and the `docs/PHASE*.md` notes.
 
-**118 entries** — 30 finding · 28 issue · 27 decision · 18 fix · 13 note · 2 deadend
+**120 entries** — 30 finding · 28 decision · 28 issue · 19 fix · 13 note · 2 deadend
 
 
 ## Phase 0 — Scaffold
@@ -4132,3 +4132,170 @@ per session, against 385 ms measured over five seeded runs.
 THE ADOPTION ITSELF COSTS NOTHING MEASURABLE. Five seeded L = 192 runs, median 0.3875 s before
 and 0.3847 s after with check rounds, 0.3659 s before and 0.3703 s after without -- differences
 smaller than the run-to-run spread, in both directions. A 2- or 4-element array copy per hop.
+
+### `[D]` Phase 4 statistics layer: the boundary, seventeen nulls, and ten things the transcript will not tell you
+
+*decision · impl:detect-statistics · 2026-09-01T23:37:20Z*
+
+WHAT WAS BUILT
+sih141/detect/__init__.py and sih141/detect/statistics.py (new package), plus
+tests/test_detect_statistics.py (82 tests). Nothing under protocol/ or attacks/
+was touched.
+
+THE BOUNDARY IS THE CODE, NOT A CONVENTION
+TranscriptStatistics.from_transcript(t) is literally from_json(t.to_json()): it
+serialises and re-reads even when handed a live object, so anything that does
+not survive a transcript file is gone by construction and no reviewer has to
+check that the layer did not peek. A test asserts the equality on honest,
+forged, unsymmetrised, pre-pooled and checked runs.
+
+DECISION: THE DETECT PACKAGE IMPORTS NOTHING FROM sih141.attacks
+That meant a third copy of the Wilson interval, after
+sih141.attacks.statistics.wilson_bounds and checkrounds' private helper. The
+alternative was a static import edge from the detector to the adversary suite,
+which would mean the shipped detector cannot be built without the adversaries
+it is measured against. Import cost was NOT the reason -- sih141/__init__.py
+imports attacks anyway, so nothing is saved at run time; the reason is
+layering. A test enforces it by reading the package's own source, and a second
+test pins my Wilson against estimate_qber's bit for bit off the endpoints.
+
+FINDING (protocol layer, not fixed here): checkrounds' Wilson still has the
+float dust. estimate_qber over a clean 50-round sample returns interval.low ==
+6.938893903907228e-18, not 0.0, because _wilson_interval clamps with
+max(0.0, centre - spread) where the two terms are equal in exact arithmetic.
+sih141/attacks/statistics.py exists BECAUSE of this bug and clamps by case; the
+checkrounds copy was never part of that consolidation. Every defended result in
+this project is 0 successes out of N, so the dust lands on exactly the numbers a
+reader most needs to read plainly. detect's copy clamps by case and is exact;
+test_the_protocols_own_wilson_still_carries_the_float_dust asserts the
+divergence so it cannot be fixed silently or forgotten quietly.
+
+D7: EVERY STATISTIC CARRIES ITS NULL AS DATA
+CountStatistic is (name, count, trials, null_probability, null) with derived
+z_score, tail_bound (two-sided Chernoff), lower_tail_bound, upper_tail_bound and
+a Wilson interval. The null sentence is a mandatory non-empty field: a statistic
+whose null nobody wrote down cannot carry a derived threshold, and an empty
+string would let one be attached anyway. Nothing in the module chooses a
+threshold and nothing in it has seen attack data.
+
+Seven of the seventeen documented nulls are POINT MASSES, which is a feature: on
+a noiseless honest run e_R is 0 with probability exactly one, so a detector
+firing on e_R > 0 has a false-positive probability of exactly zero under that
+null. The cost is stated with it -- it is a claim about a noiseless link. The
+count of rows and of point masses is pinned by a test, not left as prose.
+
+ONE-SIDED BOUNDS MATTER MORE THAN EXPECTED
+At a matched count of 0 out of 192 the two-sided Chernoff bound is 5.43e-10,
+dominated by an upper tail no starvation detector ever tests; the lower tail
+alone is 1.27e-14. Quoting the two-sided number would over-state a starvation
+detector's false-positive rate by four orders of magnitude -- the wrong kind of
+conservatism, because it makes the scheme look worse than the derivation
+supports rather than safer. Hence side="lower"/"upper".
+
+THE 2L/3 TRAP, WRITTEN DOWN
+The brief said "each verifier's deviation from the honest mean 2L/3". A single
+verifier's honest mean is n/|B| = n/3; it is the POOLED total whose mean is
+2n/3. (DEFAULT_PARAMS: per-verifier 38400 against m_min 36555; pooled 76800
+against M_min 74190.) Separately, 2n/3 IS a single verifier's mean under a
+RECIPIENT FORGERY, via forger_scored_fraction = (1 + 1/|B|)/2. Same fraction,
+two different quantities, and a threshold that took one for the other would be
+off by a factor of two at every L. The module docstring now says this flatly.
+
+WHAT THE TRANSCRIPT DOES NOT EXPOSE (reported, not reached around)
+1  which link Eve touched, which runs a starver targeted -- adversary's log
+2  the channel's true error rate on a run with check_fraction = 0, so r_R has
+   only the noiseless null there
+3  the raw pre-symmetrisation records and the coins, so only the UNCONDITIONAL
+   matched-count law is available (conditionally m_C = M - m_B exactly)
+4  any timing or ordering information -- no timestamps anywhere, which is why
+   (NO-TIMING) is an assumption and not a check
+5  the resource at KEY positions: channel[] holds check positions only
+6  a replay RATE -- refusals are counted, attempts are not, so no denominator
+7  Alice's behaviour directly -- (AUTH), full impersonation is inseparable
+8  anything inside a monitor's extra blob; only its keys are surfaced
+9  a matched set for the UNSIGNED message bit: both distributions' records are
+   carried but only one declaration, so half the evidence is frequency-only
+10 which recipient sent which Phase C' message, and in what order
+
+MEASURED WHILE VALIDATING (not thresholds -- extraction checks)
+- targeted depolariser (a Pauli twirl) at strength 0.60 on Bob's link, L=384,
+  check_fraction=0.25: Bob 7/24 QBER errors and mean fidelity 0.604; Charlie
+  0/24 and 1.0. Per-link attribution works. But purity and concurrence BOTH stay
+  at 1.0 -- a twirl is unitary, so the pair is still pure and still maximally
+  entangled and only the fidelity to Phi+ moves. A detector reading purity or
+  concurrence alone calls that link clean.
+- intercept-resend on Bob's link: concurrence 0.0, fidelity 0.5, and BOTH wing
+  purities move to 1.0 together, so wings_agree stays True. That is constraint 2
+  measured again, and it is why the layer exposes the two purities as numbers
+  and refuses to expose the boolean that compares them.
+- impersonation on the distributor seam with check rounds on: channel reads
+  perfectly clean (0 errors, fidelity 1.0) while r_R = 0.5 at both verifiers.
+  The channel statistics say nothing; the mismatch rate says everything.
+- recipient forgery at L=600 under COUNTS_AFTER_FORWARDING: Charlie's matched
+  count lands on n * forger_scored_fraction, upper tail bound < 1e-9, and
+  transcript.repudiated is False -- correctly, since the hop altered the
+  declaration and counting it as a repudiation would inflate a Phase 5 rate by
+  one per attempted forgery.
+
+INTEGRATION NOTE
+sih141/__init__.py was deliberately NOT edited (concurrent agents own it), so
+`import sih141; sih141.detect` fails until `detect` is added to its import list
+and __all__. `from sih141.detect import TranscriptStatistics` works today.
+
+### `[+]` NaN is not JSON; a calibrated interval is not a bound; a null's variance is not the measurement's
+
+*fix · impl:detect-statistics · 2026-09-01T23:48:16Z*
+
+Three things changed after the first entry, all of them found by reviewing the
+layer against its own contract rather than by a failing test.
+
+1. NaN IS NOT JSON, AND MY FIRST DRAFT WROTE IT
+An unmonitored link -- a checked run whose channel seam was never called, which
+is what a transcript written before the monitor existed looks like, and what an
+adversary who substitutes his own states produces -- gave ResourceStatistics a
+sample of size zero, and the mean fidelity came out math.nan. json.dumps writes
+that as the bare token NaN, which is valid Python and is not JSON: a Phase 6
+dashboard parsing the document in a browser rejects it. Every summary on an
+unmonitored link is now None, which is also the more honest answer (0.0 would
+read as a maximally broken channel). The same trap already had a guard one
+field over -- CountStatistic.to_dict writes None rather than Infinity for a
+z-score the null forbids -- and I had not carried it across. tests now assert
+strict-JSON parsing (parse_constant that raises) on every run shape.
+
+2. CALIBRATED INTERVAL AND PROVABLE BOUND ARE DIFFERENT ANSWERS
+LinkStatistics originally carried only the Wilson QBER interval and the normal
+CHSH interval. Both are CALIBRATED: coverage close to nominal, right for a
+report, wrong for a D7 threshold, which needs coverage AT LEAST the stated
+level. So each arm now carries its distribution-free counterpart beside the
+calibrated one -- qber_bound (Hoeffding, q +- sqrt(ln(2/alpha)/2n)) and
+chsh_bound (per-cell sqrt(2 ln(8/alpha)/n_c) summed over four cells, the 8 a
+union bound over four cells and two tails). Beside, not instead: a report that
+mixes the two without labelling them is not reporting a confidence level at
+all. Without this a threshold agent would have had to reach for the raw check
+log, which is exactly the reach-around this layer exists to prevent.
+
+Measured on a clean L=384 check_fraction=0.25 run: Bob's QBER 0/24 gives Wilson
+[0, 0.2166] and Hoeffding [0, 0.3322]; CHSH S=3.714 gives normal
+[3.033, 4.0] and Hoeffding [-2.320, 4.0]. The bound is far wider, which is what
+a bound is.
+
+3. chsh_z USES THE NULL'S VARIANCE, NOT THE MEASUREMENT'S
+estimate_chsh's normal interval uses the PLUG-IN variance sum (1 - E_c^2)/n_c
+at the measured correlators, which is right for reporting. For a null test the
+variance must come from the null: on an ideal pair |E_c| = 1/sqrt(2), so
+Var(S) = sum 1/(2 n_c) = 8/N for an even split. chsh_z is
+(S - 2 sqrt(2)) / sqrt(sum 1/(2 n_c)). This is the same rule
+sih141.attacks.statistics states for agreement tolerances -- "an estimator's
+own value has no business setting the width of its own acceptance band" -- and
+it matters here because a disturbed link has a SMALLER plug-in variance in some
+cells, so the plug-in z would understate its own deviation.
+
+4. THE NULL TABLE IS NOW A CHECKED NUMBER
+The module docstring claims "seven of those seventeen rows are degenerate".
+That is prose, and this project has shipped six wrong prose numbers. A test
+slices the table out of __doc__ between its ruler lines and asserts 17 rows
+with 7 occurrences of "point mass". Add a statistic without adding a row, or
+change a null without changing the sentence, and it fails.
+
+Final state: 88 tests in tests/test_detect_statistics.py plus the module
+doctests, all green; isolation smoke suite green.
