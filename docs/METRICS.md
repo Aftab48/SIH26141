@@ -2,16 +2,16 @@
 
 **SIH26141** — Quantum-Inspired Cyber Threat Detection for Digital Signature Security
 
-Generated `2026-09-01 17:37 UTC` by `tools/metrics.py`. Every figure is computed from the
+Generated `2026-09-02 22:31 UTC` by `tools/metrics.py`. Every figure is computed from the
 repository — do not edit by hand, re-run the script.
 
 ## Test suite
 
 ```
-2169 passed in 748.70s (0:12:28)
+3036 passed in 1507.37s (0:25:07)
 ```
 
-- Doctests collected from package modules: **262**
+- Doctests collected from package modules: **355**
 - `--doctest-modules` is enabled over `testpaths = ["tests", "sih141"]`, so every
   numeric claim written in a docstring is an executable test. Documentation that
   lies fails the suite.
@@ -28,12 +28,12 @@ repository — do not edit by hand, re-run the script.
 | `sih141/core/teleport.py` | 1183 | 171 | 785 | 52 | 15 | 2 |
 | `sih141/protocol/__init__.py` | 353 | 206 | 123 | 12 | 0 | 0 |
 | `sih141/protocol/analysis.py` | 3514 | 201 | 2750 | 29 | 39 | 2 |
-| `sih141/protocol/checkrounds.py` | 3406 | 975 | 1955 | 33 | 81 | 11 |
-| `sih141/protocol/distribute.py` | 1456 | 290 | 968 | 49 | 12 | 2 |
+| `sih141/protocol/checkrounds.py` | 3431 | 975 | 1978 | 33 | 81 | 11 |
+| `sih141/protocol/distribute.py` | 1805 | 306 | 1249 | 78 | 13 | 2 |
 | `sih141/protocol/keys.py` | 773 | 117 | 537 | 3 | 24 | 2 |
 | `sih141/protocol/params.py` | 1606 | 483 | 916 | 2 | 26 | 2 |
 | `sih141/protocol/records.py` | 1413 | 335 | 901 | 7 | 31 | 3 |
-| `sih141/protocol/session.py` | 5266 | 1555 | 2980 | 218 | 92 | 9 |
+| `sih141/protocol/session.py` | 5327 | 1554 | 3032 | 227 | 92 | 9 |
 | `sih141/protocol/signature.py` | 955 | 179 | 646 | 4 | 16 | 1 |
 | `sih141/protocol/symmetrise.py` | 554 | 79 | 407 | 2 | 4 | 1 |
 | `sih141/protocol/tally.py` | 1344 | 293 | 885 | 12 | 24 | 3 |
@@ -46,10 +46,16 @@ repository — do not edit by hand, re-run the script.
 | `sih141/attacks/replay.py` | 2324 | 682 | 1313 | 51 | 36 | 3 |
 | `sih141/attacks/starvation.py` | 1678 | 333 | 1115 | 21 | 27 | 4 |
 | `sih141/attacks/statistics.py` | 570 | 158 | 323 | 3 | 14 | 1 |
-| **total** | **41517** | **9632** | **25843** | **872** | **704** | **75** |
+| `sih141/detect/__init__.py` | 572 | 263 | 259 | 8 | 2 | 1 |
+| `sih141/detect/detector.py` | 2583 | 906 | 1349 | 80 | 26 | 8 |
+| `sih141/detect/statistics.py` | 3301 | 962 | 1921 | 57 | 56 | 10 |
+| `sih141/detect/thresholds_channel.py` | 2905 | 591 | 1865 | 81 | 34 | 3 |
+| `sih141/detect/thresholds_rate.py` | 3216 | 753 | 2003 | 73 | 43 | 4 |
+| `sih141/detect/thresholds_structural.py` | 3138 | 668 | 2024 | 51 | 43 | 8 |
+| **total** | **57667** | **13790** | **35620** | **1260** | **909** | **109** |
 
-Tests: **29072 lines** across **26 files**, **1514 test functions** defined.
-Test-lines to code-lines ratio: **3.02 : 1**
+Tests: **37974 lines** across **32 files**, **1861 test functions** defined.
+Test-lines to code-lines ratio: **2.75 : 1**
 
 ## Live security parameters
 
@@ -75,23 +81,29 @@ actually computes today — not what a document once claimed.
 
 | File | Words |
 | --- | ---: |
-| `README.md` | 3199 |
-| `JOURNAL.md` | 32962 |
-| `docs/METRICS.md` | 848 |
+| `README.md` | 4415 |
+| `JOURNAL.md` | 55779 |
+| `docs/METRICS.md` | 888 |
 | `docs/PHASE1.md` | 4078 |
 | `docs/PHASE2.md` | 10056 |
-| `docs/PHASE3.md` | 10426 |
-| `docs/QDS.md` | 4491 |
-| **total** | **66060** |
+| `docs/PHASE3.md` | 15026 |
+| `docs/PHASE4.md` | 9443 |
+| `docs/QDS.md` | 4624 |
+| **total** | **104309** |
 
-Working-journal entries: **113** (temporary; deleted at the end of Phase 7).
+Working-journal entries: **151** (temporary; deleted at the end of Phase 7).
 
 ## Repository
 
-- Commits: **13**
+- Commits: **18**
 
 | Commit | Subject |
 | --- | --- |
+| `2e75d91` | Close routes H and I; audit 22 thresholds; reconcile the families |
+| `c61ee52` | Derive 22 thresholds and compose them with a family-wise bound |
+| `99efdf7` | Add the detection statistics layer with its honest-run nulls |
+| `cec3cc6` | Close the read-count inference routes; argue the timing boundary |
+| `adee91b` | Record the hardening round: one finding closed, one still open |
 | `f4544fc` | Reconcile the two hardening fixes and re-measure what moved |
 | `9c00d5f` | Make the check set uninferable and the isolation check bite |
 | `885f342` | Close Phase 3: propagate check-round sifting, fix stale figures |

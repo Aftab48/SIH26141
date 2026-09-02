@@ -747,3 +747,74 @@ hash identically under SHA-256 either side of both changes.
 * **Check that an arm ran before publishing a zero.** This phase measured `0/40` for the replay
   arm and it was a wiring artefact — the adversary had nothing replayable and forwarded honestly
   (§5). It only announced itself because every other arm in the same sweep was `40/40`.
+
+## 12. The independent audit
+
+Three auditors ran against `2e75d91` after integration, each in its own clone, each given the
+integrator's claims and told to assume they were wrong. All three returned **sound**. Between
+them they re-executed roughly 90,000 detector evaluations and several thousand exact-rational
+comparisons. Six defects were confirmed; none invalidates a shipped bound.
+
+The audit is worth reading for what it could NOT break, because that is the phase's actual
+claim:
+
+* **No fitted threshold.** Auditor 1 re-derived `critical_count` from scratch in
+  `fractions.Fraction` over 288 inversions and checked each shipped threshold is *extremal* —
+  that the next count out exceeds the budget — not merely admissible. 0 anomalies. It also
+  re-derived the channel family from McDiarmid by hand and confirmed the published `k=118` at
+  `n=4114` with 40-digit `mpmath`.
+* **The union bound is over the tests actually run.** Auditor 2 wrote an independent enumerator
+  that rebuilds every threshold `detect()` constructs and `fsum`s the bounds itself: 1536
+  `detect` calls across 12 key lengths, 6 check fractions, both count-exchange orderings and 4
+  budgets. Recomputation mismatches: **0**. An orphan check in the other direction over 1125
+  further calls found no signal source outside the three reporters.
+* **No special-cased operating point.** Auditor 3 swept ~88,800 evaluations across three budget
+  ladders and found zero violations of monotonicity in `detected`, in `false_positive_bound`, or
+  in any individual signal. An AST walk for unexplained float literals turned up only real
+  mathematical constants.
+* **Ten point masses, independently confirmed.** Both auditor 2 and auditor 3 arrived at ten
+  frozen instances by different routes, confirming the integrator's late correction from nine.
+
+### Confirmed defects
+
+| # | Severity | Where | What | Status |
+|---|---|---|---|---|
+| A1-1 | minor | `thresholds_rate.py` | Docstring quoted `1.4e-13` agreement "across the range"; that was the maximum over the nine counts the pinning test parametrises. True worst case over the swept range is `2.624e-13`. | **fixed** — figure corrected to `3e-13`, sweep stated, underflow region documented |
+| A1-2 | minor | `detect/__init__.py` | Claimed as a general property that every `ThresholdView` proves a bound inside its own budget. Five counterexamples exist — all with `can_fire=False`. | **fixed** — invariant restated with its `can_fire` precondition and the counterexample pinned as a doctest |
+| A1-3 | minor | `statistics.py` | `floor_shortfall_bound` ignores its `floor` argument on the Chernoff branch, so outside its documented precondition it certifies `2**-64` for an event of probability ~1. Every in-tree caller satisfies the precondition. | open — unenforced precondition, no shipped number affected |
+| A2-1 | minor | `detector.py` | At the smallest representable budget the family split underflows and the refusal names an internal field (`rate`) rather than the caller's argument (`eps`). | open — cosmetic, refusal is the safe direction |
+| A3-1 | **major** | `detector.py` | The noiseless null is absent from the machine-readable output. See below. | **open — Phase 5 must handle it** |
+| A3-2 | minor | `detector.py` | `detect()` raises below roughly `1e-314`, far outside any usable budget. | open — robustness note |
+
+### A3-1, the major, in full
+
+`detect()` defaults to `channel_error_rate=0.0`. That null is correct and it is disclosed — in
+the `detect()` docstring, in finding F6, and in `dominance_noise_level()`. The defect is that the
+disclosure lives entirely in **prose**, while the machine-readable headline fields carry nothing
+about it. `Detection.to_dict()` has 19 keys and `channel_error_rate` is not one of them.
+
+Reproduced independently at `2e75d91`, honest parties, depolarising noise on the wire only:
+
+| link error rate | false alarms (n=30) |
+|---|---|
+| 0.00000 | 0/30 |
+| 0.00250 | 13/30 |
+| 0.00500 | 17/30 |
+| 0.01000 | 27/30 |
+| 0.01500 | 30/30 |
+| 0.03125 (= `2*s_a`, the design noise level) | 30/30 |
+
+Every one of those runs reports `false_positive_bound = 2.7818e-10` and
+`bound_is_unconditional = True`, on runs where **both verifiers accepted**. Passing the true rate
+gives `0/30` at every level, so the mechanism is right and only the default is the trap.
+
+`bound_is_unconditional` is the field whose name most suggests it would flag this. It does not —
+it concerns conditioning on `|M_R|`, and it is `True` in exactly the dangerous case and `False`
+in the safe one.
+
+**Consequence for Phase 5, stated as a rule.** A pipeline that tabulates `detected` and
+`false_positive_bound` will record honest noisy links as detections carrying a proven `2.8e-10`
+bound. Any table drawn from this detector must either pass the link's true error rate, or state
+in the table that the null is noiseless and that the run's link was not. This is the same species
+as constraint 1 — a number that is arithmetically correct and still a false claim once its
+denominator or its null goes unstated.

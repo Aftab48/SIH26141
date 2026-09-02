@@ -907,13 +907,27 @@ def binomial_tail_bound(
     **What "exact" means here, precisely.** The exact tail is summed in IEEE
     754 doubles through :func:`math.lgamma`, and the summation stops early with
     a *rigorous* geometric bound on the remainder folded in rather than
-    dropped. Against exact rational arithmetic at ``n = 192`` the agreement is
-    to a relative ``1.4e-13`` or better across the range, the residue being
-    ordinary floating-point error in ``lgamma`` and not the truncation --
-    ``tests/test_detect_rate.py`` pins that comparison. So a threshold sits at
-    its budget to within a relative ``1e-13``, which is many orders finer than
-    any budget this project quotes and is stated rather than glossed: "exact"
-    names the *law* being inverted, not the arithmetic inverting it.
+    dropped. Against exact rational arithmetic at ``n = 192``, swept over every
+    count and over ``p`` in {1/3, 1/2, 1/12, 1/64} on both tails, the agreement
+    is to a relative ``3e-13`` or better wherever the tail is representable in
+    double precision; the worst case measured is ``2.624e-13`` at ``p = 1/12``
+    on the upper tail. The residue is ordinary floating-point error in
+    ``lgamma``, not the truncation -- ``tests/test_detect_rate.py`` pins that
+    comparison. So a threshold sits at its budget to within a relative
+    ``3e-13``, which is many orders finer than any budget this project quotes
+    and is stated rather than glossed: "exact" names the *law* being inverted,
+    not the arithmetic inverting it.
+
+    The one place that agreement fails is where no double could hold it:
+    below roughly ``1e-316`` the tail underflows, so the returned value and
+    any double representation are both ``0.0`` while the rational is merely
+    tiny. Every such count sits about 296 orders of magnitude below
+    ``2**-64``, the smallest budget this project quotes, and so can never
+    select a threshold. That is why the figures above are qualified by the
+    representable range rather than stated across ``the range`` flatly -- an
+    earlier draft said ``1.4e-13`` ``across the range``, which was in fact the
+    maximum over the nine counts the pinning test parametrises. Audit 1 of
+    Phase 4 caught it; the sweep behind the numbers now quoted is wider.
 
     Examples
     --------

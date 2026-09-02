@@ -517,8 +517,19 @@ this at 240σ at production parameters).
 ### Phase 5 — Evaluation
 
 Forgery probability against key length, ROC curves, false-accept and false-reject rates,
-performance benchmarks. Full-scale statistical runs live here: 200 trials at production
-parameters is ~15 hours single-threaded but embarrassingly parallel, so 1–2 hours across cores.
+performance benchmarks. Full-scale statistical runs live here, and they are embarrassingly
+parallel — every trial takes its own injected seed (D3), so a trial's result depends on its
+seed and on nothing else.
+
+> **The cost figure is disputed and Phase 5 resolves it by measurement before planning on it.**
+> This section previously read "200 trials at production parameters is ~15 hours
+> single-threaded", implying ~4.5 min per session. Measured session times scale linearly at
+> 6.7 ms/position from `L=192` to `L=1536`, which extrapolates to 12.9 min per session and 42.9
+> hours for 200 trials — a factor of three the other way. One of the two is wrong. The Phase 5
+> harness times a real session at `DEFAULT_PARAMS` as its first task and corrects whichever
+> source is wrong, rather than either figure being carried forward on trust.
+
+Phase 5's sweep runs concurrently with Phase 6 — see the roadmap note in `README.md`.
 
 ### Phase 6 — The dashboard
 

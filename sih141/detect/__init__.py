@@ -301,12 +301,32 @@ class ThresholdView:
     >>> structural.family, structural.direction, structural.can_fire
     ('structural', None, True)
 
-    Every one of them proves a bound at or inside its own budget, which is the
-    property a family-wise union bound is entitled to assume:
+    Every one of them that CAN FIRE proves a bound at or inside its own
+    budget, which is the property a family-wise union bound is entitled to
+    assume:
 
     >>> all(v.false_positive_bound <= v.budget
     ...     for v in (rate, channel, structural))
     True
+
+    The ``can_fire`` qualifier is load-bearing, not a hedge. A threshold whose
+    sample cannot reach its own statistic reports the bound it would prove if
+    it could, and that bound may exceed the budget -- the check is inadmissible
+    rather than unsound, and :func:`detect` is unaffected because
+    ``structural_report`` skips inadmissible checks. But a caller that walks
+    several families and SUMS ``false_positive_bound`` without first consulting
+    ``can_fire`` would publish a family-wise bound above its own budget:
+
+    >>> from sih141.detect.thresholds_structural import evidence_abort_threshold
+    >>> from sih141.protocol.params import ProtocolParams
+    >>> bad = threshold_view(evidence_abort_threshold(
+    ...     ProtocolParams(key_length=384), 1.6e-19))
+    >>> bad.can_fire, bad.false_positive_bound > bad.budget
+    (False, True)
+
+    Audit 3 of Phase 4 named this the likeliest way a Phase 5 walker goes
+    wrong, so the guard is stated here and pinned above rather than left to
+    the reader.
 
     And the trap the class exists for. A threshold that cannot fire reports
     ``can_fire=False`` whichever family it came from, although the two

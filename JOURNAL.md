@@ -8,7 +8,7 @@
 > on the maintainer's explicit instruction. The permanent record is
 > `docs/METRICS.md` and the `docs/PHASE*.md` notes.
 
-**149 entries** — 39 finding · 33 decision · 28 issue · 24 fix · 23 note · 2 deadend
+**151 entries** — 40 finding · 33 decision · 28 issue · 24 fix · 24 note · 2 deadend
 
 
 ## Phase 0 — Scaffold
@@ -6176,3 +6176,73 @@ TWO PROSE NUMBERS WERE CAUGHT WRONG DURING THIS ROUND, both by writing them as d
 The lesson is the project's existing one and this round paid it again: A NUMBER THAT IS NOT
 EXECUTED IS A NUMBER THAT IS NOT CHECKED. Where a figure cannot be a doctest -- because it
 belongs in a document -- generate it, and re-verify it before publishing.
+
+### `[*]` MAJOR and OPEN -- the noiseless null is not in the machine-readable output
+
+*finding · audit:phase4:3 · 2026-09-02T22:30:26Z*
+
+STATUS: OPEN, deliberately, and it is a constraint on PHASE 5 rather than a bug in Phase 4.
+
+detect() defaults to channel_error_rate=0.0. That null is correct and it IS disclosed -- in the
+detect() docstring, in finding F6, in dominance_noise_level(). The defect is that the
+disclosure lives entirely in prose while the headline fields carry nothing. Detection.to_dict()
+has 19 keys and channel_error_rate is not one of them.
+
+REPRODUCED INDEPENDENTLY at 2e75d91, honest parties, depolarising noise on the wire only, and
+every figure matched the auditor's to the digit:
+    detected=True  false_positive_bound=2.781833469007519e-10  bound_is_unconditional=True
+on a run where BOTH VERIFIERS ACCEPTED and the link error was 0.005 -- under a third of Bob's
+own acceptance cut s_a=0.015625. False alarms by link error rate, n=30 each: 0.0 -> 0/30,
+0.0025 -> 13/30, 0.005 -> 17/30, 0.01 -> 27/30, 0.015 -> 30/30, 0.03125 (= 2 s_a, the DESIGN
+noise level) -> 30/30. Supplying the true rate gives 0/30 at every level, so the mechanism is
+right and only the default is the trap.
+
+THE CRUEL PART: bound_is_unconditional is the field whose name most suggests it would flag
+this. It does not. It concerns conditioning on |M_R|, and it is True in exactly the dangerous
+case and False in the safe one.
+
+WHY I DID NOT FIX IT. It is a change to shipped detector output immediately after the audit
+that certified that output, the fix has a design choice inside it (add a field, or refuse the
+default, or return a null descriptor), and the maintainer asked to be told about anything major
+rather than have me decide a repair round alone. It is written into docs/PHASE4.md 12 and into
+the Phase 5 brief as a hard constraint on every table.
+
+IT IS THE SAME SPECIES AS CONSTRAINT 1. An abort averaged into a rejection is a number that is
+arithmetically correct and still a false claim once its denominator goes unstated. This is a
+number that is arithmetically correct and still a false claim once its NULL goes unstated.
+
+### `[-]` Phase 4 audit: three sound verdicts, six defects, one that Phase 5 must carry
+
+*note · claude · 2026-09-02T22:30:26Z*
+
+All three auditors returned SOUND. That is the first clean audit round in this project --
+Phase 2 found three security breaks, Phase 3 the steerable check set and the inert isolation
+check, Phase 4's carried agent route H, the integrator route I. Four rounds, four breaks. This
+one found no break, and the reason is worth recording: it is the first round where the thing
+being audited was DERIVED rather than designed. There is less room for a wrong answer in an
+inverted binomial tail than in a protocol seam.
+
+WHAT THEY COULD NOT BREAK, which is the phase's actual claim:
+  * 288 threshold inversions re-derived from scratch in fractions.Fraction, each checked to be
+    EXTREMAL (the next count out exceeds the budget), not merely admissible. 0 anomalies.
+  * 1536 detect() calls with the union bound recomputed by an independent enumerator and
+    fsum'd. Recomputation mismatches: 0. 1125 further calls found no orphan signal source.
+  * ~88,800 evaluations across three budget ladders: zero monotonicity violations, no
+    special-cased operating point.
+  * Ten point masses confirmed independently by two auditors on different routes.
+
+SIX DEFECTS. Two fixed here (A1-1, A1-2), four open and recorded in docs/PHASE4.md 12.
+
+A1-1 and A1-2 are the same species and it is THIS PROJECT'S NAMED FAILURE MODE: a number true
+of the sample written as true of the population. A1-1 quoted 1.4e-13 'across the range' when
+that was the max over the nine counts the pinning test parametrises; the swept worst case is
+2.624e-13. A1-2 stated as a general property of ThresholdView something with five
+counterexamples. Both were in prose next to a doctest that verified a weaker claim -- which is
+exactly how D5 gets satisfied on paper while the sentence above the doctest stays wrong.
+
+I RE-EXECUTED EVERY DEFECT BEFORE ACTING ON IT, and one of my own measurements was wrong: a
+1.000e+00 relative disagreement I found at n=192, p=1/64 looked alarming and is an artefact of
+subnormal underflow -- the tail is below 1e-316, where both the returned double and any double
+are 0.0 while the rational is merely tiny. Roughly 296 orders below the smallest budget quoted
+anywhere here. Not a finding. It is now documented in the docstring so the next person who
+sweeps that range does not report it either.
