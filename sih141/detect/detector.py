@@ -1138,9 +1138,26 @@ class FamilyBudget:
         """Coerce the shares and refuse a split that does not sum to ``eps``."""
         object.__setattr__(self, "eps", _as_budget(self.eps))
         for field in ("rate", "structural", "channel"):
-            object.__setattr__(
-                self, field, _as_budget(getattr(self, field), field)
-            )
+            try:
+                object.__setattr__(
+                    self, field, _as_budget(getattr(self, field), field)
+                )
+            except ValueError as exc:
+                # A share is derived, never passed. If one is out of range the
+                # caller's eps is what is wrong, and naming the internal field
+                # sends them looking for an argument they never supplied --
+                # Phase 4 audit finding A2-1, hit by any ROC sweep walking eps
+                # down a decade ladder.
+                raise ValueError(
+                    f"eps={self.eps!r} is too small to divide into family "
+                    f"shares: the {field} share came out as "
+                    f"{getattr(self, field)!r}, which is outside (0, 1). "
+                    f"The smallest budget this project quotes is 2**-64, "
+                    f"about 5.42e-20, and the split stays representable to "
+                    f"roughly 1e-310; below that a share underflows and no "
+                    f"bound can be proven from it. Sweep no lower rather "
+                    f"than reading this as a defect in the split."
+                ) from exc
         object.__setattr__(
             self,
             "evidence_bound",
@@ -1150,10 +1167,15 @@ class FamilyBudget:
         total = math.fsum((self.rate, self.structural, self.channel))
         if not math.isclose(total, self.eps, rel_tol=_BOUND_SLACK):
             raise ValueError(
-                f"the shares sum to {total!r} and the budget is {self.eps!r}. "
+                f"eps={self.eps!r}: the shares sum to {total!r} instead. "
                 f"The union bound of C-1 is only a bound on eps when the "
                 f"shares sum to it, so a split that does not is refused here "
-                f"rather than reported as if it did."
+                f"rather than reported as if it did. Below roughly 1e-313 "
+                f"the shares carry subnormal rounding dust and stop summing "
+                f"to the budget, which is a limit of binary floating point "
+                f"and not a statement about the detector -- refusing is the "
+                f"safe direction, and the region is far below any usable "
+                f"budget (Phase 4 audit finding A3-2)."
             )
 
     @property
@@ -1523,6 +1545,25 @@ class Detection:
         :ref:`C-1 <c1>`: the probability that an honest run trips anything at
         all is at most this. At or below :attr:`eps`, and normally well below
         it -- see :attr:`slack_factor`.
+    channel_error_rate : float
+        The link error rate the rate family's mismatch members were given as
+        their null -- the value passed to :func:`detect`, defaulting to
+        ``0.0``. **Read this before tabulating :attr:`detected`.** At ``0.0``
+        the null is that a matched position never disagrees, so an honest run
+        over a *noisy* link departs from it and is correctly reported as a
+        detection: the arithmetic is right and the row is still a false claim
+        if the table does not say which null it was scored against. Measured
+        on honest runs with both verifiers accepting, depolarising noise on
+        the wire only, 30 runs per level: ``0.0`` fires ``0/30``, ``0.0025``
+        fires ``13/30``, ``0.005`` fires ``17/30``, ``0.01`` fires ``27/30``,
+        and from ``0.015`` up -- including the design noise level
+        ``2 s_a = 0.03125`` -- ``30/30``. Passing the true rate gives
+        ``0/30`` at every level. See also :attr:`null_is_noiseless` and
+        :func:`sih141.detect.thresholds_rate.dominance_noise_level`.
+
+        Phase 4's audit raised this as finding A3-1: the behaviour was
+        disclosed in prose while the machine-readable output carried nothing,
+        which is why the value now ships on the verdict itself.
     bound_is_unconditional : bool
         ``False`` when a positive ``channel_error_rate`` made the rate family's
         mismatch members conditional on this run's matched counts. The sum is
@@ -1612,8 +1653,33 @@ class Detection:
     requirements_enforced: bool
     security_claim: bool
     key_length: int
+    channel_error_rate: float
 
     # -- derived views ------------------------------------------------------ #
+
+    @property
+    def null_is_noiseless(self) -> bool:
+        """bool: whether the mismatch members were scored against a
+        noiseless link.
+
+        ``True`` exactly when :attr:`channel_error_rate` is ``0.0``, which is
+        :func:`detect`'s default. It is a statement about the **null**, not
+        about the caller: a run scored this way over a noisy link can report
+        :attr:`detected` with a proven bound and still not be evidence of an
+        adversary. One field to filter a results table on.
+
+        >>> from sih141.detect import detect
+        >>> from sih141.protocol.params import ProtocolParams
+        >>> from sih141.protocol.session import QDSSession
+        >>> import numpy as np
+        >>> t = QDSSession(ProtocolParams(key_length=96),
+        ...                rng=np.random.default_rng(4)).run(0)
+        >>> detect(t, eps=1e-9).null_is_noiseless
+        True
+        >>> detect(t, eps=1e-9, channel_error_rate=0.01).null_is_noiseless
+        False
+        """
+        return self.channel_error_rate == 0.0
 
     @property
     def slack_factor(self) -> float:
@@ -1873,6 +1939,8 @@ class Detection:
             "signals": [signal.to_dict() for signal in self.signals],
             "false_positive_bound": self.false_positive_bound,
             "bound_is_unconditional": self.bound_is_unconditional,
+            "channel_error_rate": self.channel_error_rate,
+            "null_is_noiseless": self.null_is_noiseless,
             "evidence_bound": self.evidence_bound,
             "slack_factor": self.slack_factor,
             "budget": self.budget.to_dict(),
@@ -2566,6 +2634,7 @@ def detect(
         signals=signals,
         false_positive_bound=bound,
         bound_is_unconditional=rate_family.bound_is_unconditional,
+        channel_error_rate=noise,
         evidence_bound=(
             min(signal.false_positive_bound for signal in detection_signals)
             if detection_signals

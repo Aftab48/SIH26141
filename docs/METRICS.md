@@ -2,16 +2,16 @@
 
 **SIH26141** — Quantum-Inspired Cyber Threat Detection for Digital Signature Security
 
-Generated `2026-09-02 22:31 UTC` by `tools/metrics.py`. Every figure is computed from the
+Generated `2026-09-03 16:49 UTC` by `tools/metrics.py`. Every figure is computed from the
 repository — do not edit by hand, re-run the script.
 
 ## Test suite
 
 ```
-3036 passed in 1507.37s (0:25:07)
+3048 passed in 1276.85s (0:21:16)
 ```
 
-- Doctests collected from package modules: **355**
+- Doctests collected from package modules: **356**
 - `--doctest-modules` is enabled over `testpaths = ["tests", "sih141"]`, so every
   numeric claim written in a docstring is an executable test. Documentation that
   lies fails the suite.
@@ -47,15 +47,15 @@ repository — do not edit by hand, re-run the script.
 | `sih141/attacks/starvation.py` | 1678 | 333 | 1115 | 21 | 27 | 4 |
 | `sih141/attacks/statistics.py` | 570 | 158 | 323 | 3 | 14 | 1 |
 | `sih141/detect/__init__.py` | 572 | 263 | 259 | 8 | 2 | 1 |
-| `sih141/detect/detector.py` | 2583 | 906 | 1349 | 80 | 26 | 8 |
-| `sih141/detect/statistics.py` | 3301 | 962 | 1921 | 57 | 56 | 10 |
+| `sih141/detect/detector.py` | 2652 | 927 | 1388 | 85 | 27 | 8 |
+| `sih141/detect/statistics.py` | 3326 | 963 | 1939 | 61 | 56 | 10 |
 | `sih141/detect/thresholds_channel.py` | 2905 | 591 | 1865 | 81 | 34 | 3 |
 | `sih141/detect/thresholds_rate.py` | 3216 | 753 | 2003 | 73 | 43 | 4 |
 | `sih141/detect/thresholds_structural.py` | 3138 | 668 | 2024 | 51 | 43 | 8 |
-| **total** | **57667** | **13790** | **35620** | **1260** | **909** | **109** |
+| **total** | **57761** | **13812** | **35677** | **1269** | **910** | **109** |
 
-Tests: **37974 lines** across **32 files**, **1861 test functions** defined.
-Test-lines to code-lines ratio: **2.75 : 1**
+Tests: **38204 lines** across **33 files**, **1873 test functions** defined.
+Test-lines to code-lines ratio: **2.77 : 1**
 
 ## Live security parameters
 
@@ -81,24 +81,25 @@ actually computes today — not what a document once claimed.
 
 | File | Words |
 | --- | ---: |
-| `README.md` | 4415 |
-| `JOURNAL.md` | 55779 |
-| `docs/METRICS.md` | 888 |
+| `README.md` | 4460 |
+| `JOURNAL.md` | 56470 |
+| `docs/METRICS.md` | 1052 |
 | `docs/PHASE1.md` | 4078 |
 | `docs/PHASE2.md` | 10056 |
 | `docs/PHASE3.md` | 15026 |
-| `docs/PHASE4.md` | 9443 |
-| `docs/QDS.md` | 4624 |
-| **total** | **104309** |
+| `docs/PHASE4.md` | 9654 |
+| `docs/QDS.md` | 4644 |
+| **total** | **105440** |
 
-Working-journal entries: **151** (temporary; deleted at the end of Phase 7).
+Working-journal entries: **152** (temporary; deleted at the end of Phase 7).
 
 ## Repository
 
-- Commits: **18**
+- Commits: **19**
 
 | Commit | Subject |
 | --- | --- |
+| `505b71f` | Close Phase 4: three sound audits, two prose defects fixed |
 | `2e75d91` | Close routes H and I; audit 22 thresholds; reconcile the families |
 | `c61ee52` | Derive 22 thresholds and compose them with a family-wise bound |
 | `99efdf7` | Add the detection statistics layer with its honest-run nulls |

@@ -781,10 +781,10 @@ claim:
 |---|---|---|---|---|
 | A1-1 | minor | `thresholds_rate.py` | Docstring quoted `1.4e-13` agreement "across the range"; that was the maximum over the nine counts the pinning test parametrises. True worst case over the swept range is `2.624e-13`. | **fixed** — figure corrected to `3e-13`, sweep stated, underflow region documented |
 | A1-2 | minor | `detect/__init__.py` | Claimed as a general property that every `ThresholdView` proves a bound inside its own budget. Five counterexamples exist — all with `can_fire=False`. | **fixed** — invariant restated with its `can_fire` precondition and the counterexample pinned as a doctest |
-| A1-3 | minor | `statistics.py` | `floor_shortfall_bound` ignores its `floor` argument on the Chernoff branch, so outside its documented precondition it certifies `2**-64` for an event of probability ~1. Every in-tree caller satisfies the precondition. | open — unenforced precondition, no shipped number affected |
-| A2-1 | minor | `detector.py` | At the smallest representable budget the family split underflows and the refusal names an internal field (`rate`) rather than the caller's argument (`eps`). | open — cosmetic, refusal is the safe direction |
-| A3-1 | **major** | `detector.py` | The noiseless null is absent from the machine-readable output. See below. | **open — Phase 5 must handle it** |
-| A3-2 | minor | `detector.py` | `detect()` raises below roughly `1e-314`, far outside any usable budget. | open — robustness note |
+| A1-3 | minor | `statistics.py` | `floor_shortfall_bound` ignored its `floor` argument on the Chernoff branch, so outside its documented precondition it certified `2**-64` for an event of probability ~1. | **fixed** — the containment the derivation relies on is now checked rather than assumed: the term is offered only where `floor - 1 <= (1 - d0)·mu`. Both protocol floors keep their bound (tightly: `36554` against `36554.2`); a floor above the derivation gets `1.0` |
+| A2-1 | minor | `detector.py` | At the smallest representable budget the family split underflowed and the refusal named an internal field (`rate`) rather than the caller's argument (`eps`). | **fixed** — the refusal now names `eps`, states the share that underflowed, and says where the usable floor is so a sweep can stop there |
+| A3-1 | **major** | `detector.py` | The noiseless null was absent from the machine-readable output. See below. | **fixed** — `Detection.channel_error_rate` and the derived `null_is_noiseless` now ship on the verdict and in `to_dict()` (21 keys). Additive; no call site changed |
+| A3-2 | minor | `detector.py` | `detect()` raises below roughly `1e-314`, far outside any usable budget. | **fixed** — behaviour kept, since refusing is the safe direction; the message now says the subnormal region is a floating-point limit rather than a detector defect |
 
 ### A3-1, the major, in full
 
@@ -812,7 +812,17 @@ gives `0/30` at every level, so the mechanism is right and only the default is t
 it concerns conditioning on `|M_R|`, and it is `True` in exactly the dangerous case and `False`
 in the safe one.
 
-**Consequence for Phase 5, stated as a rule.** A pipeline that tabulates `detected` and
+**Fixed after the audit closed.** `Detection` now carries `channel_error_rate`, and the derived
+`null_is_noiseless` is `True` exactly when it is `0.0`. Both reach `to_dict()`, so a results table
+has one field to filter on instead of a paragraph to remember. The alternative — making
+`channel_error_rate` required — is the only change that would *force* a caller to confront the
+null, and it was rejected because it breaks every existing call site including this document's
+worked examples. What was **not** done: inferring the noise level inside `detect()`. At
+`check_fraction = 0` the transcript does not carry it (§9, finding 2), so guessing it would be
+inventing a null — the thing D7 exists to prevent. `tests/test_detect_audit_fixes.py` pins all
+four fixes, including the auditor's single-run reproduction.
+
+**Consequence for Phase 5, which the fix reduces but does not remove.** A pipeline that tabulates `detected` and
 `false_positive_bound` will record honest noisy links as detections carrying a proven `2.8e-10`
 bound. Any table drawn from this detector must either pass the link's true error rate, or state
 in the table that the null is noiseless and that the run's link was not. This is the same species

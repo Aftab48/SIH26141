@@ -780,7 +780,12 @@ def floor_shortfall_bound(trials: int, probability: float, floor: int) -> float:
       in. Since ``ceil(x) - 1 < x``, the event is contained in
       ``{count <= (1 - d0) mu}`` with ``d0 = sqrt(2 ln(1/eps0) / mu)``, and the
       multiplicative Chernoff lower tail ``exp(-d0^2 mu / 2)`` is exactly
-      ``eps0``.
+      ``eps0``. **The containment is checked rather than assumed**: the term
+      is offered only when ``floor - 1 <= (1 - d0) mu`` actually holds. It
+      holds tightly at both of the protocol's own floors -- at
+      ``trials = 115200`` the bound applies at ``36554`` against a limit of
+      ``36554.2`` -- and it fails, correctly, for any floor set higher than
+      the derivation supports.
 
     When neither applies the honest answer is ``1.0``: the sample is too small
     for the Chernoff form to have any power and the floor is too high for the
@@ -795,7 +800,10 @@ def floor_shortfall_bound(trials: int, probability: float, floor: int) -> float:
     probability : float
         ``p = 1/|B|``.
     floor : int
-        The floor as the protocol derives it.
+        The floor. Normally the one the protocol derives, but any value is
+        answered honestly: the Chernoff term is offered only where its
+        containment holds, so a floor the derivation does not support gets
+        ``1.0`` rather than a bound nothing proved.
 
     Returns
     -------
@@ -811,12 +819,29 @@ def floor_shortfall_bound(trials: int, probability: float, floor: int) -> float:
     '9.6302e-48'
     >>> floor_shortfall_bound(24, 1 / 3, 3)
     1.0
+
+    A floor above what the derivation supports is answered ``1.0``, not with
+    the budget. At ``trials = 115200`` the Chernoff form applies, but a floor
+    at the distribution's own mean is an event of probability about a half,
+    and certifying ``5.4210e-20`` for it would be asserting a bound rather
+    than proving one -- Phase 4's audit raised exactly that as finding A1-3,
+    when this branch did not consult ``floor`` at all:
+
+    >>> floor_shortfall_bound(115200, 1 / 3, 38400)
+    1.0
     """
     candidates: list[float] = []
     if floor <= 1:
         candidates.append((1.0 - probability) ** trials)
-    if 2.0 * _LOG_FLOOR_BUDGET < trials * probability:
-        candidates.append(HONEST_ABORT_BUDGET)
+    mean = trials * probability
+    if 2.0 * _LOG_FLOOR_BUDGET < mean:
+        # The Chernoff term bounds P(count <= (1 - d0) mean). It bounds the
+        # shortfall event only while {count <= floor - 1} sits inside that,
+        # which is where minimum_matched_count puts it and is not something a
+        # caller's floor is entitled to assume.
+        spread = math.sqrt(2.0 * _LOG_FLOOR_BUDGET / mean)
+        if floor - 1 <= (1.0 - spread) * mean:
+            candidates.append(HONEST_ABORT_BUDGET)
     if not candidates:
         return 1.0
     return min(candidates)

@@ -8,7 +8,7 @@
 > on the maintainer's explicit instruction. The permanent record is
 > `docs/METRICS.md` and the `docs/PHASE*.md` notes.
 
-**151 entries** — 40 finding · 33 decision · 28 issue · 24 fix · 24 note · 2 deadend
+**152 entries** — 40 finding · 33 decision · 28 issue · 25 fix · 24 note · 2 deadend
 
 
 ## Phase 0 — Scaffold
@@ -6246,3 +6246,61 @@ subnormal underflow -- the tail is below 1e-316, where both the returned double 
 are 0.0 while the rational is merely tiny. Roughly 296 orders below the smallest budget quoted
 anywhere here. Not a finding. It is now documented in the docstring so the next person who
 sweeps that range does not report it either.
+
+### `[+]` All six audit defects now closed -- and A1-3 was fixable rather than merely refusable
+
+*fix · claude · 2026-09-03T16:49:30Z*
+
+STATUS: closed. Two prose defects went in with the closing commit; these are the other four.
+
+A3-1, THE MAJOR. Detection now carries channel_error_rate, and null_is_noiseless is True
+exactly when it is 0.0. Both reach to_dict(), which goes from 19 keys to 21 and stays
+JSON-clean. Verified on the auditor's own reproduction: the run that reported detected=True
+with nothing to indicate the null now reports null_is_noiseless=True beside it.
+
+The design choice was between this and making channel_error_rate REQUIRED. Required is the
+only option that FORCES a caller to confront the null rather than merely letting them, and it
+is the more honest design. Rejected because it breaks every existing call site including the
+worked examples in docs/PHASE4.md, and because the failure being guarded against is a pipeline
+that never thought about the null -- which a named boolean in the serialised output plus
+constraint 9 in the Phase 5 brief addresses without a breaking change. Recorded here because
+it is a judgement call and the other answer is defensible.
+
+WHAT I DID NOT DO: infer the noise level inside detect(). At check_fraction=0 the transcript
+genuinely does not carry it -- that is finding 2 of PHASE4.md section 9 -- so guessing it would
+be inventing a null, which is the exact thing D7 exists to prevent. The detector's job is to
+say what null it used, not to pick a better one.
+
+A1-3 TURNED OUT BETTER THAN THE FINDING ASKED FOR, and this is the part worth keeping. The
+auditor described an unenforced PRECONDITION and the obvious fix is to refuse bad input loudly.
+But re-reading the derivation, the Chernoff term is valid exactly when the shortfall event
+{count <= floor - 1} sits inside {count <= (1 - d0) mu}, and that containment is CHECKABLE at
+runtime. So instead of refusing input outside a documented precondition, the branch now offers
+its term only where its own algebra holds -- which makes the function CORRECT for any floor
+rather than merely loud about floors it dislikes.
+
+The boundary is tight enough to be worth writing down: at DEFAULT_PARAMS the per-verifier floor
+applies at 36554 against a limit of 36554.2, and the pooled floor at 74189 against 74189.7.
+That is not luck -- it is what minimum_matched_count computes, and the containment holding by
+less than a count is the evidence that the check is guarding on the real condition rather than
+on something looser that happens to admit both floors. Handed a floor at the distribution's own
+mean, an event of probability about a half, it now returns 1.0 where it used to return 2**-64.
+A test walks the floor across the crossover and requires the bound to appear and disappear
+exactly there.
+
+A2-1 and A3-2 were one edit: both are the same refusal seen from two budgets. A share is
+DERIVED, never passed, so a share out of range means the caller's eps is wrong -- naming the
+internal field sent them after an argument detect() does not have. Both messages now name eps
+and say where the usable floor is, because the caller who reaches them is an ROC sweep walking
+eps down a decade ladder and what it needs to know is where to stop.
+
+WHY I DID THESE MYSELF RATHER THAN SPINNING A WORKFLOW. Four small edits, three of them in
+files already read, two in the same module -- parallel agents would have conflicted, and the
+verification that matters is a test per fix plus the suite. A workflow buys parallelism across
+independent work and adversarial review; neither applied.
+
+tests/test_detect_audit_fixes.py, 11 tests, each failing against the code as the auditors found
+it. The four fixes touched code three auditors had just certified, which is worth stating
+plainly: the audit covers 2e75d91, not this tree. What it certified -- that no threshold is
+fitted, that the union bound is over the tests actually run, that no operating point is
+special-cased -- is untouched by all four, none of which moves a threshold, a null or a budget.

@@ -521,15 +521,23 @@ performance benchmarks. Full-scale statistical runs live here, and they are emba
 parallel — every trial takes its own injected seed (D3), so a trial's result depends on its
 seed and on nothing else.
 
-> **The cost figure is disputed and Phase 5 resolves it by measurement before planning on it.**
-> This section previously read "200 trials at production parameters is ~15 hours
-> single-threaded", implying ~4.5 min per session. Measured session times scale linearly at
-> 6.7 ms/position from `L=192` to `L=1536`, which extrapolates to 12.9 min per session and 42.9
-> hours for 200 trials — a factor of three the other way. One of the two is wrong. The Phase 5
-> harness times a real session at `DEFAULT_PARAMS` as its first task and corrects whichever
-> source is wrong, rather than either figure being carried forward on trust.
+> **The cost, measured rather than estimated.** One honest session at `DEFAULT_PARAMS`
+> (`L = 115200`, `check_fraction = 0`) takes **230.2 s — 3.84 min, or 1.999 ms per position**,
+> timed end to end on the target machine with nothing else running. So 200 trials is **12.8
+> hours** single-threaded, and about **51 minutes** at 20 workers on this CPU's realistic 15×
+> effective speedup. Scaling is linear: 2.0–2.4 ms/position holds across `L = 192` to
+> `L = 3072`, a 16× range.
+>
+> The original estimate in this section was "~15 hours single-threaded", which is correct and
+> mildly conservative. It is recorded here that an intermediate measurement claimed 6.7
+> ms/position and a 42.9-hour total, and that figure was wrong: the profiler
+> (`tracemalloc`) was left attached, inflating every timing by very close to 3×. The error is
+> written down rather than quietly corrected because it is this project's own named failure
+> mode — a number true of the measurement rather than of the thing measured — and because a
+> brief had already been written that handed it to an agent as established fact.
 
-Phase 5's sweep runs concurrently with Phase 6 — see the roadmap note in `README.md`.
+**Phase 6 is built first.** The work order is 4 → 6 → 5 → 7; see the roadmap note in
+`README.md` for why. Nothing in Phase 6 depends on the numbers this phase produces.
 
 ### Phase 6 — The dashboard
 

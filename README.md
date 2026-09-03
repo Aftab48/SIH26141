@@ -275,10 +275,12 @@ verification scripts were running, so treat it as an upper bound; the load-beari
 | 5 | Evaluation — forgery probability vs. key length, ROC, FAR/FRR, benchmarks | ⬜ |
 | 6 | Web dashboard — live attack/detection demo | ⬜ |
 
-> **5 and 6 overlap deliberately.** Phase 5's production sweep is a long unattended run, and
-> Phase 6 depends only on `Detection.to_dict()`, which Phase 4 froze. The dashboard is therefore
-> built while the sweep executes rather than after it. Phase 7 does wait on Phase 5, because it
-> publishes Phase 5's numbers.
+> **Phase 6 is built before Phase 5 runs.** The numbers are the phase order; the work order is
+> 4 → 6 → 5 → 7. Phase 6 depends only on `Detection.to_dict()`, which Phase 4 froze, so it is
+> not waiting on anything — while Phase 5's production sweep is a long unattended run whose
+> results only Phase 7 consumes. Building the dashboard first means the thing a reviewer
+> actually looks at exists early, and the sweep can then run without blocking anyone. Phase 7
+> is last either way, because it publishes Phase 5's numbers.
 | 7 | Submission docs — mathematical modelling and security analysis | ⬜ |
 
 > **Note on scope.** The published problem statement ends with an unfilled placeholder where
