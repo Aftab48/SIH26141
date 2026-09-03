@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<!--
+  SIH26141 -- Quantum-Inspired Cyber Threat Detection for Digital Signature
+  Security. Phase 6 dashboard, frontend half.
+
+  NOTHING ON THIS PAGE IS FETCHED FROM A NETWORK. Every stylesheet, script and
+  data file below is a same-origin path served by the same process that serves
+  the API. There is no CDN, no web font, no analytics beacon and no `@import`
+  inside any vendored file, because there is no vendored file: the charts are
+  hand-rolled SVG in `js/charts.js` and the type is the operating system's own
+  stack. Venue wifi fails, and a demo that dies on an unreachable CDN dies at
+  the worst possible moment.
+
+  THE PATHS ARE ROOT-ABSOLUTE UNDER /static, and that is not a style choice.
+  The service serves this page at `/` and mounts this directory at `/static`,
+  so a relative `css/app.css` would resolve to `/css/app.css` and 404 -- every
+  stylesheet and every script at once, on the one page anybody looks at, and
+  invisibly under a plain static file server. tests/test_web_frontend.py
+  asserts both ends of that seam.
+
+  The page also runs with no API at all: it falls back to the recorded runs in
+  `data/recorded/` and says so in the masthead.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>SIH26141 — quantum digital signature threat detection</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/static/css/app.css" />
+  </head>
+  <body>
+    <header class="masthead">
+      <h1>
+        <span class="code">SIH26141</span>
+        Quantum-inspired threat detection for digital signature security
+      </h1>
+      <span class="spacer"></span>
+      <span class="mode-chip" id="mode-chip">starting…</span>
+      <button id="projector" type="button" aria-pressed="false">
+        Projector mode
+      </button>
+    </header>
+
+    <p class="visually-hidden">
+      Every number on this page was computed in Python and sent by the API. The
+      browser formats, lays out and plots; it derives nothing.
+    </p>
+
+    <div class="layout">
+      <div class="rail" id="rail">
+        <section class="panel">
+          <h2>Loading</h2>
+          <div class="panel-body">
+            <p class="note">Reading the contract and the API…</p>
+          </div>
+        </section>
+      </div>
+      <main class="stage" id="stage"></main>
+    </div>
+
+    <footer class="colophon">
+      <p>
+        The browser computes nothing. Every figure above arrived from
+        <code>detect()</code> or from the transcript, through the JSON API; the
+        page formats, lays out, colours and plots, and does not derive, average,
+        sum, threshold or infer. Where a number is missing the page says the API
+        did not supply it rather than filling in a plausible one.
+      </p>
+      <p>
+        <strong>Proven</strong> numbers come from a stated null and a named
+        inequality. <strong>Measured</strong> numbers are counted over runs and
+        are shown with their sample size. There is no false-negative bound
+        anywhere on this page, because none can be derived from a transcript.
+      </p>
+      <p>
+        No asset here is fetched from a network. Charts are inline SVG written
+        in <code>js/charts.js</code>; type is the system stack.
+      </p>
+    </footer>
+
+    <script src="/static/js/format.js"></script>
+    <script src="/static/js/contract.js"></script>
+    <script src="/static/js/charts.js"></script>
+    <script src="/static/js/render.js"></script>
+    <script src="/static/js/app.js"></script>
+  </body>
+</html>

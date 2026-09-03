@@ -1,0 +1,50 @@
+{
+ "_comment": [
+  "Constants the screen needs that no API endpoint returns, shipped as DATA",
+  "rather than computed in the browser.",
+  "",
+  "D8 forbids the frontend deriving a number. It does not forbid the frontend",
+  "reading one: the difference that matters is whether a figure on the screen is",
+  "covered by a test in Python, and every figure in this file is. See",
+  "tests/test_web_frontend.py, which pins the CHSH bounds against math.sqrt and",
+  "the calibration table against the docstring of Detection.channel_error_rate",
+  "-- the same docstring the ~3050-test suite runs as a doctest. A number here",
+  "that drifts from its source fails the build.",
+  "",
+  "Nothing in this file is a per-run quantity. Per-run figures come from",
+  "/api/run and from nowhere else."
+ ],
+ "version": 1,
+ "chsh": {
+  "kind": "definition",
+  "classical_bound": 2.0,
+  "tsirelson_bound": 2.8284271247461903,
+  "note": "Reference lines on the CHSH chart. The classical bound is the CHSH inequality's own value and the Tsirelson bound is 2*sqrt(2); neither is a threshold this detector applies. Whether a link's Bell test failed is decided by the channel family in Python and appears in Signals -- never by comparing a bar to a line on a chart.",
+  "domain": {
+   "minimum": -4.0,
+   "maximum": 4.0,
+   "note": "The statistic's definitional range: four correlators, each in [-1, 1]. Used as the chart's axis so that no axis maximum is ever chosen from the data."
+  }
+ },
+ "noise_null_calibration": {
+  "kind": "measured",
+  "source": "Phase 4, the docstring of Detection.channel_error_rate",
+  "what": "Honest runs over a depolarising wire, BOTH VERIFIERS ACCEPTING, scored against detect()'s default noiseless null (channel_error_rate = 0.0). Not a detection rate for any adversary: there is no adversary in any of these runs.",
+  "runs_per_level": 30,
+  "levels": [
+   {"noise": 0.0, "detected": 0},
+   {"noise": 0.0025, "detected": 13},
+   {"noise": 0.005, "detected": 17},
+   {"noise": 0.01, "detected": 27},
+   {"noise": 0.015, "detected": 30},
+   {"noise": 0.03125, "detected": 30}
+  ],
+  "with_true_rate_passed": "Passing the link's true rate to detect() gives 0/30 at every level.",
+  "design_noise_level": 0.03125,
+  "design_noise_note": "0.03125 is 2*s_a, the design noise level, and it fires on every run out of thirty. The honest baseline over a realistic link is the single most likely thing on this dashboard to be misread."
+ },
+ "false_negative": {
+  "exists": false,
+  "note": "There is no false-negative bound in this project and none can be derived from a transcript. Nothing on this screen may imply one: a quiet detector is not a proof that nothing happened."
+ }
+}

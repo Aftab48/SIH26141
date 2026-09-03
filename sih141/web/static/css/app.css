@@ -1,0 +1,1001 @@
+/* SIH26141 dashboard -- Phase 6 frontend.
+ *
+ * WHY THIS LOOKS THE WAY IT DOES
+ * ------------------------------
+ * It is shown on a projector, in a lit room, to people at the back. Two
+ * consequences run through every choice below.
+ *
+ * 1. LIGHT GROUND, VERY DARK INK, LARGE TYPE. A washed-out beamer lifts blacks:
+ *    a dark theme turns to grey mush, while white stays bright and near-black
+ *    text stays the darkest thing on the screen. So this commits to one look
+ *    rather than following the viewer's theme, and `Projector mode` scales the
+ *    whole page up without changing a single number.
+ *
+ * 2. NO MEANING IS CARRIED BY COLOUR ALONE. Every state is marked four ways at
+ *    once -- hue, a glyph, a border STYLE (solid / dashed / dotted) and a word
+ *    in capitals. A deuteranope at the back of the room and a projector with a
+ *    dead blue channel both still read the screen correctly.
+ *
+ * THE FOUR STATES THAT MUST NEVER BLUR INTO EACH OTHER
+ *   .is-clean      solid   teal    "NOTHING FIRED"
+ *   .is-detected   solid   red     "DETECTED"     + heavy left rule
+ *   .is-noverdict  DASHED  violet  "NO VERDICT"   + diagonal hatch
+ *   .is-withheld   DOTTED  slate   "NOT EVALUATED"+ diagonal hatch
+ * The third is a THIRD STATE, not a shade of the other two: an abort is not a
+ * rejection and is not a catch. The fourth is not a pass: an unmonitored link
+ * is not a clean one.
+ *
+ * AND THE TWO KINDS OF NUMBER
+ *   .num-proven    blue chip, turnstile prefix, the word PROVEN
+ *   .num-measured  amber chip, the word MEASURED, and its sample size
+ * They never share a treatment, anywhere, because on a screen a reader has no
+ * time to work out which kind a figure is.
+ */
+
+/* --------------------------------------------------------------------------
+   Tokens
+   -------------------------------------------------------------------------- */
+
+:root {
+  --scale: 1;
+
+  --ground: #f4f4f1;
+  --surface: #ffffff;
+  --surface-sunken: #ebebe6;
+  --ink: #0e1116;
+  --ink-soft: #414a56;
+  --ink-faint: #6b7280;
+  --rule: #c7c9c4;
+  --rule-strong: #8b8f89;
+
+  --clean: #08624a;
+  --clean-wash: #e3f3ed;
+  --detected: #9c1420;
+  --detected-wash: #fbe7e6;
+  --noverdict: #4c2d8f;
+  --noverdict-wash: #eee9fa;
+  --withheld: #3f4a5a;
+  --withheld-wash: #e8eaee;
+
+  --proven: #10357f;
+  --proven-wash: #e5ecfb;
+  --measured: #7a4a00;
+  --measured-wash: #fbf0dc;
+
+  --truth-ink: #f5f2ea;
+  --truth-ground: #1b1d21;
+
+  --focus: #10357f;
+
+  --mono: ui-monospace, "Cascadia Mono", "Consolas", "DejaVu Sans Mono",
+    monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+
+  --pad: 1rem;
+  --radius: 3px;
+}
+
+body.projector {
+  --scale: 1.28;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: calc(16px * var(--scale));
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  line-height: 1.45;
+  -webkit-text-size-adjust: 100%;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* --------------------------------------------------------------------------
+   Skeleton
+   -------------------------------------------------------------------------- */
+
+.masthead {
+  background: var(--truth-ground);
+  color: var(--truth-ink);
+  padding: 0.7rem 1.1rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1.2rem;
+  align-items: baseline;
+  border-bottom: 4px solid var(--proven);
+}
+
+.masthead h1 {
+  font-size: 1.06rem;
+  margin: 0;
+  letter-spacing: 0.01em;
+}
+
+.masthead .code {
+  font-family: var(--mono);
+  font-weight: 700;
+  color: #ffd479;
+}
+
+.masthead .spacer {
+  flex: 1 1 auto;
+}
+
+.masthead .mode-chip {
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border: 1px solid currentColor;
+  border-radius: var(--radius);
+  padding: 0.1rem 0.45rem;
+}
+
+.masthead button {
+  font: inherit;
+  font-size: 0.8rem;
+  background: transparent;
+  color: inherit;
+  border: 1px solid currentColor;
+  border-radius: var(--radius);
+  padding: 0.2rem 0.6rem;
+  cursor: pointer;
+}
+
+.masthead button[aria-pressed="true"] {
+  background: var(--truth-ink);
+  color: var(--truth-ground);
+  font-weight: 700;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(19rem, 24rem) minmax(0, 1fr);
+  gap: var(--pad);
+  padding: var(--pad);
+  align-items: start;
+}
+
+@media (max-width: 62rem) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The rail is sticky so the controls stay reachable while a long result is
+ * scrolled -- but it is TALLER than the viewport, and a sticky element taller
+ * than the viewport pins its top and puts its own tail permanently out of
+ * reach. That bug hid the recorded-run list, which is the whole walk-through.
+ * Bounding the height and letting the rail scroll inside itself fixes it. */
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pad);
+  position: sticky;
+  top: var(--pad);
+  max-height: calc(100vh - 2 * var(--pad));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 0.2rem;
+}
+
+@media (max-width: 62rem) {
+  .rail {
+    position: static;
+    max-height: none;
+    overflow-y: visible;
+  }
+}
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pad);
+  min-width: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Panels
+   -------------------------------------------------------------------------- */
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+
+.panel > h2,
+.panel > h3 {
+  margin: 0;
+  padding: 0.55rem 0.85rem;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface-sunken);
+  color: var(--ink-soft);
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.panel > h2 .hint,
+.panel > h3 .hint {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  font-size: 0.86em;
+  color: var(--ink-faint);
+}
+
+.panel-body {
+  padding: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.panel-body > p {
+  margin: 0;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.7rem;
+}
+
+.note {
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+  margin: 0;
+}
+
+.note strong {
+  color: var(--ink);
+}
+
+/* --------------------------------------------------------------------------
+   State tokens -- constraint 1 and constraint 5 live here
+   -------------------------------------------------------------------------- */
+
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.16rem 0.5rem;
+  border-radius: var(--radius);
+  border-width: 2px;
+  white-space: nowrap;
+}
+
+.state .glyph {
+  font-size: 1em;
+  line-height: 1;
+}
+
+.is-clean {
+  color: var(--clean);
+  background: var(--clean-wash);
+  border-style: solid;
+  border-color: var(--clean);
+}
+
+.is-detected {
+  color: var(--detected);
+  background: var(--detected-wash);
+  border-style: solid;
+  border-color: var(--detected);
+}
+
+.is-noverdict {
+  color: var(--noverdict);
+  background: var(--noverdict-wash);
+  border-style: dashed;
+  border-color: var(--noverdict);
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(76, 45, 143, 0.14) 0 4px,
+    transparent 4px 9px
+  );
+}
+
+.is-withheld {
+  color: var(--withheld);
+  background: var(--withheld-wash);
+  border-style: dotted;
+  border-color: var(--withheld);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(63, 74, 90, 0.16) 0 3px,
+    transparent 3px 8px
+  );
+}
+
+.is-neutral {
+  color: var(--ink-soft);
+  background: var(--surface-sunken);
+  border-style: solid;
+  border-color: var(--rule-strong);
+}
+
+/* Attribution statuses get their OWN two hues, deliberately not the verdict
+ * ones. "The evidence supports channel-manipulation" and "a threshold fired"
+ * are different statements, and painting both red would blur exactly the
+ * distinction the four verdict states exist to keep sharp -- worse, it would
+ * paint "honest: supported" in alarm red on a clean run. */
+.is-named {
+  color: var(--proven);
+  background: var(--proven-wash);
+  border-style: solid;
+  border-color: var(--proven);
+}
+
+.is-ruledout {
+  color: var(--ink-soft);
+  background: var(--surface);
+  border-style: solid;
+  border-color: var(--ink-soft);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+/* Big headline versions of the same four states. */
+.verdict {
+  border-width: 2px;
+  border-radius: var(--radius);
+  padding: 0.7rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.verdict.is-detected {
+  border-left-width: 12px;
+}
+
+.verdict.is-clean {
+  border-left-width: 12px;
+}
+
+.verdict.is-noverdict {
+  border-left-width: 12px;
+}
+
+.verdict .headline {
+  font-family: var(--mono);
+  font-size: 1.22rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.verdict .sub {
+  font-size: 0.88rem;
+  color: var(--ink);
+  font-family: var(--sans);
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+
+/* --------------------------------------------------------------------------
+   Proven versus measured -- constraint 2
+   -------------------------------------------------------------------------- */
+
+.num {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-family: var(--mono);
+  border-radius: var(--radius);
+  padding: 0.1rem 0.45rem;
+  border: 1px solid;
+  white-space: nowrap;
+}
+
+.num .kind {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+}
+
+.num .value {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.num .qual {
+  font-size: 0.68rem;
+  font-family: var(--sans);
+}
+
+.num-proven {
+  color: var(--proven);
+  background: var(--proven-wash);
+  border-color: var(--proven);
+}
+
+.num-measured {
+  color: var(--measured);
+  background: var(--measured-wash);
+  border-color: var(--measured);
+  border-style: dashed;
+}
+
+.num-plain {
+  color: var(--ink);
+  background: var(--surface-sunken);
+  border-color: var(--rule);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.9rem;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  align-items: center;
+}
+
+/* --------------------------------------------------------------------------
+   Ground truth -- deliberately outside the system
+   -------------------------------------------------------------------------- */
+
+.truth {
+  background: var(--truth-ground);
+  color: var(--truth-ink);
+  border: 2px dashed var(--rule-strong);
+  border-radius: var(--radius);
+  padding: 0.7rem 0.85rem;
+}
+
+.truth h3 {
+  margin: 0 0 0.4rem;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
+  color: #ffd479;
+}
+
+.truth dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.15rem 0.8rem;
+  font-size: 0.86rem;
+}
+
+.truth dt {
+  color: #b9bec7;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+.truth dd {
+  margin: 0;
+}
+
+.truth .warn {
+  margin-top: 0.5rem;
+  font-size: 0.78rem;
+  color: #ffd479;
+  border-top: 1px solid #3b3e44;
+  padding-top: 0.4rem;
+}
+
+/* --------------------------------------------------------------------------
+   Banners
+   -------------------------------------------------------------------------- */
+
+.banner {
+  border: 2px solid;
+  border-left-width: 12px;
+  border-radius: var(--radius);
+  padding: 0.65rem 0.85rem;
+  display: flex;
+  gap: 0.7rem;
+  align-items: flex-start;
+}
+
+.banner .glyph {
+  font-size: 1.35rem;
+  line-height: 1.1;
+}
+
+.banner h3 {
+  margin: 0 0 0.2rem;
+  font-size: 0.86rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.banner p {
+  margin: 0.25rem 0 0;
+  font-size: 0.88rem;
+}
+
+.banner.alarm {
+  color: var(--detected);
+  background: var(--detected-wash);
+  border-color: var(--detected);
+}
+
+.banner.caution {
+  color: var(--measured);
+  background: var(--measured-wash);
+  border-color: var(--measured);
+}
+
+.banner.info {
+  color: var(--proven);
+  background: var(--proven-wash);
+  border-color: var(--proven);
+}
+
+.banner.abort {
+  color: var(--noverdict);
+  background: var(--noverdict-wash);
+  border-color: var(--noverdict);
+}
+
+.banner .body {
+  color: var(--ink);
+}
+
+.missing {
+  border: 2px dashed var(--detected);
+  background: var(--detected-wash);
+  color: var(--detected);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.8rem;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+}
+
+/* --------------------------------------------------------------------------
+   Controls
+   -------------------------------------------------------------------------- */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.86rem;
+}
+
+.field > label {
+  font-weight: 700;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-soft);
+}
+
+.field .cap {
+  font-size: 0.76rem;
+  color: var(--ink-faint);
+  font-family: var(--mono);
+}
+
+.field input[type="number"],
+.field select {
+  font: inherit;
+  font-family: var(--mono);
+  padding: 0.28rem 0.4rem;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  width: 100%;
+}
+
+.attack-list,
+.recorded-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.attack-list li label,
+.recorded-list li button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 0.4rem 0.55rem;
+  cursor: pointer;
+  background: var(--surface);
+  font: inherit;
+  color: inherit;
+}
+
+.attack-list li label:hover,
+.recorded-list li button:hover {
+  background: var(--surface-sunken);
+}
+
+.attack-list input[type="radio"] {
+  margin-right: 0.4rem;
+}
+
+.attack-list li label:has(input:checked) {
+  border-color: var(--proven);
+  border-width: 2px;
+  background: var(--proven-wash);
+}
+
+.attack-name {
+  font-weight: 700;
+}
+
+.attack-why {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  margin-top: 0.15rem;
+}
+
+.run-button {
+  font: inherit;
+  font-weight: 800;
+  font-size: 1rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 0.6rem 0.9rem;
+  border-radius: var(--radius);
+  border: 2px solid var(--proven);
+  background: var(--proven);
+  color: #ffffff;
+  cursor: pointer;
+  width: 100%;
+}
+
+.run-button[disabled] {
+  cursor: progress;
+  background: var(--surface-sunken);
+  color: var(--ink-faint);
+  border-color: var(--rule-strong);
+}
+
+.run-status {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 0.4rem 0.55rem;
+  background: var(--surface-sunken);
+  color: var(--ink-soft);
+}
+
+.run-status.busy {
+  border-color: var(--proven);
+  color: var(--proven);
+  background: var(--proven-wash);
+}
+
+.run-status.failed {
+  border-color: var(--detected);
+  color: var(--detected);
+  background: var(--detected-wash);
+}
+
+@keyframes sweep {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 2rem 0;
+  }
+}
+
+.run-status.busy::after {
+  content: "";
+  display: block;
+  height: 5px;
+  margin-top: 0.35rem;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--proven) 0 8px,
+    transparent 8px 16px
+  );
+  animation: sweep 0.9s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .run-status.busy::after {
+    animation: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Tables
+   -------------------------------------------------------------------------- */
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.86rem;
+}
+
+caption {
+  text-align: left;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  padding-bottom: 0.35rem;
+}
+
+th,
+td {
+  border: 1px solid var(--rule);
+  padding: 0.3rem 0.45rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+thead th {
+  background: var(--surface-sunken);
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+td.numeric,
+th.numeric {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+tbody tr.row-detected td {
+  background: var(--detected-wash);
+}
+
+tbody tr.row-noverdict td {
+  background: var(--noverdict-wash);
+}
+
+tbody tr.row-withheld td {
+  background: var(--withheld-wash);
+}
+
+tbody tr.row-undetectable td {
+  background: var(--withheld-wash);
+}
+
+tbody tr.row-named td {
+  background: var(--proven-wash);
+}
+
+.claim {
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  max-width: 44rem;
+}
+
+details.claim-details summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--proven);
+}
+
+details.claim-details p {
+  margin: 0.3rem 0 0;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+}
+
+/* --------------------------------------------------------------------------
+   Charts
+   -------------------------------------------------------------------------- */
+
+.chart {
+  width: 100%;
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+
+.chart .axis-line {
+  stroke: var(--rule-strong);
+  stroke-width: 1;
+}
+
+.chart .grid-line {
+  stroke: var(--rule);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+
+.chart .tick-label,
+.chart .row-label,
+.chart .value-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  fill: var(--ink-soft);
+}
+
+.chart .value-label {
+  fill: var(--ink);
+  font-weight: 700;
+}
+
+.chart .row-label {
+  fill: var(--ink);
+}
+
+.chart .bar {
+  fill: var(--proven);
+}
+
+.chart .bar-alarm {
+  fill: var(--detected);
+}
+
+.chart .bar-quiet {
+  fill: #6d7f9e;
+}
+
+.chart .whisker {
+  stroke: var(--ink);
+  stroke-width: 1.5;
+}
+
+.chart .whisker-loose {
+  stroke: var(--ink-faint);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 2;
+}
+
+.chart .marker-floor {
+  stroke: var(--detected);
+  stroke-width: 2.5;
+}
+
+.chart .marker-reference {
+  stroke: var(--ink-soft);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 3;
+}
+
+.chart .marker-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  fill: var(--detected);
+  font-weight: 700;
+}
+
+.chart .reference-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  fill: var(--ink-soft);
+}
+
+/* The fill is a presentation attribute set per chart in charts.js, because
+ * each chart carries its own pattern id -- a shared one would be a duplicate
+ * id in the document, and `url(#id)` would resolve to whichever chart rendered
+ * first. Only the stroke is styled here. */
+.chart .hatch-cell {
+  stroke: var(--withheld);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.9rem;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  align-items: center;
+}
+
+.chart-legend .swatch {
+  display: inline-block;
+  width: 0.85rem;
+  height: 0.85rem;
+  vertical-align: -0.1rem;
+  margin-right: 0.25rem;
+  border: 1px solid var(--ink-soft);
+}
+
+.swatch-bar {
+  background: var(--proven);
+}
+
+.swatch-alarm {
+  background: var(--detected);
+}
+
+.swatch-quiet {
+  background: #6d7f9e;
+}
+
+/* --------------------------------------------------------------------------
+   Odds and ends
+   -------------------------------------------------------------------------- */
+
+.kv {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.2rem 0.8rem;
+  font-size: 0.88rem;
+  align-items: baseline;
+}
+
+.kv dt {
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+}
+
+.kv dd {
+  margin: 0;
+}
+
+.summary-pre {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  background: var(--surface-sunken);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 0.55rem 0.7rem;
+  margin: 0;
+  overflow-x: auto;
+  color: var(--ink);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+footer.colophon {
+  padding: 0.8rem 1.1rem 2rem;
+  font-size: 0.8rem;
+  color: var(--ink-faint);
+  border-top: 1px solid var(--rule);
+  margin-top: 0.6rem;
+}
+
+footer.colophon code {
+  font-family: var(--mono);
+}

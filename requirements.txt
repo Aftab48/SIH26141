@@ -1,5 +1,33 @@
-# Phase 0-1 (quantum core). Web/API deps are added in Phase 6.
+# Phase 0-1 (quantum core).
 qiskit==2.5.2
 qiskit-aer==0.17.2
 numpy>=2.0
 pytest==9.1.1
+
+# Phase 6 (dashboard). One process serves the JSON API and the static frontend:
+# no Node, no bundler, no build step, and nothing fetched from a network at
+# runtime -- see sih141/web/api.py. Direct dependencies first, then the ones
+# they pull in, pinned so that a clone months from now installs the versions
+# this suite was green against.
+fastapi==0.121.2
+uvicorn==0.41.0
+
+# httpx is what fastapi.testclient drives the app through, so it is a TEST
+# dependency of tests/test_web_api.py and tests/test_web_contract.py rather
+# than a runtime one. It is listed because those tests are part of the suite
+# that has to be green, not because the server needs it.
+httpx==0.28.1
+
+# Transitive, pinned. anyio is held at 4.14.0 deliberately: 4.15 deprecates the
+# `anyio.abc.BlockingPortal` alias that starlette 0.49.3 still imports, which
+# puts a DeprecationWarning in the middle of every test run for no benefit.
+starlette==0.49.3
+anyio==4.14.0
+pydantic==2.13.5
+pydantic-core==2.46.5
+annotated-types==0.8.0
+annotated-doc==0.0.5
+typing-inspection==0.4.4
+h11==0.16.0
+httpcore==1.0.9
+click==8.5.0

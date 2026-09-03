@@ -1,0 +1,641 @@
+{
+ "request": {
+  "attack": "recipient-forgery",
+  "key_length": 192,
+  "check_fraction": 0.25,
+  "noise": 0.0,
+  "eps": 1e-09,
+  "channel_error_rate": 0.0,
+  "tolerated_depolarising": 0.0,
+  "count_exchange_timing": "before-forwarding",
+  "seed": 41,
+  "message_bit": 0
+ },
+ "detection": {
+  "eps": 1e-09,
+  "detected": true,
+  "signals": [
+   {
+    "name": "structural:structural-abort:Charlie:counts-from-two-declarations",
+    "family": "structural",
+    "kind": "forwarding-tamper",
+    "statistic": "Charlie refused: counts-from-two-declarations",
+    "observed": null,
+    "critical": 1.0,
+    "false_positive_bound": 0.0,
+    "is_detection": true,
+    "claim": "structural-abort: fires when aborts.structural >= 1; under point mass at 0: each of the four structural reasons is an equality test on data the honest protocol fixes, this fires with probability at most 0.0000e+00, by none -- point mass at 0."
+   }
+  ],
+  "false_positive_bound": 3.8649211592196904e-10,
+  "bound_is_unconditional": true,
+  "channel_error_rate": 0.0,
+  "null_is_noiseless": true,
+  "evidence_bound": 0.0,
+  "slack_factor": 2.5873749005578563,
+  "budget": {
+   "eps": 1e-09,
+   "rate": 4.99999999972895e-10,
+   "structural": 5.421019650400071e-20,
+   "channel": 4.99999999972895e-10,
+   "per_link": 1.2499999999322374e-10,
+   "evidence_bound": 5.421019650400071e-20,
+   "link_roster": [
+    [
+     "Bob",
+     0
+    ],
+    [
+     "Bob",
+     1
+    ],
+    [
+     "Charlie",
+     0
+    ],
+    [
+     "Charlie",
+     1
+    ]
+   ],
+   "derivation": "eps_struct = min(B_evid, eps/3) = min(5.4210e-20, 3.3333e-10) = 5.4210e-20; eps_rate = eps_chan = (eps - eps_struct)/2 = 5.0000e-10; sum = eps = 1.0000e-09. The structural family's proven bound is B_evid(n) whatever its share, so a larger share buys it nothing (C-2); the cap at eps/3 keeps the split from ever being worse than the even one."
+  },
+  "attributions": [
+   {
+    "hypothesis": "honest",
+    "status": "excluded",
+    "supporting": [],
+    "excluding": [
+     "structural:structural-abort:Charlie:counts-from-two-declarations"
+    ],
+    "missing_requirements": [],
+    "false_positive_bound": 0.0,
+    "indistinguishable_from": [],
+    "rationale": "the honest run is the run every null in this package describes, so every threshold fires on it with at most its own proven bound; this is the one row that may be excluded on a mismatch or a channel signal, because for the null itself those are the departure the threshold was built to bound rather than the channel's noise level. excluded by ['structural:structural-abort:Charlie:counts-from-two-declarations'], whose nulls this position leaves intact; the exclusion is mistaken with probability at most 0.0000e+00."
+   },
+   {
+    "hypothesis": "outside-forgery",
+    "status": "excluded",
+    "supporting": [],
+    "excluding": [
+     "structural:structural-abort:Charlie:counts-from-two-declarations"
+    ],
+    "missing_requirements": [],
+    "false_positive_bound": 0.0,
+    "indistinguishable_from": [
+     "impersonation-signing-seam",
+     "impersonation-distribution-seam"
+    ],
+    "rationale": "a declaration drawn independently of the recipients' records leaves the matched count's law exactly Binomial(n, 1/|B|) and touches no wire integer, no forwarding hop and no ledger; only the eigenvalues at positions that do match are disturbed, and each of those survives with probability 1/2 (sih141.protocol.analysis.FORGER_MATCHED_MISMATCH_PROBABILITY), so the mismatch count is zero with probability 2**-|M_R| and the signal is required rather than merely predicted. excluded by ['structural:structural-abort:Charlie:counts-from-two-declarations'], whose nulls this position leaves intact; the exclusion is mistaken with probability at most 0.0000e+00."
+   },
+   {
+    "hypothesis": "impersonation-signing-seam",
+    "status": "excluded",
+    "supporting": [],
+    "excluding": [
+     "structural:structural-abort:Charlie:counts-from-two-declarations"
+    ],
+    "missing_requirements": [],
+    "false_positive_bound": 0.0,
+    "indistinguishable_from": [
+     "outside-forgery",
+     "impersonation-distribution-seam"
+    ],
+    "rationale": "a declaration drawn independently of the recipients' records leaves the matched count's law exactly Binomial(n, 1/|B|) and touches no wire integer, no forwarding hop and no ledger; only the eigenvalues at positions that do match are disturbed, and each of those survives with probability 1/2 (sih141.protocol.analysis.FORGER_MATCHED_MISMATCH_PROBABILITY), so the mismatch count is zero with probability 2**-|M_R| and the signal is required rather than merely predicted. excluded by ['structural:structural-abort:Charlie:counts-from-two-declarations'], whose nulls this position leaves intact; the exclusion is mistaken with probability at most 0.0000e+00."
+   },
+   {
+    "hypothesis": "impersonation-distribution-seam",
+    "status": "excluded",
+    "supporting": [],
+    "excluding": [
+     "structural:structural-abort:Charlie:counts-from-two-declarations"
+    ],
+    "missing_requirements": [],
+    "false_positive_bound": 0.0,
+    "indistinguishable_from": [
+     "outside-forgery",
+     "impersonation-signing-seam"
+    ],
+    "rationale": "a declaration drawn independently of the recipients' records leaves the matched count's law exactly Binomial(n, 1/|B|) and touches no wire integer, no forwarding hop and no ledger; only the eigenvalues at positions that do match are disturbed, and each of those survives with probability 1/2 (sih141.protocol.analysis.FORGER_MATCHED_MISMATCH_PROBABILITY), so the mismatch count is zero with probability 2**-|M_R| and the signal is required rather than merely predicted. excluded by ['structural:structural-abort:Charlie:counts-from-two-declarations'], whose nulls this position leaves intact; the exclusion is mistaken with probability at most 0.0000e+00."
+   },
+   {
+    "hypothesis": "impersonation-full",
+    "status": "undetectable-by-construction",
+    "supporting": [],
+    "excluding": [],
+    "missing_requirements": [],
+    "false_positive_bound": null,
+    "indistinguishable_from": [],
+    "rationale": "Mallory runs the protocol correctly with a key pair of her own, so every statistic on the transcript is drawn from the honest law; assumption (AUTH) puts this position out of model rather than pretending a detector reaches it. never named and never ruled out: assumption (AUTH) puts this position out of model, and a hypothesis silently missing from a table reads as one that was excluded."
+   },
+   {
+    "hypothesis": "recipient-forgery",
+    "status": "supported",
+    "supporting": [
+     "structural:structural-abort:Charlie:counts-from-two-declarations"
+    ],
+    "excluding": [],
+    "missing_requirements": [],
+    "false_positive_bound": 0.0,
+    "indistinguishable_from": [],
+    "rationale": "he forwards a declaration built from his own raw log, which after Phase A' is roughly half of what the receiving verifier holds, so that verifier's matched count moves from n/3 to 2n/3 -- sqrt(n/2) standard deviations of the null, 9.80 at n = 192 and 240 at DEFAULT_PARAMS, with the derived upper-tail threshold strictly between the two means, which is what makes COUNT_HIGH a requirement and not a hope; his forwarded declaration is not Alice's, so the pair's counts name two declarations; he presents it into a fresh round, so no ledger entry is spent twice. supported by ['structural:structural-abort:Charlie:counts-from-two-declarations']; an honest run trips all of that evidence with probability at most 0.0000e+00, which is a bound against the honest null and not a bound on having named the wrong adversary (C-6)."
+   },
+   {
+    "hypothesis": "count-starvation",
+    "status": "excluded",
+    "supporting": [],
+    "excluding": [
+     "structural:structural-abort:Charlie:counts-from-two-declarations"
+    ],
+    "missing_requirements": [],
+    "false_positive_bound": 0.0,
+    "indistinguishable_from": [],
+    "rationale": "he understates one integer on the Phase C' wire and nothing else: his own scored matched count is untouched, so the two part company, and the lie is downward by construction -- an upper tail, a second declaration on the forwarding hop and a spent round are all three out of a count-exchange seam's reach. excluded by ['structural:structural-abort:Charlie:counts-from-two-declarations'], whose nulls this position leaves intact; the exclusion is mistaken with probability at most 0.0000e+00."
+   },
+   {
+    "hypothesis": "replay",
+    "status": "supported",
+    "supporting": [
+     "structural:structural-abort:Charlie:counts-from-two-declarations"
+    ],
+    "excluding": [],
+    "missing_requirements": [],
+    "false_positive_bound": 0.0,
+    "indistinguishable_from": [],
+    "rationale": "he re-presents a captured declaration, which the consumed-records ledger and the session binding both record, and which is not the declaration Alice sent this run; that declaration was drawn independently of the receiving verifier's current record, so every count null is left exactly where it was while the eigenvalues at matched positions disagree. LEDGER is predicted and NOT required: the ledger check is sound in one direction only -- a replay that burns its round through a rejection leaves the refusal count at zero (finding 4 of the structural family). supported by ['structural:structural-abort:Charlie:counts-from-two-declarations']; an honest run trips all of that evidence with probability at most 0.0000e+00, which is a bound against the honest null and not a bound on having named the wrong adversary (C-6)."
+   },
+   {
+    "hypothesis": "channel-manipulation",
+    "status": "excluded",
+    "supporting": [],
+    "excluding": [
+     "structural:structural-abort:Charlie:counts-from-two-declarations"
+    ],
+    "missing_requirements": [],
+    "false_positive_bound": 0.0,
+    "indistinguishable_from": [],
+    "rationale": "the matched set is decided by basis agreement, and a trace-preserving map on the entanglement resource acts on the teleported eigenstate; it cannot move a basis, so it cannot move a count, a floor, a declaration or a bookkeeping equality. CHANNEL is predicted and NOT required: a weak enough deviation clears a short check sample, and this layer bounds false positives and never false negatives. excluded by ['structural:structural-abort:Charlie:counts-from-two-declarations'], whose nulls this position leaves intact; the exclusion is mistaken with probability at most 0.0000e+00."
+   }
+  ],
+  "named": [
+   "recipient-forgery",
+   "replay"
+  ],
+  "kinds": [
+   "forwarding-tamper"
+  ],
+  "outcomes": {
+   "Bob": "accepted",
+   "Charlie": "refused-to-score"
+  },
+  "not_scored": [
+   "Charlie"
+  ],
+  "withheld": [],
+  "grouping_key": [
+   "before-forwarding",
+   true,
+   true,
+   false,
+   true
+  ],
+  "requirements_enforced": false,
+  "security_claim": true,
+  "key_length": 144,
+  "summary": "detect: 1 signal(s) at eps = 1.000e-09\n  P(any signal | honest) <= 3.8649e-10, a factor of 2.59 inside the budget\n  structural:structural-abort:Charlie:counts-from-two-declarations: Charlie refused: counts-from-two-declarations = n/a [<= 0.0000e+00]\n  consistent with: recipient-forgery, replay\n  ruled out: honest, outside-forgery, impersonation-signing-seam, impersonation-distribution-seam, count-starvation, channel-manipulation (each wrongly with probability at most 0.0000e+00)\n  requirements waived: a verifier reached no verdict, so a signal a position produces with probability one may never have been looked for\n  not separable: impersonation-full is undetectable by construction (AUTH)\n  reached no verdict: Charlie\n  outcomes: Bob accepted, Charlie refused-to-score"
+ },
+ "run": {
+  "requested_key_length": 192,
+  "nominal_key_length": 192,
+  "sifted_key_length": 144,
+  "check_fraction": 0.25,
+  "message_bit": 0,
+  "s_a": 0.015625,
+  "s_v": 0.0625,
+  "check_rounds_present": true,
+  "channel_monitored": true,
+  "channel_evaluable": true,
+  "counts_exchanged": true,
+  "count_exchange_timing": "before-forwarding",
+  "symmetrised": true,
+  "session_coherent": true,
+  "is_complete": false,
+  "aborted": true,
+  "forwarding_altered_signature": true,
+  "signer_saw_recipient_logs": false,
+  "security_claim": true,
+  "transferable": false,
+  "repudiated": false,
+  "repudiation_guarantee": null,
+  "enforced_repudiation_bound": 0.9989019704635819,
+  "floors": {
+   "matched_minimum": 1,
+   "pooled_minimum": 4,
+   "matched_floor_bound": 5.421010862427522e-20,
+   "meets_pooled_floor": true,
+   "meets_every_floor": true,
+   "degenerate": false
+  },
+  "verifiers": [
+   {
+    "party": "Bob",
+    "outcome": "accepted",
+    "accepted": true,
+    "matched": 51,
+    "matched_trials": 144,
+    "matched_null_probability": 0.3333333333333333,
+    "mismatches": 0,
+    "mismatch_trials": 51,
+    "rate": 0.0,
+    "threshold": 0.015625,
+    "margin": 0.015625,
+    "reported_matched": 51,
+    "reported_mismatches": 0,
+    "consistent": true,
+    "recomputed": true,
+    "scored": true
+   },
+   {
+    "party": "Charlie",
+    "outcome": "refused-to-score",
+    "accepted": null,
+    "matched": null,
+    "matched_trials": null,
+    "matched_null_probability": null,
+    "mismatches": null,
+    "mismatch_trials": null,
+    "rate": null,
+    "threshold": null,
+    "margin": null,
+    "reported_matched": null,
+    "reported_mismatches": null,
+    "consistent": null,
+    "recomputed": false,
+    "scored": false
+   }
+  ],
+  "pooled": {
+   "count": null,
+   "trials": null,
+   "null_probability": null,
+   "declared_bob": 51,
+   "declared_charlie": 40,
+   "declared_pooled": 91,
+   "declaration_digest_present": true
+  },
+  "links": [
+   {
+    "party": "Bob",
+    "message_bit": 0,
+    "errors": {
+     "name": "qber_errors[Bob,0]",
+     "count": 0,
+     "trials": 12,
+     "null_probability": 0.0,
+     "null": "point mass at 0 on a noiseless link; Binomial(12, p/2) under depolarising strength p"
+    },
+    "qber": {
+     "errors": 0,
+     "rounds": 12,
+     "value": 0.0,
+     "interval": {
+      "low": 0.0,
+      "high": 0.35604686964872173,
+      "confidence": 0.99,
+      "method": "wilson"
+     },
+     "bound": {
+      "low": 0.0,
+      "high": 0.46985447066742714,
+      "confidence": 0.99,
+      "method": "hoeffding"
+     }
+    },
+    "chsh": {
+     "value": 2.833333333333333,
+     "correlators": [
+      0.5,
+      1.0,
+      0.3333333333333333,
+      -1.0
+     ],
+     "counts": [
+      4,
+      2,
+      3,
+      3
+     ],
+     "rounds": 12,
+     "interval": {
+      "low": 1.0417032370570554,
+      "high": 4.0,
+      "confidence": 0.99,
+      "method": "normal"
+     },
+     "bound": {
+      "low": -4.0,
+      "high": 4.0,
+      "confidence": 0.99,
+      "method": "hoeffding"
+     },
+     "violates_classical_bound": false,
+     "consistent_with_ideal": true
+    },
+    "chsh_unavailable": null,
+    "resource": {
+     "samples": 24,
+     "qber_samples": 12,
+     "chsh_samples": 12,
+     "mean_fidelity": 1.0,
+     "min_fidelity": 1.0,
+     "mean_purity": 1.0,
+     "min_purity": 1.0,
+     "mean_concurrence": 0.9999999999999999,
+     "min_concurrence": 0.9999999999999999
+    }
+   },
+   {
+    "party": "Bob",
+    "message_bit": 1,
+    "errors": {
+     "name": "qber_errors[Bob,1]",
+     "count": 0,
+     "trials": 12,
+     "null_probability": 0.0,
+     "null": "point mass at 0 on a noiseless link; Binomial(12, p/2) under depolarising strength p"
+    },
+    "qber": {
+     "errors": 0,
+     "rounds": 12,
+     "value": 0.0,
+     "interval": {
+      "low": 0.0,
+      "high": 0.35604686964872173,
+      "confidence": 0.99,
+      "method": "wilson"
+     },
+     "bound": {
+      "low": 0.0,
+      "high": 0.46985447066742714,
+      "confidence": 0.99,
+      "method": "hoeffding"
+     }
+    },
+    "chsh": {
+     "value": 2.5,
+     "correlators": [
+      0.0,
+      0.5,
+      1.0,
+      -1.0
+     ],
+     "counts": [
+      4,
+      4,
+      1,
+      3
+     ],
+     "rounds": 12,
+     "interval": {
+      "low": 0.7962490607642274,
+      "high": 4.0,
+      "confidence": 0.99,
+      "method": "normal"
+     },
+     "bound": {
+      "low": -4.0,
+      "high": 4.0,
+      "confidence": 0.99,
+      "method": "hoeffding"
+     },
+     "violates_classical_bound": false,
+     "consistent_with_ideal": true
+    },
+    "chsh_unavailable": null,
+    "resource": {
+     "samples": 24,
+     "qber_samples": 12,
+     "chsh_samples": 12,
+     "mean_fidelity": 1.0,
+     "min_fidelity": 1.0,
+     "mean_purity": 1.0,
+     "min_purity": 1.0,
+     "mean_concurrence": 0.9999999999999999,
+     "min_concurrence": 0.9999999999999999
+    }
+   },
+   {
+    "party": "Charlie",
+    "message_bit": 0,
+    "errors": {
+     "name": "qber_errors[Charlie,0]",
+     "count": 0,
+     "trials": 12,
+     "null_probability": 0.0,
+     "null": "point mass at 0 on a noiseless link; Binomial(12, p/2) under depolarising strength p"
+    },
+    "qber": {
+     "errors": 0,
+     "rounds": 12,
+     "value": 0.0,
+     "interval": {
+      "low": 0.0,
+      "high": 0.35604686964872173,
+      "confidence": 0.99,
+      "method": "wilson"
+     },
+     "bound": {
+      "low": 0.0,
+      "high": 0.46985447066742714,
+      "confidence": 0.99,
+      "method": "hoeffding"
+     }
+    },
+    "chsh": {
+     "value": 1.6,
+     "correlators": [
+      1.0,
+      0.6,
+      1.0,
+      1.0
+     ],
+     "counts": [
+      4,
+      5,
+      2,
+      1
+     ],
+     "rounds": 12,
+     "interval": {
+      "low": 0.6784432926125956,
+      "high": 2.5215567073874046,
+      "confidence": 0.99,
+      "method": "normal"
+     },
+     "bound": {
+      "low": -4.0,
+      "high": 4.0,
+      "confidence": 0.99,
+      "method": "hoeffding"
+     },
+     "violates_classical_bound": false,
+     "consistent_with_ideal": false
+    },
+    "chsh_unavailable": null,
+    "resource": {
+     "samples": 24,
+     "qber_samples": 12,
+     "chsh_samples": 12,
+     "mean_fidelity": 1.0,
+     "min_fidelity": 1.0,
+     "mean_purity": 1.0,
+     "min_purity": 1.0,
+     "mean_concurrence": 0.9999999999999999,
+     "min_concurrence": 0.9999999999999999
+    }
+   },
+   {
+    "party": "Charlie",
+    "message_bit": 1,
+    "errors": {
+     "name": "qber_errors[Charlie,1]",
+     "count": 0,
+     "trials": 12,
+     "null_probability": 0.0,
+     "null": "point mass at 0 on a noiseless link; Binomial(12, p/2) under depolarising strength p"
+    },
+    "qber": {
+     "errors": 0,
+     "rounds": 12,
+     "value": 0.0,
+     "interval": {
+      "low": 0.0,
+      "high": 0.35604686964872173,
+      "confidence": 0.99,
+      "method": "wilson"
+     },
+     "bound": {
+      "low": 0.0,
+      "high": 0.46985447066742714,
+      "confidence": 0.99,
+      "method": "hoeffding"
+     }
+    },
+    "chsh": {
+     "value": 2.8333333333333335,
+     "correlators": [
+      0.5,
+      1.0,
+      1.0,
+      -0.3333333333333333
+     ],
+     "counts": [
+      4,
+      2,
+      3,
+      3
+     ],
+     "rounds": 12,
+     "interval": {
+      "low": 1.0417032370570558,
+      "high": 4.0,
+      "confidence": 0.99,
+      "method": "normal"
+     },
+     "bound": {
+      "low": -4.0,
+      "high": 4.0,
+      "confidence": 0.99,
+      "method": "hoeffding"
+     },
+     "violates_classical_bound": false,
+     "consistent_with_ideal": true
+    },
+    "chsh_unavailable": null,
+    "resource": {
+     "samples": 24,
+     "qber_samples": 12,
+     "chsh_samples": 12,
+     "mean_fidelity": 1.0,
+     "min_fidelity": 1.0,
+     "mean_purity": 1.0,
+     "min_purity": 1.0,
+     "mean_concurrence": 0.9999999999999999,
+     "min_concurrence": 0.9999999999999999
+    }
+   }
+  ],
+  "replay": {
+   "total_refusals": 0,
+   "refusals_by_party": {},
+   "spent_rounds": 1,
+   "distinct_sessions": 1
+  },
+  "aborts": {
+   "total": 1,
+   "structural": 1,
+   "evidence": 0,
+   "by_reason": {
+    "counts-from-two-declarations": 1
+   },
+   "by_party": {
+    "Charlie": "counts-from-two-declarations"
+   },
+   "shortfalls": {
+    "Charlie": 0
+   },
+   "honest_bound": 5.421019650400071e-20
+  },
+  "summary": "Bob: accepted, r_R = 0.000000 vs threshold 0.015625, |M_R| = 51 (z = 0.53)\npooled: no pooled matched count (not a full run)\naborts: 1 refusal(s), 1 structural, 0 evidence\nreplay: 0 refusal(s), 1 spent round(s) over 1 session(s)",
+  "transcript_bytes": 69762,
+  "transcript_summary": "QDS run on message bit 0: L=192, |B|=3, s_a=0.01562, s_v=0.06250\nCHECK ROUNDS: 48 of 192 positions were reserved for channel estimation and dealt between the links, so the key was scored at L=144; 96 observations and 96 channel samples published.\nFORWARDING ALTERED THE DECLARATION: Charlie scored a different key from the one Bob was given.\nPOOLED EVIDENCE bit 0: m_B = 51, m_C = 40, M = 91 (floors: m_min = 1, M_min = 4). Every floor met.\nBob ACCEPTED bit 0: 0/51 mismatches on matched positions (93 discarded), rate 0.00000 <= 0.01562\nCharlie NO VERDICT bit 0: 93/144 positions matched, floor 1, honest mean 48.0; pooled M = 93 + 51 = 144, pooled floor 4 (counts-from-two-declarations). Not a rejection.\nNO VERDICT: Charlie (counts-from-two-declarations) could not score this declaration. This is not a rejection and must not be counted as one."
+ },
+ "ground_truth": {
+  "attack": "recipient-forgery",
+  "label": "Recipient forgery",
+  "adversary_present": true,
+  "acted": true,
+  "identical_to_honest": false,
+  "targeted_links": [
+   [
+    "Charlie",
+    0
+   ]
+  ],
+  "seams_held": [
+   "forwarder"
+  ],
+  "detectable": "detectable",
+  "assumption": null,
+  "notes": "Bob accepted Alice's declaration and handed Charlie one built from his own raw log. Under 'before-forwarding', the shipped ordering, Charlie's count was taken against the declaration Alice signed while he is holding another, so he refuses on provenance and reaches NO VERDICT. That is a denial of transfer, not a detection and not a rejection.",
+  "seed": 41,
+  "message_bit": 0,
+  "model_note": "Mounted through a shipped seam: no protocol edit was needed, so an attacked run and a clean one are the same program. He holds his own log, the declaration once it reaches him, and the single integer his counterpart announced -- never the other recipient's log and never the coins. The adversary owns its randomness and never reads the session's (D6), so its choices are reproducible from the request seed and independent of the run.",
+  "completed": true,
+  "note": "Everything under this key is the ADVERSARY's own log and the harness's. detect() reads a JSON transcript and nothing else, so none of it reached the verdict beside it.",
+  "link": {
+   "model": "ideal",
+   "description": "an ideal Phi+ resource on both links",
+   "strength": 0.0,
+   "targeted_party": null,
+   "true_error_rate_by_party": {
+    "Bob": 0.0,
+    "Charlie": 0.0
+   },
+   "rate_null_given_to_detector": 0.0,
+   "channel_null_given_to_detector": 0.0,
+   "rate_null_matches_link": true,
+   "channel_null_matches_link": true,
+   "nulls_match_link": true,
+   "note": "The link's true error rate is the ADVERSARY's ground truth and the detector never reads it. detect() is told two nulls, both defaulting to a perfect link: channel_error_rate for the rate family and tolerated_depolarising for the channel family. When either disagrees with the link, an HONEST run departs from a law it was scored against and fires correctly -- that is the null being wrong about the link, not an attack, and both verifiers still accept."
+  },
+  "forgery": {
+   "declarations_substituted": 1
+  }
+ },
+ "timings": {
+  "session_ms": 488.0974999978207,
+  "detect_ms": 5.94719999935478
+ },
+ "error": null
+}

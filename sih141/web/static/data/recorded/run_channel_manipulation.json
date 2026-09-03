@@ -1,0 +1,713 @@
+{
+ "request": {
+  "attack": "channel-manipulation",
+  "key_length": 192,
+  "check_fraction": 0.25,
+  "noise": 0.5,
+  "eps": 1e-09,
+  "channel_error_rate": 0.0,
+  "tolerated_depolarising": 0.0,
+  "count_exchange_timing": "before-forwarding",
+  "seed": 71,
+  "message_bit": 0
+ },
+ "detection": {
+  "eps": 1e-09,
+  "detected": true,
+  "signals": [
+   {
+    "name": "channel:Bob/0:min_fidelity",
+    "family": "channel",
+    "kind": "channel",
+    "statistic": "min_fidelity",
+    "observed": 0.0,
+    "critical": 0.999999999,
+    "false_positive_bound": 0.0,
+    "is_detection": true,
+    "claim": "min_fidelity <= 0.999999999 fires; under point mass at 1.0: the honest fidelity is bounded above by 1.0 and has mean 1.0, which forces every round onto it P(fire) <= 0.00e+00 (budget 2.50e-11, point mass (exact), n = 24)"
+   },
+   {
+    "name": "channel:Bob/0:qber_errors",
+    "family": "channel",
+    "kind": "channel",
+    "statistic": "qber_errors",
+    "observed": 2.0,
+    "critical": 1.0,
+    "false_positive_bound": 0.0,
+    "is_detection": true,
+    "claim": "qber_errors >= 1.0 fires; under point mass at 0: E = 0 with probability one (a non-negative variable with zero mean) P(fire) <= 0.00e+00 (budget 2.50e-11, point mass (exact), n = 12)"
+   },
+   {
+    "name": "channel:Bob/1:min_fidelity",
+    "family": "channel",
+    "kind": "channel",
+    "statistic": "min_fidelity",
+    "observed": 0.0,
+    "critical": 0.999999999,
+    "false_positive_bound": 0.0,
+    "is_detection": true,
+    "claim": "min_fidelity <= 0.999999999 fires; under point mass at 1.0: the honest fidelity is bounded above by 1.0 and has mean 1.0, which forces every round onto it P(fire) <= 0.00e+00 (budget 2.50e-11, point mass (exact), n = 24)"
+   },
+   {
+    "name": "channel:Bob/1:qber_errors",
+    "family": "channel",
+    "kind": "channel",
+    "statistic": "qber_errors",
+    "observed": 3.0,
+    "critical": 1.0,
+    "false_positive_bound": 0.0,
+    "is_detection": true,
+    "claim": "qber_errors >= 1.0 fires; under point mass at 0: E = 0 with probability one (a non-negative variable with zero mean) P(fire) <= 0.00e+00 (budget 2.50e-11, point mass (exact), n = 12)"
+   },
+   {
+    "name": "rate:mismatch_rate:Bob",
+    "family": "rate",
+    "kind": "mismatch",
+    "statistic": "e_R",
+    "observed": 8.0,
+    "critical": 1.0,
+    "false_positive_bound": 0.0,
+    "is_detection": true,
+    "claim": "mismatch_rate [Bob]: fires when e_R >= 1 out of 49; under a point mass at 0 (e_R = 0 with probability one on a noiseless link), this fires with probability at most 0.000e+00, by the point mass at 0 at a budget of 4.167e-11."
+   },
+   {
+    "name": "rate:mismatch_rate:Charlie",
+    "family": "rate",
+    "kind": "mismatch",
+    "statistic": "e_R",
+    "observed": 3.0,
+    "critical": 1.0,
+    "false_positive_bound": 0.0,
+    "is_detection": true,
+    "claim": "mismatch_rate [Charlie]: fires when e_R >= 1 out of 45; under a point mass at 0 (e_R = 0 with probability one on a noiseless link), this fires with probability at most 0.000e+00, by the point mass at 0 at a budget of 4.167e-11."
+   }
+  ],
+  "false_positive_bound": 3.8649211592196904e-10,
+  "bound_is_unconditional": true,
+  "channel_error_rate": 0.0,
+  "null_is_noiseless": true,
+  "evidence_bound": 0.0,
+  "slack_factor": 2.5873749005578563,
+  "budget": {
+   "eps": 1e-09,
+   "rate": 4.99999999972895e-10,
+   "structural": 5.421019650400071e-20,
+   "channel": 4.99999999972895e-10,
+   "per_link": 1.2499999999322374e-10,
+   "evidence_bound": 5.421019650400071e-20,
+   "link_roster": [
+    [
+     "Bob",
+     0
+    ],
+    [
+     "Bob",
+     1
+    ],
+    [
+     "Charlie",
+     0
+    ],
+    [
+     "Charlie",
+     1
+    ]
+   ],
+   "derivation": "eps_struct = min(B_evid, eps/3) = min(5.4210e-20, 3.3333e-10) = 5.4210e-20; eps_rate = eps_chan = (eps - eps_struct)/2 = 5.0000e-10; sum = eps = 1.0000e-09. The structural family's proven bound is B_evid(n) whatever its share, so a larger share buys it nothing (C-2); the cap at eps/3 keeps the split from ever being worse than the even one."
+  },
+  "attributions": [
+   {
+    "hypothesis": "honest",
+    "status": "excluded",
+    "supporting": [],
+    "excluding": [
+     "channel:Bob/0:min_fidelity",
+     "channel:Bob/0:qber_errors",
+     "channel:Bob/1:min_fidelity",
+     "channel:Bob/1:qber_errors",
+     "rate:mismatch_rate:Bob",
+     "rate:mismatch_rate:Charlie"
+    ],
+    "missing_requirements": [],
+    "false_positive_bound": 0.0,
+    "indistinguishable_from": [],
+    "rationale": "the honest run is the run every null in this package describes, so every threshold fires on it with at most its own proven bound; this is the one row that may be excluded on a mismatch or a channel signal, because for the null itself those are the departure the threshold was built to bound rather than the channel's noise level. excluded by ['channel:Bob/0:min_fidelity', 'channel:Bob/0:qber_errors', 'channel:Bob/1:min_fidelity', 'channel:Bob/1:qber_errors', 'rate:mismatch_rate:Bob', 'rate:mismatch_rate:Charlie'], whose nulls this position leaves intact; the exclusion is mistaken with probability at most 0.0000e+00."
+   },
+   {
+    "hypothesis": "outside-forgery",
+    "status": "supported",
+    "supporting": [
+     "rate:mismatch_rate:Bob",
+     "rate:mismatch_rate:Charlie"
+    ],
+    "excluding": [],
+    "missing_requirements": [],
+    "false_positive_bound": 0.0,
+    "indistinguishable_from": [
+     "impersonation-signing-seam",
+     "impersonation-distribution-seam"
+    ],
+    "rationale": "a declaration drawn independently of the recipients' records leaves the matched count's law exactly Binomial(n, 1/|B|) and touches no wire integer, no forwarding hop and no ledger; only the eigenvalues at positions that do match are disturbed, and each of those survives with probability 1/2 (sih141.protocol.analysis.FORGER_MATCHED_MISMATCH_PROBABILITY), so the mismatch count is zero with probability 2**-|M_R| and the signal is required rather than merely predicted. supported by ['rate:mismatch_rate:Bob', 'rate:mismatch_rate:Charlie']; an honest run trips all of that evidence with probability at most 0.0000e+00, which is a bound against the honest null and not a bound on having named the wrong adversary (C-6)."
+   },
+   {
+    "hypothesis": "impersonation-signing-seam",
+    "status": "supported",
+    "supporting": [
+     "rate:mismatch_rate:Bob",
+     "rate:mismatch_rate:Charlie"
+    ],
+    "excluding": [],
+    "missing_requirements": [],
+    "false_positive_bound": 0.0,
+    "indistinguishable_from": [
+     "outside-forgery",
+     "impersonation-distribution-seam"
+    ],
+    "rationale": "a declaration drawn independently of the recipients' records leaves the matched count's law exactly Binomial(n, 1/|B|) and touches no wire integer, no forwarding hop and no ledger; only the eigenvalues at positions that do match are disturbed, and each of those survives with probability 1/2 (sih141.protocol.analysis.FORGER_MATCHED_MISMATCH_PROBABILITY), so the mismatch count is zero with probability 2**-|M_R| and the signal is required rather than merely predicted. supported by ['rate:mismatch_rate:Bob', 'rate:mismatch_rate:Charlie']; an honest run trips all of that evidence with probability at most 0.0000e+00, which is a bound against the honest null and not a bound on having named the wrong adversary (C-6)."
+   },
+   {
+    "hypothesis": "impersonation-distribution-seam",
+    "status": "supported",
+    "supporting": [
+     "rate:mismatch_rate:Bob",
+     "rate:mismatch_rate:Charlie"
+    ],
+    "excluding": [],
+    "missing_requirements": [],
+    "false_positive_bound": 0.0,
+    "indistinguishable_from": [
+     "outside-forgery",
+     "impersonation-signing-seam"
+    ],
+    "rationale": "a declaration drawn independently of the recipients' records leaves the matched count's law exactly Binomial(n, 1/|B|) and touches no wire integer, no forwarding hop and no ledger; only the eigenvalues at positions that do match are disturbed, and each of those survives with probability 1/2 (sih141.protocol.analysis.FORGER_MATCHED_MISMATCH_PROBABILITY), so the mismatch count is zero with probability 2**-|M_R| and the signal is required rather than merely predicted. supported by ['rate:mismatch_rate:Bob', 'rate:mismatch_rate:Charlie']; an honest run trips all of that evidence with probability at most 0.0000e+00, which is a bound against the honest null and not a bound on having named the wrong adversary (C-6)."
+   },
+   {
+    "hypothesis": "impersonation-full",
+    "status": "undetectable-by-construction",
+    "supporting": [],
+    "excluding": [],
+    "missing_requirements": [],
+    "false_positive_bound": null,
+    "indistinguishable_from": [],
+    "rationale": "Mallory runs the protocol correctly with a key pair of her own, so every statistic on the transcript is drawn from the honest law; assumption (AUTH) puts this position out of model rather than pretending a detector reaches it. never named and never ruled out: assumption (AUTH) puts this position out of model, and a hypothesis silently missing from a table reads as one that was excluded."
+   },
+   {
+    "hypothesis": "recipient-forgery",
+    "status": "unsupported",
+    "supporting": [
+     "rate:mismatch_rate:Bob",
+     "rate:mismatch_rate:Charlie"
+    ],
+    "excluding": [],
+    "missing_requirements": [
+     "count-high"
+    ],
+    "false_positive_bound": null,
+    "indistinguishable_from": [],
+    "rationale": "he forwards a declaration built from his own raw log, which after Phase A' is roughly half of what the receiving verifier holds, so that verifier's matched count moves from n/3 to 2n/3 -- sqrt(n/2) standard deviations of the null, 9.80 at n = 192 and 240 at DEFAULT_PARAMS, with the derived upper-tail threshold strictly between the two means, which is what makes COUNT_HIGH a requirement and not a hope; his forwarded declaration is not Alice's, so the pair's counts name two declarations; he presents it into a fresh round, so no ledger entry is spent twice. not supported: this position produces ['count-high'] with probability essentially one, and on this run that was evaluated and did not fire. Withheld rather than refuted -- a signal that did not fire carries no bound, only a false-negative statement nothing here derives."
+   },
+   {
+    "hypothesis": "count-starvation",
+    "status": "unsupported",
+    "supporting": [],
+    "excluding": [],
+    "missing_requirements": [],
+    "false_positive_bound": null,
+    "indistinguishable_from": [],
+    "rationale": "he understates one integer on the Phase C' wire and nothing else: his own scored matched count is untouched, so the two part company, and the lie is downward by construction -- an upper tail, a second declaration on the forwarding hop and a spent round are all three out of a count-exchange seam's reach. nothing fired that this position predicts, and nothing that excludes it -- an absence of evidence, which is not evidence of absence and is not reported as one."
+   },
+   {
+    "hypothesis": "replay",
+    "status": "supported",
+    "supporting": [
+     "rate:mismatch_rate:Bob",
+     "rate:mismatch_rate:Charlie"
+    ],
+    "excluding": [],
+    "missing_requirements": [],
+    "false_positive_bound": 0.0,
+    "indistinguishable_from": [],
+    "rationale": "he re-presents a captured declaration, which the consumed-records ledger and the session binding both record, and which is not the declaration Alice sent this run; that declaration was drawn independently of the receiving verifier's current record, so every count null is left exactly where it was while the eigenvalues at matched positions disagree. LEDGER is predicted and NOT required: the ledger check is sound in one direction only -- a replay that burns its round through a rejection leaves the refusal count at zero (finding 4 of the structural family). supported by ['rate:mismatch_rate:Bob', 'rate:mismatch_rate:Charlie']; an honest run trips all of that evidence with probability at most 0.0000e+00, which is a bound against the honest null and not a bound on having named the wrong adversary (C-6)."
+   },
+   {
+    "hypothesis": "channel-manipulation",
+    "status": "supported",
+    "supporting": [
+     "channel:Bob/0:min_fidelity",
+     "channel:Bob/0:qber_errors",
+     "channel:Bob/1:min_fidelity",
+     "channel:Bob/1:qber_errors",
+     "rate:mismatch_rate:Bob",
+     "rate:mismatch_rate:Charlie"
+    ],
+    "excluding": [],
+    "missing_requirements": [],
+    "false_positive_bound": 0.0,
+    "indistinguishable_from": [],
+    "rationale": "the matched set is decided by basis agreement, and a trace-preserving map on the entanglement resource acts on the teleported eigenstate; it cannot move a basis, so it cannot move a count, a floor, a declaration or a bookkeeping equality. CHANNEL is predicted and NOT required: a weak enough deviation clears a short check sample, and this layer bounds false positives and never false negatives. supported by ['channel:Bob/0:min_fidelity', 'channel:Bob/0:qber_errors', 'channel:Bob/1:min_fidelity', 'channel:Bob/1:qber_errors', 'rate:mismatch_rate:Bob', 'rate:mismatch_rate:Charlie']; an honest run trips all of that evidence with probability at most 0.0000e+00, which is a bound against the honest null and not a bound on having named the wrong adversary (C-6)."
+   }
+  ],
+  "named": [
+   "outside-forgery",
+   "impersonation-signing-seam",
+   "impersonation-distribution-seam",
+   "replay",
+   "channel-manipulation"
+  ],
+  "kinds": [
+   "channel",
+   "mismatch"
+  ],
+  "outcomes": {
+   "Bob": "rejected",
+   "Charlie": "rejected"
+  },
+  "not_scored": [],
+  "withheld": [],
+  "grouping_key": [
+   "before-forwarding",
+   true,
+   true,
+   false,
+   true
+  ],
+  "requirements_enforced": true,
+  "security_claim": true,
+  "key_length": 144,
+  "summary": "detect: 6 signal(s) at eps = 1.000e-09\n  P(any signal | honest) <= 3.8649e-10, a factor of 2.59 inside the budget\n  channel:Bob/0:min_fidelity: min_fidelity = 0 [<= 0.0000e+00]\n  channel:Bob/0:qber_errors: qber_errors = 2 [<= 0.0000e+00]\n  channel:Bob/1:min_fidelity: min_fidelity = 0 [<= 0.0000e+00]\n  channel:Bob/1:qber_errors: qber_errors = 3 [<= 0.0000e+00]\n  rate:mismatch_rate:Bob: e_R = 8 [<= 0.0000e+00]\n  rate:mismatch_rate:Charlie: e_R = 3 [<= 0.0000e+00]\n  consistent with: outside-forgery, impersonation-signing-seam, impersonation-distribution-seam, replay, channel-manipulation\n  ruled out: honest (each wrongly with probability at most 0.0000e+00)\n  not separable: impersonation-distribution-seam, impersonation-signing-seam, outside-forgery present identically from a transcript\n  not separable: impersonation-full is undetectable by construction (AUTH)\n  outcomes: Bob rejected, Charlie rejected"
+ },
+ "run": {
+  "requested_key_length": 192,
+  "nominal_key_length": 192,
+  "sifted_key_length": 144,
+  "check_fraction": 0.25,
+  "message_bit": 0,
+  "s_a": 0.015625,
+  "s_v": 0.0625,
+  "check_rounds_present": true,
+  "channel_monitored": true,
+  "channel_evaluable": true,
+  "counts_exchanged": true,
+  "count_exchange_timing": "before-forwarding",
+  "symmetrised": true,
+  "session_coherent": true,
+  "is_complete": true,
+  "aborted": false,
+  "forwarding_altered_signature": false,
+  "signer_saw_recipient_logs": false,
+  "security_claim": true,
+  "transferable": false,
+  "repudiated": false,
+  "repudiation_guarantee": 0.9745125603537266,
+  "enforced_repudiation_bound": 0.9989019704635819,
+  "floors": {
+   "matched_minimum": 1,
+   "pooled_minimum": 4,
+   "matched_floor_bound": 5.421010862427522e-20,
+   "meets_pooled_floor": true,
+   "meets_every_floor": true,
+   "degenerate": false
+  },
+  "verifiers": [
+   {
+    "party": "Bob",
+    "outcome": "rejected",
+    "accepted": false,
+    "matched": 49,
+    "matched_trials": 144,
+    "matched_null_probability": 0.3333333333333333,
+    "mismatches": 8,
+    "mismatch_trials": 49,
+    "rate": 0.16326530612244897,
+    "threshold": 0.015625,
+    "margin": -0.14764030612244897,
+    "reported_matched": 49,
+    "reported_mismatches": 8,
+    "consistent": true,
+    "recomputed": true,
+    "scored": true
+   },
+   {
+    "party": "Charlie",
+    "outcome": "rejected",
+    "accepted": false,
+    "matched": 45,
+    "matched_trials": 144,
+    "matched_null_probability": 0.3333333333333333,
+    "mismatches": 3,
+    "mismatch_trials": 45,
+    "rate": 0.06666666666666667,
+    "threshold": 0.0625,
+    "margin": -0.004166666666666666,
+    "reported_matched": 45,
+    "reported_mismatches": 3,
+    "consistent": true,
+    "recomputed": true,
+    "scored": true
+   }
+  ],
+  "pooled": {
+   "count": 94,
+   "trials": 288,
+   "null_probability": 0.3333333333333333,
+   "declared_bob": 49,
+   "declared_charlie": 45,
+   "declared_pooled": 94,
+   "declaration_digest_present": true
+  },
+  "links": [
+   {
+    "party": "Bob",
+    "message_bit": 0,
+    "errors": {
+     "name": "qber_errors[Bob,0]",
+     "count": 2,
+     "trials": 12,
+     "null_probability": 0.0,
+     "null": "point mass at 0 on a noiseless link; Binomial(12, p/2) under depolarising strength p"
+    },
+    "qber": {
+     "errors": 2,
+     "rounds": 12,
+     "value": 0.16666666666666666,
+     "interval": {
+      "low": 0.03328459958943475,
+      "high": 0.5374133135097131,
+      "confidence": 0.99,
+      "method": "wilson"
+     },
+     "bound": {
+      "low": 0.0,
+      "high": 0.6365211373340938,
+      "confidence": 0.99,
+      "method": "hoeffding"
+     }
+    },
+    "chsh": {
+     "value": 1.1333333333333333,
+     "correlators": [
+      0.3333333333333333,
+      1.0,
+      0.0,
+      0.2
+     ],
+     "counts": [
+      3,
+      2,
+      2,
+      5
+     ],
+     "rounds": 12,
+     "interval": {
+      "low": -1.4273782351761195,
+      "high": 3.694044901842786,
+      "confidence": 0.99,
+      "method": "normal"
+     },
+     "bound": {
+      "low": -4.0,
+      "high": 4.0,
+      "confidence": 0.99,
+      "method": "hoeffding"
+     },
+     "violates_classical_bound": false,
+     "consistent_with_ideal": true
+    },
+    "chsh_unavailable": null,
+    "resource": {
+     "samples": 24,
+     "qber_samples": 12,
+     "chsh_samples": 12,
+     "mean_fidelity": 0.7083333333333334,
+     "min_fidelity": 0.0,
+     "mean_purity": 1.0,
+     "min_purity": 1.0,
+     "mean_concurrence": 0.9999999999999999,
+     "min_concurrence": 0.9999999999999999
+    }
+   },
+   {
+    "party": "Bob",
+    "message_bit": 1,
+    "errors": {
+     "name": "qber_errors[Bob,1]",
+     "count": 3,
+     "trials": 12,
+     "null_probability": 0.0,
+     "null": "point mass at 0 on a noiseless link; Binomial(12, p/2) under depolarising strength p"
+    },
+    "qber": {
+     "errors": 3,
+     "rounds": 12,
+     "value": 0.25,
+     "interval": {
+      "low": 0.06573187202324365,
+      "high": 0.6122915628011172,
+      "confidence": 0.99,
+      "method": "wilson"
+     },
+     "bound": {
+      "low": 0.0,
+      "high": 0.7198544706674271,
+      "confidence": 0.99,
+      "method": "hoeffding"
+     }
+    },
+    "chsh": {
+     "value": 2.9999999999999996,
+     "correlators": [
+      0.3333333333333333,
+      1.0,
+      1.0,
+      -0.6666666666666666
+     ],
+     "counts": [
+      3,
+      1,
+      2,
+      6
+     ],
+     "rounds": 12,
+     "interval": {
+      "low": 1.3936882098845809,
+      "high": 4.0,
+      "confidence": 0.99,
+      "method": "normal"
+     },
+     "bound": {
+      "low": -4.0,
+      "high": 4.0,
+      "confidence": 0.99,
+      "method": "hoeffding"
+     },
+     "violates_classical_bound": false,
+     "consistent_with_ideal": true
+    },
+    "chsh_unavailable": null,
+    "resource": {
+     "samples": 24,
+     "qber_samples": 12,
+     "chsh_samples": 12,
+     "mean_fidelity": 0.7083333333333334,
+     "min_fidelity": 0.0,
+     "mean_purity": 1.0,
+     "min_purity": 1.0,
+     "mean_concurrence": 0.9999999999999999,
+     "min_concurrence": 0.9999999999999999
+    }
+   },
+   {
+    "party": "Charlie",
+    "message_bit": 0,
+    "errors": {
+     "name": "qber_errors[Charlie,0]",
+     "count": 0,
+     "trials": 12,
+     "null_probability": 0.0,
+     "null": "point mass at 0 on a noiseless link; Binomial(12, p/2) under depolarising strength p"
+    },
+    "qber": {
+     "errors": 0,
+     "rounds": 12,
+     "value": 0.0,
+     "interval": {
+      "low": 0.0,
+      "high": 0.35604686964872173,
+      "confidence": 0.99,
+      "method": "wilson"
+     },
+     "bound": {
+      "low": 0.0,
+      "high": 0.46985447066742714,
+      "confidence": 0.99,
+      "method": "hoeffding"
+     }
+    },
+    "chsh": {
+     "value": 2.5333333333333337,
+     "correlators": [
+      1.0,
+      0.2,
+      1.0,
+      -0.3333333333333333
+     ],
+     "counts": [
+      2,
+      5,
+      2,
+      3
+     ],
+     "rounds": 12,
+     "interval": {
+      "low": 0.7333901574003991,
+      "high": 4.0,
+      "confidence": 0.99,
+      "method": "normal"
+     },
+     "bound": {
+      "low": -4.0,
+      "high": 4.0,
+      "confidence": 0.99,
+      "method": "hoeffding"
+     },
+     "violates_classical_bound": false,
+     "consistent_with_ideal": true
+    },
+    "chsh_unavailable": null,
+    "resource": {
+     "samples": 24,
+     "qber_samples": 12,
+     "chsh_samples": 12,
+     "mean_fidelity": 1.0,
+     "min_fidelity": 1.0,
+     "mean_purity": 1.0,
+     "min_purity": 1.0,
+     "mean_concurrence": 0.9999999999999999,
+     "min_concurrence": 0.9999999999999999
+    }
+   },
+   {
+    "party": "Charlie",
+    "message_bit": 1,
+    "errors": {
+     "name": "qber_errors[Charlie,1]",
+     "count": 0,
+     "trials": 12,
+     "null_probability": 0.0,
+     "null": "point mass at 0 on a noiseless link; Binomial(12, p/2) under depolarising strength p"
+    },
+    "qber": {
+     "errors": 0,
+     "rounds": 12,
+     "value": 0.0,
+     "interval": {
+      "low": 0.0,
+      "high": 0.35604686964872173,
+      "confidence": 0.99,
+      "method": "wilson"
+     },
+     "bound": {
+      "low": 0.0,
+      "high": 0.46985447066742714,
+      "confidence": 0.99,
+      "method": "hoeffding"
+     }
+    },
+    "chsh": {
+     "value": 2.0,
+     "correlators": [
+      1.0,
+      -0.3333333333333333,
+      1.0,
+      -0.3333333333333333
+     ],
+     "counts": [
+      2,
+      3,
+      4,
+      3
+     ],
+     "rounds": 12,
+     "interval": {
+      "low": 0.01712567761268935,
+      "high": 3.9828743223873104,
+      "confidence": 0.99,
+      "method": "normal"
+     },
+     "bound": {
+      "low": -4.0,
+      "high": 4.0,
+      "confidence": 0.99,
+      "method": "hoeffding"
+     },
+     "violates_classical_bound": false,
+     "consistent_with_ideal": true
+    },
+    "chsh_unavailable": null,
+    "resource": {
+     "samples": 24,
+     "qber_samples": 12,
+     "chsh_samples": 12,
+     "mean_fidelity": 1.0,
+     "min_fidelity": 1.0,
+     "mean_purity": 1.0,
+     "min_purity": 1.0,
+     "mean_concurrence": 0.9999999999999999,
+     "min_concurrence": 0.9999999999999999
+    }
+   }
+  ],
+  "replay": {
+   "total_refusals": 0,
+   "refusals_by_party": {},
+   "spent_rounds": 2,
+   "distinct_sessions": 1
+  },
+  "aborts": {
+   "total": 0,
+   "structural": 0,
+   "evidence": 0,
+   "by_reason": {},
+   "by_party": {},
+   "shortfalls": {},
+   "honest_bound": 5.421019650400071e-20
+  },
+  "summary": "Bob: rejected, r_R = 0.163265 vs threshold 0.015625, |M_R| = 49 (z = 0.18)\nCharlie: rejected, r_R = 0.066667 vs threshold 0.062500, |M_R| = 45 (z = -0.53)\npooled: pooled_matched_count: 94/288 = 0.326389 vs null Binomial(288, 1/3) mean 96.000000 (z = -0.25, P(|dev| >= this) <= 1.00e+00)\naborts: 0 refusal(s), 0 structural, 0 evidence\nreplay: 0 refusal(s), 2 spent round(s) over 1 session(s)",
+  "transcript_bytes": 64821,
+  "transcript_summary": "QDS run on message bit 0: L=192, |B|=3, s_a=0.01562, s_v=0.06250\nCHECK ROUNDS: 48 of 192 positions were reserved for channel estimation and dealt between the links, so the key was scored at L=144; 96 observations and 96 channel samples published.\nPOOLED EVIDENCE bit 0: m_B = 49, m_C = 45, M = 94 (floors: m_min = 1, M_min = 4). Every floor met.\nBob REJECTED bit 0: 8/49 mismatches on matched positions (95 discarded), rate 0.16327 > 0.01562\nCharlie REJECTED bit 0: 3/45 mismatches on matched positions (99 discarded), rate 0.06667 > 0.06250\nEVIDENCE: M = m_B + m_C = 94 matched records, so P(repudiation | this run) <= 9.745e-01. This is the per-run bound and the only one that assumes nothing about the signer.\nREJECTED: Bob did not accept the signature."
+ },
+ "ground_truth": {
+  "attack": "channel-manipulation",
+  "label": "Channel manipulation",
+  "adversary_present": true,
+  "acted": true,
+  "identical_to_honest": false,
+  "targeted_links": [
+   [
+    "Bob",
+    0
+   ],
+   [
+    "Bob",
+    1
+   ]
+  ],
+  "seams_held": [
+   "resource_factory"
+  ],
+  "detectable": "detectable",
+  "assumption": null,
+  "notes": "A Pauli twirl at strength 0.5 on Bob's link only. Charlie's link was never touched, and its statistics are those of an honest run.",
+  "seed": 71,
+  "message_bit": 0,
+  "model_note": "The channel adversary owns the quantum links and holds no private log and no coin, so he degrades but does not learn. Check logs are built inside distribution and never reach the symmetriser, which is why this is the one attack a detector can attribute to a named link -- given enough check rounds. The adversary owns its randomness and never reads the session's (D6), so its choices are reproducible from the request seed and independent of the run.",
+  "completed": true,
+  "note": "Everything under this key is the ADVERSARY's own log and the harness's. detect() reads a JSON transcript and nothing else, so none of it reached the verdict beside it.",
+  "link": {
+   "model": "depolarising",
+   "description": "a Pauli twirl at strength `noise` on the travelling half",
+   "strength": 0.5,
+   "targeted_party": "Bob",
+   "true_error_rate_by_party": {
+    "Bob": 0.25,
+    "Charlie": 0.0
+   },
+   "rate_null_given_to_detector": 0.0,
+   "channel_null_given_to_detector": 0.0,
+   "rate_null_matches_link": false,
+   "channel_null_matches_link": false,
+   "nulls_match_link": false,
+   "note": "The link's true error rate is the ADVERSARY's ground truth and the detector never reads it. detect() is told two nulls, both defaulting to a perfect link: channel_error_rate for the rate family and tolerated_depolarising for the channel family. When either disagrees with the link, an HONEST run departs from a law it was scored against and fires correctly -- that is the null being wrong about the link, not an attack, and both verifiers still accept."
+  },
+  "channel": {
+   "target": "Bob",
+   "hops_logged": 768,
+   "hops_engaged": 189
+  }
+ },
+ "timings": {
+  "session_ms": 499.5788999949582,
+  "detect_ms": 5.66999998409301
+ },
+ "error": null
+}

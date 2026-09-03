@@ -1,0 +1,155 @@
+[
+ {
+  "key": "honest",
+  "label": "Honest run",
+  "summary": "No adversary. Every statistic is drawn from the law the nulls describe. This is the baseline the false-positive bound is a statement about -- and note what it is not: it is not a run the detector is guaranteed to pass. The default null is a NOISELESS link, so an honest run over a link with noise > 0 departs from it and fires, correctly, with both verifiers still accepting.",
+  "detectable": "not-an-attack",
+  "assumption": null,
+  "model_note": "The honest run is the run every null in this package describes. Its false-positive bound is PROVEN under that null; it is not a measurement and not a promise that nothing will fire.",
+  "seams": [],
+  "hypothesis": null,
+  "owns_resource_line": false,
+  "accepts_noise": true
+ },
+ {
+  "key": "outside-forgery",
+  "label": "Outside forgery",
+  "summary": "Eve substitutes Alice's declaration outright, knowing nothing. Matched positions disagree with probability 1/2 each, so the mismatch count leaves the point mass at zero immediately. She cannot move the matched count -- that depends only on the declared bases and the recipients' own draws -- which is why the matched-count floors are an evidence-liveness control here and not a forgery detector.",
+  "detectable": "detectable",
+  "assumption": null,
+  "model_note": "Mounted through a shipped seam: no protocol edit was needed, so an attacked run and a clean one are the same program. Eve stands on the classical channel from Alice and holds no recipient's log and no symmetrisation coin. The adversary owns its randomness and never reads the session's (D6), so its choices are reproducible from the request seed and independent of the run.",
+  "seams": [
+   "signer"
+  ],
+  "hypothesis": "outside-forgery",
+  "owns_resource_line": false,
+  "accepts_noise": true
+ },
+ {
+  "key": "recipient-forgery",
+  "label": "Recipient forgery",
+  "summary": "Bob verifies Alice's genuine declaration, accepts it, and forwards Charlie a declaration built from his own raw log. The 1/12 floor he runs into -- against the 1/3 he would face without symmetrisation -- is the clearest single demonstration of what Phase A' buys. WATCH THE ORDERING: under 'before-forwarding', the shipped one, Charlie counted against the declaration Alice signed and is holding another, so he refuses on provenance and reaches NO VERDICT -- a denial of transfer, not a detection and not a rejection. Under 'after-forwarding' he scores it, and that is the arm the closed form predicts. Two questions, never pooled.",
+  "detectable": "detectable",
+  "assumption": null,
+  "model_note": "Mounted through a shipped seam: no protocol edit was needed, so an attacked run and a clean one are the same program. He holds his own log, the declaration once it reaches him, and the single integer his counterpart announced -- never the other recipient's log and never the coins. The adversary owns its randomness and never reads the session's (D6), so its choices are reproducible from the request seed and independent of the run.",
+  "seams": [
+   "forwarder"
+  ],
+  "hypothesis": "recipient-forgery",
+  "owns_resource_line": false,
+  "accepts_noise": true
+ },
+ {
+  "key": "impersonation-partial",
+  "label": "Impersonation, one seam",
+  "summary": "Mallory holds Alice's signing seam but not her distribution seam, so she declares a key the recipients never measured against. Accepted 0/200 in Phase 3, at a mismatch rate of 1/2. It is the contrast with the full seizure below that makes assumption (AUTH) load-bearing rather than decorative.",
+  "detectable": "detectable",
+  "assumption": null,
+  "model_note": "Seizing one of Alice's two seams is inside the threat model. The transcript cannot separate this from an outside forgery, and the detector says so rather than picking one. The adversary owns its randomness and never reads the session's (D6), so its choices are reproducible from the request seed and independent of the run.",
+  "seams": [
+   "signer"
+  ],
+  "hypothesis": "impersonation-signing-seam",
+  "owns_resource_line": false,
+  "accepts_noise": true
+ },
+ {
+  "key": "impersonation-full",
+  "label": "Impersonation, both seams",
+  "summary": "Mallory holds both of Alice's seams and runs the protocol correctly with a key pair of her own. Every statistic on the transcript is drawn from the honest law, because she generated both halves of it. Phase 3 measured it accepted 200/200. This is not a gap in the detector and not a threshold anyone forgot to derive: no transcript statistic separates her from Alice, and there cannot be one. Expect this run to look exactly like an honest run, because at the level of the transcript it is one.",
+  "detectable": "undetectable-by-construction",
+  "assumption": "(AUTH) -- the classical channel Alice authenticates over is assumed authentic. Seizing both seams is out of model by assumption; no transcript statistic separates it from an honest run, and this project derives no bound that pretends otherwise.",
+  "model_note": "The assumption is where the weight sits, and it is stated rather than hidden. The adversary owns its randomness and never reads the session's (D6), so its choices are reproducible from the request seed and independent of the run.",
+  "seams": [
+   "distributor",
+   "signer"
+  ],
+  "hypothesis": "impersonation-full",
+  "owns_resource_line": false,
+  "accepts_noise": true
+ },
+ {
+  "key": "replay",
+  "label": "Replay",
+  "summary": "The forwarding hop re-presents a declaration captured from a round that is over, relabelled with an opening of its own invention. The capture is minted at THIS run's signing length: a capture of another shape is declined by the adversary, and the arm would then forward honestly while looking as though it ran -- a wrong number this project has already paid for once. The session rebinds whatever the hop returns to the live round, so Charlie sees two declarations behind one count and refuses: NO VERDICT again, not a rejection.",
+  "detectable": "detectable",
+  "assumption": null,
+  "model_note": "Mounted through a shipped seam: no protocol edit was needed, so an attacked run and a clean one are the same program. Everything replayed was public when it was captured: the declaration and its opening. The adversary owns its randomness and never reads the session's (D6), so its choices are reproducible from the request seed and independent of the run.",
+  "seams": [
+   "forwarder"
+  ],
+  "hypothesis": "replay",
+  "owns_resource_line": false,
+  "accepts_noise": true
+ },
+ {
+  "key": "channel-manipulation",
+  "label": "Channel manipulation",
+  "summary": "Eve twirls the travelling half of each pair on one recipient's link, at strength `noise`. QBER rises and CHSH falls on that link only -- pooling the two links would report the average of two channels and detect neither. She owns the quantum channel and may degrade the delivery, but what she sees is a locally maximally mixed half and two uniform classical bits, so she cannot read the key off the wire. At noise = 0 she is mounted and passes every pair through untouched: the transcript is then an honest transcript and is reported as one.",
+  "detectable": "detectable",
+  "assumption": null,
+  "model_note": "The channel adversary owns the quantum links and holds no private log and no coin, so he degrades but does not learn. Check logs are built inside distribution and never reach the symmetriser, which is why this is the one attack a detector can attribute to a named link -- given enough check rounds. The adversary owns its randomness and never reads the session's (D6), so its choices are reproducible from the request seed and independent of the run.",
+  "seams": [
+   "resource_factory"
+  ],
+  "hypothesis": "channel-manipulation",
+  "owns_resource_line": true,
+  "accepts_noise": true
+ },
+ {
+  "key": "count-starvation",
+  "label": "Count starvation",
+  "summary": "A recipient understates the integer he puts on the wire in Phase C', denying the other party a verdict. A DENIAL IS NOT A REJECTION: the denied verifier learned nothing about the signature, and counting this as a catch would be the single most likely way for this screen to lie. It is free, deterministic and selective -- no key material, no quantum resource, no computation -- and it cannot be done quietly: the quietest denying declaration sits about -11.5 honest standard deviations below the mean at every key length.",
+  "detectable": "detectable",
+  "assumption": null,
+  "model_note": "Mounted through a shipped seam: no protocol edit was needed, so an attacked run and a clean one are the same program. Phase C' is the recipients' own step on their own authenticated channel, so this seam replaces what THEY do, never what Alice does. The adversary owns its randomness and never reads the session's (D6), so its choices are reproducible from the request seed and independent of the run.",
+  "seams": [
+   "count_exchange"
+  ],
+  "hypothesis": "count-starvation",
+  "owns_resource_line": false,
+  "accepts_noise": true
+ },
+ {
+  "key": "impersonation-distribution",
+  "label": "Impersonation, distribution seam only",
+  "summary": "The mirror image of the partial seizure above: Mallory runs Alice's quantum phase with a key of her own while Alice's genuine declaration still reaches the verifiers. Accepted 0/200, again at a mismatch rate of 1/2.",
+  "detectable": "detectable",
+  "assumption": null,
+  "model_note": "Seizing one of Alice's two seams is inside the threat model. The adversary owns its randomness and never reads the session's (D6), so its choices are reproducible from the request seed and independent of the run.",
+  "seams": [
+   "distributor"
+  ],
+  "hypothesis": "impersonation-distribution-seam",
+  "owns_resource_line": false,
+  "accepts_noise": true
+ },
+ {
+  "key": "channel-intercept-resend",
+  "label": "Channel: intercept and resend",
+  "summary": "The textbook attack, and the one that destroys the most entanglement per unit of effort: Eve measures the travelling half in an axis of her own and re-sends what she found, leaving Alice and the recipient sharing a product state. `noise` does not apply -- this attack occupies the resource line entirely and has no strength parameter.",
+  "detectable": "detectable",
+  "assumption": null,
+  "model_note": "The channel adversary owns the quantum links and holds no private log. The adversary owns its randomness and never reads the session's (D6), so its choices are reproducible from the request seed and independent of the run.",
+  "seams": [
+   "resource_factory"
+  ],
+  "hypothesis": "channel-manipulation",
+  "owns_resource_line": true,
+  "accepts_noise": false
+ },
+ {
+  "key": "channel-kept-share",
+  "label": "Channel: Eve keeps a share",
+  "summary": "Entanglement swapping in the form that matters: Eve copies the travelling qubit onto an ancilla and keeps it, joining the entanglement rather than relaying it. The CHSH statistic of what survives is sqrt(2) = 1.414, well under the classical bound of 2 -- so a detector thresholding on 'does this link still violate the classical bound' has 0.59 of margin here, not 0.00.",
+  "detectable": "detectable",
+  "assumption": null,
+  "model_note": "The channel adversary owns the quantum links and holds no private log. The adversary owns its randomness and never reads the session's (D6), so its choices are reproducible from the request seed and independent of the run.",
+  "seams": [
+   "resource_factory"
+  ],
+  "hypothesis": "channel-manipulation",
+  "owns_resource_line": true,
+  "accepts_noise": false
+ }
+]

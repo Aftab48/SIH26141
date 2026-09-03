@@ -1,0 +1,422 @@
+{
+ "params": {
+  "key_length": 192,
+  "s_a": 0.015625,
+  "s_v": 0.0625,
+  "bases": [
+   "X",
+   "Y",
+   "Z"
+  ],
+  "check_fraction": 0.25,
+  "signing_length": 192,
+  "match_probability": 0.3333333333333333,
+  "message_bit": 0,
+  "count_exchange_timing": "before-forwarding",
+  "attack": "honest",
+  "noise": 0.0,
+  "eps": 1e-09,
+  "channel_error_rate": 0.0,
+  "tolerated_depolarising": 0.0,
+  "seed": 20260141,
+  "note": "Where the controls start. Identical thresholds to the security-grade set; only L is cut, so a run answers a click."
+ },
+ "eps_default": 1e-09,
+ "live_key_length_max": 1024,
+ "live_key_length_min": 24,
+ "bounds": {
+  "kind": "proven",
+  "enforced_repudiation_bound": 1.4139309696794448e-09,
+  "matched_minimum": 36555,
+  "pooled_minimum": 74190,
+  "family_budget": {
+   "eps": 1e-09,
+   "rate": 4.999999999186849e-10,
+   "structural": 1.6263032587282567e-19,
+   "channel": 4.999999999186849e-10,
+   "per_link": 1.2499999997967122e-10,
+   "evidence_bound": 1.6263032587282567e-19,
+   "link_roster": [
+    [
+     "Bob",
+     0
+    ],
+    [
+     "Bob",
+     1
+    ],
+    [
+     "Charlie",
+     0
+    ],
+    [
+     "Charlie",
+     1
+    ]
+   ],
+   "derivation": "eps_struct = min(B_evid, eps/3) = min(1.6263e-19, 3.3333e-10) = 1.6263e-19; eps_rate = eps_chan = (eps - eps_struct)/2 = 5.0000e-10; sum = eps = 1.0000e-09. The structural family's proven bound is B_evid(n) whatever its share, so a larger share buys it nothing (C-2); the cap at eps/3 keeps the split from ever being worse than the even one."
+  },
+  "headline": {
+   "key_length": 115200,
+   "signing_length": 115200,
+   "expected_matched": 38400.0,
+   "minimum_matched": 36555,
+   "minimum_pooled": 74190,
+   "matched_minimum": 36555,
+   "pooled_minimum": 74190,
+   "enforced_repudiation_bound": 1.4139309696794448e-09,
+   "floors_are_live": true,
+   "family_budget": {
+    "eps": 1e-09,
+    "rate": 4.999999999186849e-10,
+    "structural": 1.6263032587282567e-19,
+    "channel": 4.999999999186849e-10,
+    "per_link": 1.2499999997967122e-10,
+    "evidence_bound": 1.6263032587282567e-19,
+    "link_roster": [
+     [
+      "Bob",
+      0
+     ],
+     [
+      "Bob",
+      1
+     ],
+     [
+      "Charlie",
+      0
+     ],
+     [
+      "Charlie",
+      1
+     ]
+    ],
+    "derivation": "eps_struct = min(B_evid, eps/3) = min(1.6263e-19, 3.3333e-10) = 1.6263e-19; eps_rate = eps_chan = (eps - eps_struct)/2 = 5.0000e-10; sum = eps = 1.0000e-09. The structural family's proven bound is B_evid(n) whatever its share, so a larger share buys it nothing (C-2); the cap at eps/3 keeps the split from ever being worse than the even one."
+   },
+   "note": "The documented security-grade set. NOT RUNNABLE HERE: one session is about four minutes and roughly 37 MB of transcript, so it is published as the closed forms it is and never as a run. Anything on the screen labelled with this set is DERIVED; nothing on the screen was measured at this length.",
+   "runnable": false
+  },
+  "demo": {
+   "key_length": 192,
+   "signing_length": 192,
+   "expected_matched": 64.0,
+   "minimum_matched": 1,
+   "minimum_pooled": 22,
+   "matched_minimum": 1,
+   "pooled_minimum": 22,
+   "enforced_repudiation_bound": 0.9939757386017611,
+   "floors_are_live": false,
+   "family_budget": {
+    "eps": 1e-09,
+    "rate": 4.99999999972895e-10,
+    "structural": 5.421010862427553e-20,
+    "channel": 4.99999999972895e-10,
+    "per_link": 1.2499999999322374e-10,
+    "evidence_bound": 5.421010862427553e-20,
+    "link_roster": [
+     [
+      "Bob",
+      0
+     ],
+     [
+      "Bob",
+      1
+     ],
+     [
+      "Charlie",
+      0
+     ],
+     [
+      "Charlie",
+      1
+     ]
+    ],
+    "derivation": "eps_struct = min(B_evid, eps/3) = min(5.4210e-20, 3.3333e-10) = 5.4210e-20; eps_rate = eps_chan = (eps - eps_struct)/2 = 5.0000e-10; sum = eps = 1.0000e-09. The structural family's proven bound is B_evid(n) whatever its share, so a larger share buys it nothing (C-2); the cap at eps/3 keeps the split from ever being worse than the even one."
+   },
+   "note": "The dashboard's starting length. Identical thresholds to the security-grade set -- the decision rule being demonstrated is THE SAME decision rule -- with only L cut, so a run answers a click. Watch the repudiation bound: at this length it is order one, which is no bound worth the name. A demo-scale run demonstrates the MECHANISM and cannot demonstrate non-repudiation; a green transferability tick here would be saying otherwise.",
+   "runnable": true
+  },
+  "chsh_classical_bound": 2.0,
+  "chsh_tsirelson_bound": 2.8284271247461903,
+  "degenerate_below_key_length": 140,
+  "note": "Closed forms evaluated at a parameter set: derived, not measured, and computed without running anything. Nothing here is a detection rate, and none of it is a false-negative bound -- there is no such bound in this project and none can be had from a transcript. What a run publishes afterwards is Detection.false_positive_bound, never eps and never evidence_bound, which is a post hoc statement about the signals that fired and a different claim: at L = 384, eps = 1e-9 the two differ by a factor of 2.944."
+ },
+ "limits": {
+  "fields": {
+   "key_length": {
+    "minimum": 24,
+    "maximum": 1024,
+    "note": "L, positions per recipient per message bit. The whole cost of a run and the only parameter that can make one slow. Above the ceiling the request is refused, never clamped."
+   },
+   "check_fraction": {
+    "minimum": 0.0,
+    "maximum": 0.5,
+    "note": "Share of positions spent measuring the channel instead of carrying key. At 0.0 the run publishes no channel statistics at all and the whole channel family is reported as not evaluated -- which is not the same as passed."
+   },
+   "noise": {
+    "minimum": 0.0,
+    "maximum": 0.5,
+    "note": "Depolarising strength of the physical link, mounted on the resource line. Applies to the honest arm too, which is the point: an honest run over a noisy link departs from the detector's noiseless null."
+   },
+   "eps": {
+    "minimum": 1e-19,
+    "maximum": 0.1,
+    "note": "False-positive budget for the whole detector. What is published afterwards is the bound the thresholds PROVE -- normally well inside the budget -- never this number, and never the post hoc evidence bound either."
+   },
+   "channel_error_rate": {
+    "minimum": 0.0,
+    "maximum": 0.5,
+    "note": "The null the rate family is read against, p_e. Defaults to 0.0, a claim about a noiseless link. It is set by the operator and never inferred from the run: a transcript without check rounds carries no estimate of it, and guessing would be inventing a null."
+   },
+   "tolerated_depolarising": {
+    "minimum": 0.0,
+    "maximum": 0.5,
+    "note": "The null the CHANNEL family is read against, p0, as a Werner strength. Also defaults to 0.0, which claims an ideal resource. A separate number from channel_error_rate on purpose: they are two parameterisations of the same physics and converting one into the other silently would state a null the operator did not ask for. Optional: a request that omits it behaves exactly as the fixed contract's eight fields say."
+   },
+   "seed": {
+    "minimum": 0,
+    "maximum": 4294967295,
+    "note": "Reproduces the run exactly. The session's stream and the adversary's are derived from it separately and are independent (D3, D6)."
+   },
+   "count_exchange_timing": {
+    "minimum": null,
+    "maximum": null,
+    "note": "One of 'before-forwarding', 'after-forwarding'. A label on the result and a control, never a thing to pool over."
+   }
+  },
+  "max_concurrent_runs": 2,
+  "cost_table": [
+   {
+    "key_length": 96,
+    "session_ms": 203,
+    "detect_ms": 4,
+    "transcript_kb": 32
+   },
+   {
+    "key_length": 192,
+    "session_ms": 407,
+    "detect_ms": 6,
+    "transcript_kb": 63
+   },
+   {
+    "key_length": 384,
+    "session_ms": 815,
+    "detect_ms": 14,
+    "transcript_kb": 125
+   },
+   {
+    "key_length": 768,
+    "session_ms": 1638,
+    "detect_ms": 18,
+    "transcript_kb": 249
+   },
+   {
+    "key_length": 1024,
+    "session_ms": 2509,
+    "detect_ms": 33,
+    "transcript_kb": 332
+   }
+  ],
+  "cost_table_note": "Wall-clock session generation measured on one machine (i7-14700HX, check_fraction=0.25, no profiler). An estimate for sizing a progress indicator, not a bound and not a security number. Detection is free at every length; the session is the whole cost."
+ },
+ "check_fraction_max": 0.5,
+ "noise_max": 0.5,
+ "channel_error_rate_max": 0.5,
+ "tolerated_depolarising_max": 0.5,
+ "eps_min": 1e-19,
+ "eps_max": 0.1,
+ "count_exchange_timings": [
+  "before-forwarding",
+  "after-forwarding"
+ ],
+ "max_concurrent_runs": 2,
+ "noise_null_calibration": {
+  "kind": "measured",
+  "what": "honest runs scored against the default noiseless null (channel_error_rate = 0.0), both verifiers accepting, depolarising noise on the wire only",
+  "runs_per_level": 30,
+  "source": "Phase 4, Detection.channel_error_rate",
+  "levels": [
+   {
+    "noise": 0.0,
+    "detected": 0
+   },
+   {
+    "noise": 0.0025,
+    "detected": 13
+   },
+   {
+    "noise": 0.005,
+    "detected": 17
+   },
+   {
+    "noise": 0.01,
+    "detected": 27
+   },
+   {
+    "noise": 0.015,
+    "detected": 30
+   },
+   {
+    "noise": 0.03125,
+    "detected": 30
+   }
+  ],
+  "with_true_rate_passed": "0/30 at every level when the link's true rate is passed to detect()",
+  "second_null_note": "That calibration is the RATE family. The CHANNEL family has its own null, tolerated_depolarising, also defaulting to a perfect resource, and stating only the first leaves an honest noisy run firing: measured over twelve seeds at L = 192, check_fraction = 0.25, link strength 0.03125 -- 12/12 detected with both nulls at zero, 12/12 with only channel_error_rate corrected, 0/12 with both stated. Both verifiers accept in every one of them."
+ },
+ "attacks": [
+  {
+   "key": "honest",
+   "label": "Honest run",
+   "summary": "No adversary. Every statistic is drawn from the law the nulls describe. This is the baseline the false-positive bound is a statement about -- and note what it is not: it is not a run the detector is guaranteed to pass. The default null is a NOISELESS link, so an honest run over a link with noise > 0 departs from it and fires, correctly, with both verifiers still accepting.",
+   "detectable": "not-an-attack",
+   "assumption": null,
+   "model_note": "The honest run is the run every null in this package describes. Its false-positive bound is PROVEN under that null; it is not a measurement and not a promise that nothing will fire.",
+   "seams": [],
+   "hypothesis": null,
+   "owns_resource_line": false,
+   "accepts_noise": true
+  },
+  {
+   "key": "outside-forgery",
+   "label": "Outside forgery",
+   "summary": "Eve substitutes Alice's declaration outright, knowing nothing. Matched positions disagree with probability 1/2 each, so the mismatch count leaves the point mass at zero immediately. She cannot move the matched count -- that depends only on the declared bases and the recipients' own draws -- which is why the matched-count floors are an evidence-liveness control here and not a forgery detector.",
+   "detectable": "detectable",
+   "assumption": null,
+   "model_note": "Mounted through a shipped seam: no protocol edit was needed, so an attacked run and a clean one are the same program. Eve stands on the classical channel from Alice and holds no recipient's log and no symmetrisation coin. The adversary owns its randomness and never reads the session's (D6), so its choices are reproducible from the request seed and independent of the run.",
+   "seams": [
+    "signer"
+   ],
+   "hypothesis": "outside-forgery",
+   "owns_resource_line": false,
+   "accepts_noise": true
+  },
+  {
+   "key": "recipient-forgery",
+   "label": "Recipient forgery",
+   "summary": "Bob verifies Alice's genuine declaration, accepts it, and forwards Charlie a declaration built from his own raw log. The 1/12 floor he runs into -- against the 1/3 he would face without symmetrisation -- is the clearest single demonstration of what Phase A' buys. WATCH THE ORDERING: under 'before-forwarding', the shipped one, Charlie counted against the declaration Alice signed and is holding another, so he refuses on provenance and reaches NO VERDICT -- a denial of transfer, not a detection and not a rejection. Under 'after-forwarding' he scores it, and that is the arm the closed form predicts. Two questions, never pooled.",
+   "detectable": "detectable",
+   "assumption": null,
+   "model_note": "Mounted through a shipped seam: no protocol edit was needed, so an attacked run and a clean one are the same program. He holds his own log, the declaration once it reaches him, and the single integer his counterpart announced -- never the other recipient's log and never the coins. The adversary owns its randomness and never reads the session's (D6), so its choices are reproducible from the request seed and independent of the run.",
+   "seams": [
+    "forwarder"
+   ],
+   "hypothesis": "recipient-forgery",
+   "owns_resource_line": false,
+   "accepts_noise": true
+  },
+  {
+   "key": "impersonation-partial",
+   "label": "Impersonation, one seam",
+   "summary": "Mallory holds Alice's signing seam but not her distribution seam, so she declares a key the recipients never measured against. Accepted 0/200 in Phase 3, at a mismatch rate of 1/2. It is the contrast with the full seizure below that makes assumption (AUTH) load-bearing rather than decorative.",
+   "detectable": "detectable",
+   "assumption": null,
+   "model_note": "Seizing one of Alice's two seams is inside the threat model. The transcript cannot separate this from an outside forgery, and the detector says so rather than picking one. The adversary owns its randomness and never reads the session's (D6), so its choices are reproducible from the request seed and independent of the run.",
+   "seams": [
+    "signer"
+   ],
+   "hypothesis": "impersonation-signing-seam",
+   "owns_resource_line": false,
+   "accepts_noise": true
+  },
+  {
+   "key": "impersonation-full",
+   "label": "Impersonation, both seams",
+   "summary": "Mallory holds both of Alice's seams and runs the protocol correctly with a key pair of her own. Every statistic on the transcript is drawn from the honest law, because she generated both halves of it. Phase 3 measured it accepted 200/200. This is not a gap in the detector and not a threshold anyone forgot to derive: no transcript statistic separates her from Alice, and there cannot be one. Expect this run to look exactly like an honest run, because at the level of the transcript it is one.",
+   "detectable": "undetectable-by-construction",
+   "assumption": "(AUTH) -- the classical channel Alice authenticates over is assumed authentic. Seizing both seams is out of model by assumption; no transcript statistic separates it from an honest run, and this project derives no bound that pretends otherwise.",
+   "model_note": "The assumption is where the weight sits, and it is stated rather than hidden. The adversary owns its randomness and never reads the session's (D6), so its choices are reproducible from the request seed and independent of the run.",
+   "seams": [
+    "distributor",
+    "signer"
+   ],
+   "hypothesis": "impersonation-full",
+   "owns_resource_line": false,
+   "accepts_noise": true
+  },
+  {
+   "key": "replay",
+   "label": "Replay",
+   "summary": "The forwarding hop re-presents a declaration captured from a round that is over, relabelled with an opening of its own invention. The capture is minted at THIS run's signing length: a capture of another shape is declined by the adversary, and the arm would then forward honestly while looking as though it ran -- a wrong number this project has already paid for once. The session rebinds whatever the hop returns to the live round, so Charlie sees two declarations behind one count and refuses: NO VERDICT again, not a rejection.",
+   "detectable": "detectable",
+   "assumption": null,
+   "model_note": "Mounted through a shipped seam: no protocol edit was needed, so an attacked run and a clean one are the same program. Everything replayed was public when it was captured: the declaration and its opening. The adversary owns its randomness and never reads the session's (D6), so its choices are reproducible from the request seed and independent of the run.",
+   "seams": [
+    "forwarder"
+   ],
+   "hypothesis": "replay",
+   "owns_resource_line": false,
+   "accepts_noise": true
+  },
+  {
+   "key": "channel-manipulation",
+   "label": "Channel manipulation",
+   "summary": "Eve twirls the travelling half of each pair on one recipient's link, at strength `noise`. QBER rises and CHSH falls on that link only -- pooling the two links would report the average of two channels and detect neither. She owns the quantum channel and may degrade the delivery, but what she sees is a locally maximally mixed half and two uniform classical bits, so she cannot read the key off the wire. At noise = 0 she is mounted and passes every pair through untouched: the transcript is then an honest transcript and is reported as one.",
+   "detectable": "detectable",
+   "assumption": null,
+   "model_note": "The channel adversary owns the quantum links and holds no private log and no coin, so he degrades but does not learn. Check logs are built inside distribution and never reach the symmetriser, which is why this is the one attack a detector can attribute to a named link -- given enough check rounds. The adversary owns its randomness and never reads the session's (D6), so its choices are reproducible from the request seed and independent of the run.",
+   "seams": [
+    "resource_factory"
+   ],
+   "hypothesis": "channel-manipulation",
+   "owns_resource_line": true,
+   "accepts_noise": true
+  },
+  {
+   "key": "count-starvation",
+   "label": "Count starvation",
+   "summary": "A recipient understates the integer he puts on the wire in Phase C', denying the other party a verdict. A DENIAL IS NOT A REJECTION: the denied verifier learned nothing about the signature, and counting this as a catch would be the single most likely way for this screen to lie. It is free, deterministic and selective -- no key material, no quantum resource, no computation -- and it cannot be done quietly: the quietest denying declaration sits about -11.5 honest standard deviations below the mean at every key length.",
+   "detectable": "detectable",
+   "assumption": null,
+   "model_note": "Mounted through a shipped seam: no protocol edit was needed, so an attacked run and a clean one are the same program. Phase C' is the recipients' own step on their own authenticated channel, so this seam replaces what THEY do, never what Alice does. The adversary owns its randomness and never reads the session's (D6), so its choices are reproducible from the request seed and independent of the run.",
+   "seams": [
+    "count_exchange"
+   ],
+   "hypothesis": "count-starvation",
+   "owns_resource_line": false,
+   "accepts_noise": true
+  },
+  {
+   "key": "impersonation-distribution",
+   "label": "Impersonation, distribution seam only",
+   "summary": "The mirror image of the partial seizure above: Mallory runs Alice's quantum phase with a key of her own while Alice's genuine declaration still reaches the verifiers. Accepted 0/200, again at a mismatch rate of 1/2.",
+   "detectable": "detectable",
+   "assumption": null,
+   "model_note": "Seizing one of Alice's two seams is inside the threat model. The adversary owns its randomness and never reads the session's (D6), so its choices are reproducible from the request seed and independent of the run.",
+   "seams": [
+    "distributor"
+   ],
+   "hypothesis": "impersonation-distribution-seam",
+   "owns_resource_line": false,
+   "accepts_noise": true
+  },
+  {
+   "key": "channel-intercept-resend",
+   "label": "Channel: intercept and resend",
+   "summary": "The textbook attack, and the one that destroys the most entanglement per unit of effort: Eve measures the travelling half in an axis of her own and re-sends what she found, leaving Alice and the recipient sharing a product state. `noise` does not apply -- this attack occupies the resource line entirely and has no strength parameter.",
+   "detectable": "detectable",
+   "assumption": null,
+   "model_note": "The channel adversary owns the quantum links and holds no private log. The adversary owns its randomness and never reads the session's (D6), so its choices are reproducible from the request seed and independent of the run.",
+   "seams": [
+    "resource_factory"
+   ],
+   "hypothesis": "channel-manipulation",
+   "owns_resource_line": true,
+   "accepts_noise": false
+  },
+  {
+   "key": "channel-kept-share",
+   "label": "Channel: Eve keeps a share",
+   "summary": "Entanglement swapping in the form that matters: Eve copies the travelling qubit onto an ancilla and keeps it, joining the entanglement rather than relaying it. The CHSH statistic of what survives is sqrt(2) = 1.414, well under the classical bound of 2 -- so a detector thresholding on 'does this link still violate the classical bound' has 0.59 of margin here, not 0.00.",
+   "detectable": "detectable",
+   "assumption": null,
+   "model_note": "The channel adversary owns the quantum links and holds no private log. The adversary owns its randomness and never reads the session's (D6), so its choices are reproducible from the request seed and independent of the run.",
+   "seams": [
+    "resource_factory"
+   ],
+   "hypothesis": "channel-manipulation",
+   "owns_resource_line": true,
+   "accepts_noise": false
+  }
+ ]
+}

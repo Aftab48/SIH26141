@@ -1,0 +1,368 @@
+{
+ "_comment": [
+  "The frontend's READ-SIDE contract. Every field the dashboard renders is named",
+  "here, and the dashboard renders nothing that is not. Two jobs:",
+  "",
+  "  1. At runtime the page validates each API response against this file and",
+  "     shows a visible 'the API did not supply <field>' marker in place of the",
+  "     panel that needed it. It never substitutes a zero and never computes the",
+  "     missing quantity -- computing it in the browser is the D8 violation this",
+  "     whole phase exists to prevent, and a zero on a screen is a lie.",
+  "  2. tests/test_web_frontend.py holds this file and the recorded fixtures in",
+  "     tests/fixtures/phase6 to each other, so a field that drifts out of the",
+  "     API fails a test rather than blanking a panel at the demo.",
+  "",
+  "'required' fields must be present on every response. 'expected' fields are",
+  "ones the frontend has a panel for; a missing one degrades that panel to the",
+  "'not supplied' state and leaves the rest of the screen intact."
+ ],
+ "version": 1,
+ "endpoints": {
+  "health": {
+   "method": "GET",
+   "path": "/api/health",
+   "required": [
+    "ok",
+    "version"
+   ]
+  },
+  "attacks": {
+   "method": "GET",
+   "path": "/api/attacks",
+   "item_required": [
+    "key",
+    "label",
+    "summary",
+    "detectable",
+    "assumption"
+   ],
+   "detectable_values": [
+    "not-an-attack",
+    "detectable",
+    "undetectable-by-construction"
+   ]
+  },
+  "defaults": {
+   "method": "GET",
+   "path": "/api/defaults",
+   "required": [
+    "params",
+    "bounds",
+    "eps_default",
+    "live_key_length_max"
+   ],
+   "expected": [
+    "limits",
+    "attacks"
+   ],
+   "params_expected": [
+    "key_length",
+    "s_a",
+    "s_v",
+    "bases",
+    "check_fraction",
+    "message_bit",
+    "count_exchange_timing"
+   ],
+   "bounds_expected": [
+    "kind",
+    "note",
+    "chsh_classical_bound",
+    "chsh_tsirelson_bound",
+    "degenerate_below_key_length"
+   ],
+   "limits_expected": [
+    "fields",
+    "cost_table",
+    "cost_table_note",
+    "max_concurrent_runs"
+   ],
+   "limit_fields_expected": [
+    "key_length",
+    "check_fraction",
+    "noise",
+    "eps",
+    "channel_error_rate",
+    "seed"
+   ],
+   "cost_row_expected": [
+    "key_length",
+    "session_ms",
+    "detect_ms",
+    "transcript_kb"
+   ],
+   "bounds_either": {
+    "_comment": "Figures the panels read from bounds.headline when it exists and from bounds itself otherwise; render.js's pick() looks in both, so a field that moves between them does not blank a panel.",
+    "enforced_repudiation_bound": [
+     "bounds.headline",
+     "bounds"
+    ],
+    "minimum_matched": [
+     "bounds.headline",
+     "bounds.matched_minimum"
+    ],
+    "minimum_pooled": [
+     "bounds.headline",
+     "bounds.pooled_minimum"
+    ],
+    "key_length": [
+     "bounds.headline",
+     "params"
+    ]
+   }
+  },
+  "run": {
+   "method": "POST",
+   "path": "/api/run",
+   "request": [
+    "attack",
+    "key_length",
+    "check_fraction",
+    "noise",
+    "eps",
+    "channel_error_rate",
+    "count_exchange_timing",
+    "seed"
+   ],
+   "required": [
+    "detection",
+    "run",
+    "ground_truth",
+    "timings"
+   ],
+   "request_optional": [
+    "tolerated_depolarising"
+   ],
+   "failure": {
+    "_comment": "A run-level failure is answered with 200, all four keys present, detection and run null, and `error` filled in. The page renders that as a fourth state -- NO RUN -- which is not a clean run, not a detection and not a no-verdict, and belongs in no rate.",
+    "field": "error",
+    "null_on_success": true
+   }
+  }
+ },
+ "detection": {
+  "_comment": "Detection.to_dict(). Published verbatim; nothing here is recombined in the browser.",
+  "required": [
+   "eps",
+   "detected",
+   "signals",
+   "false_positive_bound",
+   "bound_is_unconditional",
+   "channel_error_rate",
+   "null_is_noiseless",
+   "evidence_bound",
+   "slack_factor",
+   "budget",
+   "attributions",
+   "named",
+   "kinds",
+   "outcomes",
+   "not_scored",
+   "withheld",
+   "grouping_key",
+   "requirements_enforced",
+   "security_claim",
+   "key_length",
+   "summary"
+  ],
+  "signal_required": [
+   "name",
+   "family",
+   "kind",
+   "statistic",
+   "observed",
+   "critical",
+   "false_positive_bound",
+   "is_detection",
+   "claim"
+  ],
+  "attribution_required": [
+   "hypothesis",
+   "status",
+   "supporting",
+   "excluding",
+   "missing_requirements",
+   "false_positive_bound",
+   "indistinguishable_from",
+   "rationale"
+  ],
+  "budget_required": [
+   "eps",
+   "rate",
+   "structural",
+   "channel",
+   "per_link",
+   "evidence_bound",
+   "link_roster",
+   "derivation"
+  ],
+  "outcome_values": [
+   "accepted",
+   "rejected",
+   "refused-to-score",
+   "not-asked"
+  ],
+  "support_values": [
+   "supported",
+   "unsupported",
+   "excluded",
+   "undetectable-by-construction"
+  ]
+ },
+ "run_facts": {
+  "_comment": [
+   "Transcript facts. Detection.to_dict() carries the verdict and the bound and",
+   "nothing about the run that produced it -- no per-link QBER, no matched count,",
+   "no floor, no repudiation guarantee. Those live on TranscriptStatistics, which",
+   "is why the contract has a separate 'run' key. tools/phase6_fixtures.py's",
+   "run_facts() is the reference producer."
+  ],
+  "required": [
+   "sifted_key_length",
+   "check_fraction",
+   "check_rounds_present",
+   "channel_evaluable",
+   "counts_exchanged",
+   "count_exchange_timing",
+   "security_claim",
+   "verifiers",
+   "links"
+  ],
+  "expected": [
+   "requested_key_length",
+   "nominal_key_length",
+   "message_bit",
+   "s_a",
+   "s_v",
+   "channel_monitored",
+   "symmetrised",
+   "session_coherent",
+   "is_complete",
+   "aborted",
+   "forwarding_altered_signature",
+   "signer_saw_recipient_logs",
+   "transferable",
+   "repudiated",
+   "repudiation_guarantee",
+   "enforced_repudiation_bound",
+   "floors",
+   "pooled",
+   "replay",
+   "aborts"
+  ],
+  "floors_expected": [
+   "matched_minimum",
+   "pooled_minimum",
+   "matched_floor_bound",
+   "meets_pooled_floor",
+   "meets_every_floor",
+   "degenerate"
+  ],
+  "verifier_expected": [
+   "party",
+   "outcome",
+   "accepted",
+   "matched",
+   "matched_trials",
+   "matched_null_probability",
+   "mismatches",
+   "mismatch_trials",
+   "rate",
+   "threshold",
+   "margin",
+   "reported_matched",
+   "reported_mismatches",
+   "consistent",
+   "recomputed",
+   "scored"
+  ],
+  "link_expected": [
+   "party",
+   "message_bit",
+   "errors",
+   "qber",
+   "chsh",
+   "chsh_unavailable",
+   "resource"
+  ],
+  "pooled_expected": [
+   "count",
+   "trials",
+   "null_probability",
+   "declared_bob",
+   "declared_charlie",
+   "declared_pooled",
+   "declaration_digest_present"
+  ]
+ },
+ "ground_truth": {
+  "_comment": [
+   "The HARNESS's own knowledge, in its own object. Which link Eve touched and",
+   "which runs a selective starver targeted live on the adversary's log; the",
+   "detector may not read them. Keeping them here means the screen can show",
+   "'what actually happened' beside 'what the detector could tell' with no",
+   "chance of one leaking into the other."
+  ],
+  "required": [
+   "attack",
+   "label",
+   "adversary_present",
+   "acted",
+   "detectable"
+  ],
+  "expected": [
+   "identical_to_honest",
+   "targeted_links",
+   "seams_held",
+   "assumption",
+   "notes",
+   "link"
+  ],
+  "link_expected": [
+   "model",
+   "description",
+   "strength",
+   "targeted_party",
+   "true_error_rate_by_party",
+   "rate_null_given_to_detector",
+   "channel_null_given_to_detector",
+   "nulls_match_link",
+   "note"
+  ]
+ },
+ "timings": {
+  "required": [
+   "session_ms",
+   "detect_ms"
+  ]
+ },
+ "constants": {
+  "_comment": [
+   "data/constants.json: figures the screen needs that no endpoint",
+   "returns. Shipped as a file rather than computed in the browser,",
+   "and pinned by tests/test_web_frontend.py against math.sqrt and",
+   "against the docstring of Detection.channel_error_rate."
+  ],
+  "file": "data/constants.json",
+  "required": [
+   "chsh",
+   "noise_null_calibration",
+   "false_negative"
+  ],
+  "chsh_expected": [
+   "kind",
+   "classical_bound",
+   "tsirelson_bound",
+   "note",
+   "domain"
+  ],
+  "calibration_expected": [
+   "kind",
+   "source",
+   "what",
+   "runs_per_level",
+   "levels",
+   "with_true_rate_passed"
+  ]
+ }
+}

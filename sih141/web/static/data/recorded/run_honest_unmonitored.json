@@ -1,0 +1,322 @@
+{
+ "request": {
+  "attack": "honest",
+  "key_length": 192,
+  "check_fraction": 0.0,
+  "noise": 0.0,
+  "eps": 1e-09,
+  "channel_error_rate": 0.0,
+  "tolerated_depolarising": 0.0,
+  "count_exchange_timing": "before-forwarding",
+  "seed": 11,
+  "message_bit": 0
+ },
+ "detection": {
+  "eps": 1e-09,
+  "detected": false,
+  "signals": [],
+  "false_positive_bound": 2.649885541718547e-10,
+  "bound_is_unconditional": true,
+  "channel_error_rate": 0.0,
+  "null_is_noiseless": true,
+  "evidence_bound": null,
+  "slack_factor": 3.773747900641262,
+  "budget": {
+   "eps": 1e-09,
+   "rate": 4.99999999972895e-10,
+   "structural": 5.421010862427553e-20,
+   "channel": 4.99999999972895e-10,
+   "per_link": 1.2499999999322374e-10,
+   "evidence_bound": 5.421010862427553e-20,
+   "link_roster": [
+    [
+     "Bob",
+     0
+    ],
+    [
+     "Bob",
+     1
+    ],
+    [
+     "Charlie",
+     0
+    ],
+    [
+     "Charlie",
+     1
+    ]
+   ],
+   "derivation": "eps_struct = min(B_evid, eps/3) = min(5.4210e-20, 3.3333e-10) = 5.4210e-20; eps_rate = eps_chan = (eps - eps_struct)/2 = 5.0000e-10; sum = eps = 1.0000e-09. The structural family's proven bound is B_evid(n) whatever its share, so a larger share buys it nothing (C-2); the cap at eps/3 keeps the split from ever being worse than the even one."
+  },
+  "attributions": [
+   {
+    "hypothesis": "honest",
+    "status": "supported",
+    "supporting": [],
+    "excluding": [],
+    "missing_requirements": [],
+    "false_positive_bound": null,
+    "indistinguishable_from": [],
+    "rationale": "the honest run is the run every null in this package describes, so every threshold fires on it with at most its own proven bound; this is the one row that may be excluded on a mismatch or a channel signal, because for the null itself those are the departure the threshold was built to bound rather than the channel's noise level. nothing fired, so nothing departs from the nulls; the detector's own false-positive bound is the number that says how much that is worth."
+   },
+   {
+    "hypothesis": "outside-forgery",
+    "status": "unsupported",
+    "supporting": [],
+    "excluding": [],
+    "missing_requirements": [
+     "mismatch"
+    ],
+    "false_positive_bound": null,
+    "indistinguishable_from": [
+     "impersonation-signing-seam",
+     "impersonation-distribution-seam"
+    ],
+    "rationale": "a declaration drawn independently of the recipients' records leaves the matched count's law exactly Binomial(n, 1/|B|) and touches no wire integer, no forwarding hop and no ledger; only the eigenvalues at positions that do match are disturbed, and each of those survives with probability 1/2 (sih141.protocol.analysis.FORGER_MATCHED_MISMATCH_PROBABILITY), so the mismatch count is zero with probability 2**-|M_R| and the signal is required rather than merely predicted. not supported: this position produces ['mismatch'] with probability essentially one, and on this run that was evaluated and did not fire. Withheld rather than refuted -- a signal that did not fire carries no bound, only a false-negative statement nothing here derives."
+   },
+   {
+    "hypothesis": "impersonation-signing-seam",
+    "status": "unsupported",
+    "supporting": [],
+    "excluding": [],
+    "missing_requirements": [
+     "mismatch"
+    ],
+    "false_positive_bound": null,
+    "indistinguishable_from": [
+     "outside-forgery",
+     "impersonation-distribution-seam"
+    ],
+    "rationale": "a declaration drawn independently of the recipients' records leaves the matched count's law exactly Binomial(n, 1/|B|) and touches no wire integer, no forwarding hop and no ledger; only the eigenvalues at positions that do match are disturbed, and each of those survives with probability 1/2 (sih141.protocol.analysis.FORGER_MATCHED_MISMATCH_PROBABILITY), so the mismatch count is zero with probability 2**-|M_R| and the signal is required rather than merely predicted. not supported: this position produces ['mismatch'] with probability essentially one, and on this run that was evaluated and did not fire. Withheld rather than refuted -- a signal that did not fire carries no bound, only a false-negative statement nothing here derives."
+   },
+   {
+    "hypothesis": "impersonation-distribution-seam",
+    "status": "unsupported",
+    "supporting": [],
+    "excluding": [],
+    "missing_requirements": [
+     "mismatch"
+    ],
+    "false_positive_bound": null,
+    "indistinguishable_from": [
+     "outside-forgery",
+     "impersonation-signing-seam"
+    ],
+    "rationale": "a declaration drawn independently of the recipients' records leaves the matched count's law exactly Binomial(n, 1/|B|) and touches no wire integer, no forwarding hop and no ledger; only the eigenvalues at positions that do match are disturbed, and each of those survives with probability 1/2 (sih141.protocol.analysis.FORGER_MATCHED_MISMATCH_PROBABILITY), so the mismatch count is zero with probability 2**-|M_R| and the signal is required rather than merely predicted. not supported: this position produces ['mismatch'] with probability essentially one, and on this run that was evaluated and did not fire. Withheld rather than refuted -- a signal that did not fire carries no bound, only a false-negative statement nothing here derives."
+   },
+   {
+    "hypothesis": "impersonation-full",
+    "status": "undetectable-by-construction",
+    "supporting": [],
+    "excluding": [],
+    "missing_requirements": [],
+    "false_positive_bound": null,
+    "indistinguishable_from": [],
+    "rationale": "Mallory runs the protocol correctly with a key pair of her own, so every statistic on the transcript is drawn from the honest law; assumption (AUTH) puts this position out of model rather than pretending a detector reaches it. never named and never ruled out: assumption (AUTH) puts this position out of model, and a hypothesis silently missing from a table reads as one that was excluded."
+   },
+   {
+    "hypothesis": "recipient-forgery",
+    "status": "unsupported",
+    "supporting": [],
+    "excluding": [],
+    "missing_requirements": [
+     "count-high",
+     "mismatch"
+    ],
+    "false_positive_bound": null,
+    "indistinguishable_from": [],
+    "rationale": "he forwards a declaration built from his own raw log, which after Phase A' is roughly half of what the receiving verifier holds, so that verifier's matched count moves from n/3 to 2n/3 -- sqrt(n/2) standard deviations of the null, 9.80 at n = 192 and 240 at DEFAULT_PARAMS, with the derived upper-tail threshold strictly between the two means, which is what makes COUNT_HIGH a requirement and not a hope; his forwarded declaration is not Alice's, so the pair's counts name two declarations; he presents it into a fresh round, so no ledger entry is spent twice. not supported: this position produces ['count-high', 'mismatch'] with probability essentially one, and on this run that was evaluated and did not fire. Withheld rather than refuted -- a signal that did not fire carries no bound, only a false-negative statement nothing here derives."
+   },
+   {
+    "hypothesis": "count-starvation",
+    "status": "unsupported",
+    "supporting": [],
+    "excluding": [],
+    "missing_requirements": [],
+    "false_positive_bound": null,
+    "indistinguishable_from": [],
+    "rationale": "he understates one integer on the Phase C' wire and nothing else: his own scored matched count is untouched, so the two part company, and the lie is downward by construction -- an upper tail, a second declaration on the forwarding hop and a spent round are all three out of a count-exchange seam's reach. nothing fired that this position predicts, and nothing that excludes it -- an absence of evidence, which is not evidence of absence and is not reported as one."
+   },
+   {
+    "hypothesis": "replay",
+    "status": "unsupported",
+    "supporting": [],
+    "excluding": [],
+    "missing_requirements": [],
+    "false_positive_bound": null,
+    "indistinguishable_from": [],
+    "rationale": "he re-presents a captured declaration, which the consumed-records ledger and the session binding both record, and which is not the declaration Alice sent this run; that declaration was drawn independently of the receiving verifier's current record, so every count null is left exactly where it was while the eigenvalues at matched positions disagree. LEDGER is predicted and NOT required: the ledger check is sound in one direction only -- a replay that burns its round through a rejection leaves the refusal count at zero (finding 4 of the structural family). nothing fired that this position predicts, and nothing that excludes it -- an absence of evidence, which is not evidence of absence and is not reported as one."
+   },
+   {
+    "hypothesis": "channel-manipulation",
+    "status": "unsupported",
+    "supporting": [],
+    "excluding": [],
+    "missing_requirements": [],
+    "false_positive_bound": null,
+    "indistinguishable_from": [],
+    "rationale": "the matched set is decided by basis agreement, and a trace-preserving map on the entanglement resource acts on the teleported eigenstate; it cannot move a basis, so it cannot move a count, a floor, a declaration or a bookkeeping equality. CHANNEL is predicted and NOT required: a weak enough deviation clears a short check sample, and this layer bounds false positives and never false negatives. nothing fired that this position predicts, and nothing that excludes it -- an absence of evidence, which is not evidence of absence and is not reported as one."
+   }
+  ],
+  "named": [
+   "honest"
+  ],
+  "kinds": [],
+  "outcomes": {
+   "Bob": "accepted",
+   "Charlie": "accepted"
+  },
+  "not_scored": [],
+  "withheld": [
+   "channel: this run published no check rounds, so the whole channel family is unevaluable -- an unmonitored link is not a clean one"
+  ],
+  "grouping_key": [
+   "before-forwarding",
+   true,
+   true,
+   false,
+   true
+  ],
+  "requirements_enforced": true,
+  "security_claim": true,
+  "key_length": 192,
+  "summary": "detect: nothing fired at eps = 1.000e-09\n  P(any signal | honest) <= 2.6499e-10, a factor of 3.77 inside the budget\n  consistent with: honest\n  not separable: impersonation-full is undetectable by construction (AUTH)\n  withheld: channel: this run published no check rounds, so the whole channel family is unevaluable -- an unmonitored link is not a clean one\n  outcomes: Bob accepted, Charlie accepted"
+ },
+ "run": {
+  "requested_key_length": 192,
+  "nominal_key_length": 192,
+  "sifted_key_length": 192,
+  "check_fraction": 0.0,
+  "message_bit": 0,
+  "s_a": 0.015625,
+  "s_v": 0.0625,
+  "check_rounds_present": false,
+  "channel_monitored": false,
+  "channel_evaluable": false,
+  "counts_exchanged": true,
+  "count_exchange_timing": "before-forwarding",
+  "symmetrised": true,
+  "session_coherent": true,
+  "is_complete": true,
+  "aborted": false,
+  "forwarding_altered_signature": false,
+  "signer_saw_recipient_logs": false,
+  "security_claim": true,
+  "transferable": true,
+  "repudiated": false,
+  "repudiation_guarantee": 0.9622777501320395,
+  "enforced_repudiation_bound": 0.9939757386017611,
+  "floors": {
+   "matched_minimum": 1,
+   "pooled_minimum": 22,
+   "matched_floor_bound": 5.421010862427522e-20,
+   "meets_pooled_floor": true,
+   "meets_every_floor": true,
+   "degenerate": false
+  },
+  "verifiers": [
+   {
+    "party": "Bob",
+    "outcome": "accepted",
+    "accepted": true,
+    "matched": 78,
+    "matched_trials": 192,
+    "matched_null_probability": 0.3333333333333333,
+    "mismatches": 0,
+    "mismatch_trials": 78,
+    "rate": 0.0,
+    "threshold": 0.015625,
+    "margin": 0.015625,
+    "reported_matched": 78,
+    "reported_mismatches": 0,
+    "consistent": true,
+    "recomputed": true,
+    "scored": true
+   },
+   {
+    "party": "Charlie",
+    "outcome": "accepted",
+    "accepted": true,
+    "matched": 62,
+    "matched_trials": 192,
+    "matched_null_probability": 0.3333333333333333,
+    "mismatches": 0,
+    "mismatch_trials": 62,
+    "rate": 0.0,
+    "threshold": 0.0625,
+    "margin": 0.0625,
+    "reported_matched": 62,
+    "reported_mismatches": 0,
+    "consistent": true,
+    "recomputed": true,
+    "scored": true
+   }
+  ],
+  "pooled": {
+   "count": 140,
+   "trials": 384,
+   "null_probability": 0.3333333333333333,
+   "declared_bob": 78,
+   "declared_charlie": 62,
+   "declared_pooled": 140,
+   "declaration_digest_present": true
+  },
+  "links": [],
+  "replay": {
+   "total_refusals": 0,
+   "refusals_by_party": {},
+   "spent_rounds": 2,
+   "distinct_sessions": 1
+  },
+  "aborts": {
+   "total": 0,
+   "structural": 0,
+   "evidence": 0,
+   "by_reason": {},
+   "by_party": {},
+   "shortfalls": {},
+   "honest_bound": 5.421010862427553e-20
+  },
+  "summary": "Bob: accepted, r_R = 0.000000 vs threshold 0.015625, |M_R| = 78 (z = 2.14)\nCharlie: accepted, r_R = 0.000000 vs threshold 0.062500, |M_R| = 62 (z = -0.31)\npooled: pooled_matched_count: 140/384 = 0.364583 vs null Binomial(384, 1/3) mean 128.000000 (z = 1.30, P(|dev| >= this) <= 1.00e+00)\naborts: 0 refusal(s), 0 structural, 0 evidence\nreplay: 0 refusal(s), 2 spent round(s) over 1 session(s)",
+  "transcript_bytes": 44098,
+  "transcript_summary": "QDS run on message bit 0: L=192, |B|=3, s_a=0.01562, s_v=0.06250\nPOOLED EVIDENCE bit 0: m_B = 78, m_C = 62, M = 140 (floors: m_min = 1, M_min = 22). Every floor met.\nBob ACCEPTED bit 0: 0/78 mismatches on matched positions (114 discarded), rate 0.00000 <= 0.01562\nCharlie ACCEPTED bit 0: 0/62 mismatches on matched positions (130 discarded), rate 0.00000 <= 0.06250\nEVIDENCE: M = m_B + m_C = 140 matched records, so P(repudiation | this run) <= 9.623e-01. This is the per-run bound and the only one that assumes nothing about the signer.\nTRANSFERABLE: Bob accepted and Charlie accepted."
+ },
+ "ground_truth": {
+  "attack": "honest",
+  "label": "Honest run",
+  "adversary_present": false,
+  "acted": false,
+  "identical_to_honest": false,
+  "targeted_links": [],
+  "seams_held": [],
+  "detectable": "not-an-attack",
+  "assumption": null,
+  "notes": "No adversary mounted, and a clean link.",
+  "seed": 11,
+  "message_bit": 0,
+  "model_note": "The honest run is the run every null in this package describes. Its false-positive bound is PROVEN under that null; it is not a measurement and not a promise that nothing will fire.",
+  "completed": true,
+  "note": "Everything under this key is the ADVERSARY's own log and the harness's. detect() reads a JSON transcript and nothing else, so none of it reached the verdict beside it.",
+  "link": {
+   "model": "ideal",
+   "description": "an ideal Phi+ resource on both links",
+   "strength": 0.0,
+   "targeted_party": null,
+   "true_error_rate_by_party": {
+    "Bob": 0.0,
+    "Charlie": 0.0
+   },
+   "rate_null_given_to_detector": 0.0,
+   "channel_null_given_to_detector": 0.0,
+   "rate_null_matches_link": true,
+   "channel_null_matches_link": true,
+   "nulls_match_link": true,
+   "note": "The link's true error rate is the ADVERSARY's ground truth and the detector never reads it. detect() is told two nulls, both defaulting to a perfect link: channel_error_rate for the rate family and tolerated_depolarising for the channel family. When either disagrees with the link, an HONEST run departs from a law it was scored against and fires correctly -- that is the null being wrong about the link, not an attack, and both verifiers still accept."
+  }
+ },
+ "timings": {
+  "session_ms": 448.9280999987386,
+  "detect_ms": 4.547299991827458
+ },
+ "error": null
+}
