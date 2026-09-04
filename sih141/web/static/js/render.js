@@ -1797,6 +1797,77 @@ const Render = (function () {
     ]);
   }
 
+  /**
+   * A request the service REFUSED, rendered as the same fourth state.
+   *
+   * `failurePanel` above covers a run that started and did not finish: the
+   * service answers those with 200 and a null body. A request refused by a
+   * cap or by the schema never reaches that path -- it is an HTTP 400 or 422,
+   * `fetch` rejects, and before this existed the only thing that changed was
+   * the status line in the rail. The result area kept the PREVIOUS run on
+   * screen, so a refused `key_length = 5000` left a green NOTHING FIRED
+   * verdict belonging to a run at 1024 sitting under a control panel reading
+   * 5000. That is the failure the cap exists to prevent, arriving by another
+   * door: the API refuses rather than clamping precisely so that no result is
+   * ever shown under the label of parameters that were not run.
+   *
+   * The sentence is the server's, verbatim. The parameters are the ones the
+   * operator typed, echoed back so the panel says what was refused; nothing
+   * here is derived (D8).
+   *
+   * @param {string} message The service's own refusal sentence.
+   * @param {Object} request The control values that were sent.
+   * @returns {HTMLElement}
+   */
+  function refusalPanel(message, request) {
+    const rows = Object.keys(request || {}).map(function (key) {
+      return [key, String(request[key])];
+    });
+    return panel("This run was refused", "not a result of any kind", [
+      h("div", { class: "verdict is-withheld" }, [
+        h("div", { class: "headline" }, [
+          h("span", {
+            class: "glyph",
+            text: STATE.withheld.glyph,
+            attrs: { "aria-hidden": "true" },
+          }),
+          h("span", { text: "NO RUN" }),
+        ]),
+        h("div", {
+          class: "sub",
+          text:
+            "The service refused this request, so no session was generated " +
+            "and nothing was scored. This is NOT a clean run, NOT a " +
+            "detection and NOT a no-verdict. It belongs in no rate at all, " +
+            "and any result previously on this screen belonged to different " +
+            "parameters and has been cleared.",
+        }),
+      ]),
+      h("p", { class: "note", text: message }),
+      h("p", {
+        class: "note",
+        text:
+          "The request is refused rather than quietly run at the nearest " +
+          "allowed value: a screen reporting one run under the label of " +
+          "another is the single easiest way for this dashboard to lie.",
+      }),
+      kv(rows),
+    ]);
+  }
+
+  /**
+   * Clear the stage and say that the request was refused.
+   *
+   * @param {HTMLElement} target
+   * @param {string} message
+   * @param {Object} request
+   * @returns {void}
+   */
+  function refused(target, message, request) {
+    target.textContent = "";
+    target.appendChild(refusalPanel(message, request));
+  }
+
   /* ---------------------------------------------------------------------- *
    * The detector's own words
    * ---------------------------------------------------------------------- */
@@ -1953,13 +2024,19 @@ const Render = (function () {
                 h("caption", {
                   text:
                     "the same decision rule at both sizes; only L differs, " +
-                    "and with it whether the floors mean anything",
+                    "and with it whether the floors mean anything. BOTH " +
+                    "COLUMNS ARE PARAMETER SETS AND NEITHER IS THIS RUN: " +
+                    "the left one is the dashboard's default set at its full " +
+                    "key length. A run that spends positions on check rounds " +
+                    "is scored at its own shorter sifted length, so its " +
+                    "floors and its enforced bound are its own and are on " +
+                    "the transferability panel above.",
                 }),
                 h("thead", {}, [
                   h("tr", {}, [
                     h("th", { text: "" }),
-                    h("th", { class: "numeric", text: "demo" }),
-                    h("th", { class: "numeric", text: "headline" }),
+                    h("th", { class: "numeric", text: "demo default set" }),
+                    h("th", { class: "numeric", text: "headline set" }),
                   ]),
                 ]),
                 h("tbody", {}, [
@@ -2074,6 +2151,7 @@ const Render = (function () {
     kv: kv,
     notSupplied: notSupplied,
     panel: panel,
+    refused: refused,
     run: run,
     token: token,
   };

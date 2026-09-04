@@ -77,6 +77,7 @@ __all__ = [
     "KEY_LENGTH_MIN",
     "LIVE_KEY_LENGTH_MAX",
     "MAX_CONCURRENT_RUNS",
+    "MAX_ERROR_BODY_DEPTH",
     "NOISE_MAX",
     "SEED_MAX",
     "RequestRefused",
@@ -121,6 +122,15 @@ SEED_MAX: Final[int] = 2**32 - 1
 #: and blocking, so this is the real protection: without it a handful of tabs
 #: hammering the run button saturates every core and the demo stops answering.
 MAX_CONCURRENT_RUNS: Final[int] = 2
+
+#: How deep :func:`json_safe` will walk a value before replacing the rest with
+#: a marker. An error body echoes the input that was refused, and that input is
+#: whatever the client sent: ``[`` two thousand times is a body pydantic
+#: rejects correctly and then cannot report, because every encoder between the
+#: rejection and the socket recurses once per level. Bounded far below Python's
+#: own recursion limit, and far above any body this API actually accepts --
+#: the deepest legitimate request is a flat object of scalars.
+MAX_ERROR_BODY_DEPTH: Final[int] = 32
 
 #: The false-positive budget the dashboard offers by default.
 EPS_DEFAULT: Final[float] = 1e-9
@@ -171,7 +181,7 @@ COUNT_EXCHANGE_TIMINGS: Final[tuple[str, str]] = (
 )
 
 
-def json_safe(item: Any) -> Any:
+def json_safe(item: Any, depth: int = 0) -> Any:
     """Return ``item`` when JSON can carry it, and text where it cannot.
 
     An error body's whole job is to name the value that was refused -- and the
@@ -188,17 +198,31 @@ def json_safe(item: Any) -> Any:
     the whole body. Everything JSON already accepts is returned untouched, so
     this is a guard and never a transformation.
 
+    DEPTH is the second way the same error path fails, and it fails for the
+    same reason: the body echoes the input that was refused, and the input is
+    whatever the client chose to send. A body of ``[`` two thousand times is
+    rejected correctly by pydantic -- and then every encoder between that
+    rejection and the socket walks it one stack frame per level, so the
+    :exc:`RecursionError` lands while the refusal is being written and the
+    caller gets a ``500`` for a request that was already properly refused.
+    Anything nested deeper than :data:`MAX_ERROR_BODY_DEPTH` is replaced by a
+    marker naming that depth, which is a truthful report of a body nobody
+    should have sent and cannot itself recurse.
+
     Parameters
     ----------
     item : object
         A candidate for a JSON response body.
+    depth : int, optional
+        Current nesting level, for the recursive walk. Callers pass nothing.
 
     Returns
     -------
     object
         ``item`` unchanged where ``json.dumps(..., allow_nan=False)`` accepts
         it; otherwise the same shape with each unencodable leaf as its
-        ``repr``.
+        ``repr``, and with anything nested deeper than
+        :data:`MAX_ERROR_BODY_DEPTH` replaced by a marker.
 
     Examples
     --------
@@ -213,18 +237,42 @@ def json_safe(item: Any) -> Any:
     {'loc': ['body', 'seed'], 'input': 'nan'}
     >>> json_safe(object())[:7]
     '<object'
+
+    A body far deeper than anything this API accepts is reported rather than
+    walked, and the result is still JSON:
+
+    >>> import json
+    >>> deep = []
+    >>> nest = deep
+    >>> for _ in range(2000):
+    ...     inner = []
+    ...     nest.append(inner)
+    ...     nest = inner
+    >>> nest.append(float("nan"))
+    >>> quoted = json.dumps(json_safe(deep), allow_nan=False)
+    >>> "nested beyond 32 levels" in quoted
+    True
     """
+    if depth >= MAX_ERROR_BODY_DEPTH:
+        return f"<nested beyond {MAX_ERROR_BODY_DEPTH} levels>"
+    # Containers are ALWAYS walked, never probed whole. Probing first and
+    # returning the value untouched when `json.dumps` accepts it is the
+    # obvious shape and it is wrong here: a 200-deep list encodes perfectly
+    # well, so the probe succeeds, the value is handed back at full depth,
+    # and whatever walks it next is the thing that runs out of stack. The
+    # depth bound only means anything if it is applied on the way down.
+    if isinstance(item, dict):
+        return {
+            str(key): json_safe(value, depth + 1)
+            for key, value in item.items()
+        }
+    if isinstance(item, (list, tuple)):
+        return [json_safe(value, depth + 1) for value in item]
     try:
         json.dumps(item, allow_nan=False)
-    except (TypeError, ValueError):
-        pass
-    else:
-        return item
-    if isinstance(item, dict):
-        return {str(key): json_safe(value) for key, value in item.items()}
-    if isinstance(item, (list, tuple)):
-        return [json_safe(value) for value in item]
-    return repr(item)
+    except (TypeError, ValueError, RecursionError):
+        return repr(item)
+    return item
 
 
 class RequestRefused(Exception):

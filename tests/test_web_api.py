@@ -42,6 +42,7 @@ from sih141.web.limits import (
     KEY_LENGTH_MIN,
     LIVE_KEY_LENGTH_MAX,
     MAX_CONCURRENT_RUNS,
+    MAX_ERROR_BODY_DEPTH,
 )
 
 
@@ -462,6 +463,7 @@ def test_no_abuse_of_the_request_surface_produces_a_500(client):
         '"hello"',
         "null",
         "[" * 200 + "]" * 200,
+        "[" * 2_000 + "]" * 2_000,
         '{"attack": "' + "a" * 100_000 + '"}',
     ]
     statuses = set()
@@ -486,6 +488,48 @@ def test_no_abuse_of_the_request_surface_produces_a_500(client):
     ]:
         response = getattr(client, method)(path)
         assert response.status_code < 500, f"{method} {path}"
+
+
+@pytest.mark.parametrize("levels", [200, 2_000, 20_000])
+def test_a_body_too_deep_to_encode_is_refused_and_not_a_500(client, levels):
+    """The refusal must survive being written, however deep the body is.
+
+    The second instance of the bug the non-finite tests above pin, and the
+    same shape: pydantic REFUSES this body correctly -- a list is not an
+    object -- and then the report of that refusal is what broke. FastAPI
+    echoes the offending value back inside ``input``, and every encoder
+    between the rejection and the socket walks it one stack frame per level,
+    so ``jsonable_encoder`` raised :exc:`RecursionError` from inside the
+    handler and a properly refused request came back as ``500``.
+
+    Measured against the live service before the fix: ``[`` 2000 times gave
+    ``500 Internal Server Error`` in 170 ms, with a ``RecursionError`` and a
+    thousand-frame traceback in the log. The existing sweep already carried a
+    200-deep body, which is why it passed: 200 frames fit inside Python's
+    limit and 2000 do not, so the depth is the whole of the test.
+
+    ``json_safe`` now bounds the depth *before* anything else walks the value,
+    which is why the fix is an ordering as much as a guard.
+    """
+    response = client.post(
+        "/api/run",
+        content="[" * levels + "]" * levels,
+        headers={"Content-Type": "application/json"},
+    )
+    # Which of the two refusals arrives depends on how much stack the caller
+    # has left: the JSON parser itself gives up on a deep body (``400``) when
+    # it is close to the limit, and the model validator refuses a list where
+    # an object belongs (``422``) when it is not. Both are correct refusals.
+    # The invariant under test is that neither is a 500 and both are readable.
+    assert response.status_code in (400, 422), response.text[:300]
+    assert "Traceback" not in response.text
+    assert "RecursionError" not in response.text
+    # The body is JSON a client can actually parse, which is the point.
+    json.dumps(response.json(), allow_nan=False)
+    if response.status_code == 422 and levels > MAX_ERROR_BODY_DEPTH:
+        # The validator echoed the offending input; it must come back bounded
+        # rather than at the depth the client chose.
+        assert f"nested beyond {MAX_ERROR_BODY_DEPTH} levels" in response.text
 
 
 # --------------------------------------------------------------------------- #

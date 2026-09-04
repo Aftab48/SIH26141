@@ -1081,6 +1081,119 @@ def test_a_failed_run_is_a_fourth_thing_and_the_screen_says_so(
         )
 
 
+def test_a_refused_request_clears_the_previous_run_from_the_screen() -> None:
+    """A refusal must not leave another run's verdict standing.
+
+    There are two ways a run fails and they arrive by different doors. A run
+    that STARTS and does not finish is answered ``200`` with null bodies and
+    reaches ``failurePanel`` above. A request refused by a cap or by the
+    schema never gets that far: it is an HTTP ``400``/``422``, ``fetch``
+    rejects, and the only handler is the ``catch``.
+
+    That catch used to write the status line and nothing else, so the result
+    area kept rendering the PREVIOUS run. Driving the live service:
+    ``key_length = 5000`` was refused with the right sentence, and the screen
+    went on showing ``NOTHING FIRED``, ``|M| = 265 / 768``, over a control
+    panel reading 5000 -- a verdict from a run at 1024 displayed under the
+    parameters of a run that never happened.
+
+    That is precisely what the cap exists to prevent. ``limits.py`` refuses
+    rather than clamping because "a screen reporting a clamped run under the
+    label of the one that was asked for is the single easiest way for this
+    dashboard to lie", and the screen was doing it anyway by another route.
+    """
+    render = (STATIC / "js" / "render.js").read_text(encoding="utf-8")
+    app = (STATIC / "js" / "app.js").read_text(encoding="utf-8")
+
+    assert "function refusalPanel(" in render, (
+        "the refusal panel is gone; a refused request would fall back to "
+        "leaving the previous run on screen"
+    )
+    assert "refused: refused," in render, "Render.refused is not exported"
+
+    block = re.search(r"function refused\(target, message, request\) \{(.*?)\n  \}",
+                      render, re.S)
+    assert block is not None, "Render.refused is not defined"
+    assert 'target.textContent = "";' in block.group(1), (
+        "Render.refused does not clear the stage, so the previous run's "
+        "panels stay on screen underneath the refusal"
+    )
+
+    panel = re.search(r"function refusalPanel\(message, request\) \{(.*?)\n  \}",
+                      render, re.S)
+    assert panel is not None
+    body = panel.group(1)
+    assert "STATE.withheld.glyph" in body, (
+        "the refusal no longer uses the fourth state's glyph, so it is not "
+        "visually distinct from a verdict"
+    )
+    assert '"NO RUN"' in body
+    joined = re.sub(r'"\s*\+\s*"', "", body)
+    for phrase in (
+        "NOT a clean run",
+        "NOT a detection",
+        "belongs in no rate",
+        "has been cleared",
+    ):
+        assert phrase in joined, f"the refusal panel lost the phrase {phrase!r}"
+
+    # And EVERY failure path actually calls it. Both of them render into the
+    # same stage, so both can leave another run's numbers standing: the live
+    # run, and the recorded loader -- which is the one that runs when the
+    # service has died, i.e. exactly when nobody can check the screen against
+    # anything else.
+    catches = re.findall(r"\.catch\(function \(error\) \{(.*?)\n      \}\)",
+                         app, re.S)
+    assert len(catches) == 2, (
+        f"expected the two stage-rendering failure paths, found "
+        f"{len(catches)}. A new one that only writes the status line would "
+        f"leave the previous run on screen."
+    )
+    for body_of_catch in catches:
+        assert "Render.refused(" in body_of_catch, (
+            "a failure path does not clear the stage; a refused request "
+            "would leave the previous run's numbers under the new parameters"
+        )
+
+
+def test_the_masthead_stops_claiming_a_live_api_when_the_api_dies() -> None:
+    """The mode chip is decided at start-up, and demos fail mid-flight.
+
+    ``RECORDED ONLY — API NOT REACHABLE`` is painted once, when the page loads
+    and ``/api/attacks`` cannot be reached. A service that dies DURING a
+    demonstration therefore left the masthead reading ``LIVE API`` with the
+    process gone -- verified by killing the server with the page open: the run
+    failed with ``Failed to fetch``, the stage correctly showed ``NO RUN``, and
+    the chip still said ``LIVE API``.
+
+    The two failures have to stay distinguishable, which is the whole reason
+    this is a condition and not an unconditional repaint. ``getJson`` raises
+    ``HTTP <status> ...`` when the server ANSWERED -- a ``400`` from a cap or a
+    ``503`` from the run gate is the service working exactly as designed -- and
+    anything else means the fetch itself failed. Repainting on an HTTP error
+    would tell the room the API is gone every time somebody typed a key_length
+    over the ceiling.
+    """
+    app = (STATIC / "js" / "app.js").read_text(encoding="utf-8")
+    assert 'chip.textContent = "RECORDED ONLY' in app, (
+        "the mode chip no longer has a not-reachable state"
+    )
+    assert 'error.message.indexOf("HTTP ") !== 0' in app, (
+        "the failure path no longer distinguishes a server that answered "
+        "from a server that is not there, so either a cap refusal claims the "
+        "API is dead or a dead API keeps claiming to be live"
+    )
+    # The repaint has to be inside the guard, not beside it.
+    guard = re.search(
+        r'if \(error\.message\.indexOf\("HTTP "\) !== 0\) \{(.*?)\n        \}',
+        app,
+        re.S,
+    )
+    assert guard is not None, "the guard is gone"
+    assert 'state.mode = "recorded";' in guard.group(1)
+    assert "paintMode();" in guard.group(1)
+
+
 def test_a_detected_run_can_also_carry_a_no_verdict(
     recordings: dict[str, dict[str, Any]]
 ) -> None:
@@ -1660,7 +1773,7 @@ def test_charts_are_labelled_for_a_reader_who_cannot_see_them() -> None:
 def test_projector_mode_scales_type_and_nothing_else() -> None:
     """A demo control that changed a number would be the worst kind of bug."""
     css = (STATIC / "css" / "app.css").read_text(encoding="utf-8")
-    block = re.search(r"body\.projector \{(.*?)\}", css, re.S)
+    block = re.search(r":root\.projector \{(.*?)\}", css, re.S)
     assert block is not None, "projector mode is not defined"
     declarations = [
         line.strip()
@@ -1672,3 +1785,46 @@ def test_projector_mode_scales_type_and_nothing_else() -> None:
     )
     code = (STATIC / "js" / "app.js").read_text(encoding="utf-8")
     assert "classList.toggle(\"projector\")" in code
+
+
+def test_projector_mode_sets_the_variable_where_it_is_actually_read() -> None:
+    """The toggle must move the page, and the old test could not tell.
+
+    This shipped inert. ``body.projector { --scale: 1.28 }`` set the variable
+    on ``<body>``, while the rule that spends it is ``html { font-size:
+    calc(16px * var(--scale)) }`` on the PARENT element. A custom property
+    inherits downwards only, so ``html`` kept resolving ``--scale`` to the
+    ``:root`` value of ``1``; every ``rem`` on the page is the root font-size,
+    so nothing whatsoever changed. Measured in a browser before the fix: the
+    document was 5563 px tall with projector mode on and 5563 px tall with it
+    off.
+
+    The previous test read the declaration and passed, because a rule's text
+    says nothing about which element ends up reading it. So this asserts the
+    join: the selector that SETS ``--scale`` and the selector that SPENDS it
+    both have to match the root element.
+    """
+    css = (STATIC / "css" / "app.css").read_text(encoding="utf-8")
+    setters = re.findall(r"([^{}]+)\{[^{}]*--scale:\s*1\.28", css)
+    assert setters, "nothing sets the projector type scale any more"
+    for selector in setters:
+        assert re.search(r"(^|\s):root\.projector\s*$", selector), (
+            f"projector mode sets --scale on {selector.strip()!r}. It has to "
+            f"be the root element: the rule that reads --scale matches "
+            f"<html>, and a custom property never reaches a parent."
+        )
+
+    spenders = re.findall(r"([^{}]+)\{[^{}]*var\(--scale\)", css)
+    assert spenders, "nothing reads --scale, so the toggle cannot do anything"
+    for selector in spenders:
+        assert re.search(r"(^|\s)(html|:root)\s*$", selector.strip()), (
+            f"--scale is spent in a rule matching {selector.strip()!r}. Every "
+            f"size on this page is a rem, so it has to be the root font-size "
+            f"that moves, or the toggle only scales part of the screen."
+        )
+
+    code = (STATIC / "js" / "app.js").read_text(encoding="utf-8")
+    assert 'document.documentElement.classList.toggle("projector")' in code, (
+        "the toggle no longer puts the class on the root element, so the "
+        "CSS above sets --scale where the html rule cannot read it"
+    )

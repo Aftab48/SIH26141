@@ -76,7 +76,13 @@
   --radius: 3px;
 }
 
-body.projector {
+/* Projector mode. The class goes on the ROOT element and not on <body>,
+ * because the rule that consumes `--scale` is the `html` rule below: a custom
+ * property set on a child never reaches its parent, so `body.projector` here
+ * would leave `html`'s font-size at its unscaled value and the toggle would
+ * do nothing at all. Everything sizes off `rem`, and `rem` is the root
+ * font-size, so the setter and the consumer have to be the same element. */
+:root.projector {
   --scale: 1.28;
 }
 

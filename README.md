@@ -258,10 +258,9 @@ Phase 3 constraint 4 and it is caught by a *type* rather than by a number that h
 out right — `NoVerdictCount` refuses `+` with anything but another `NoVerdictCount`, so
 `rejected + refused` and `sum(...)` both raise.
 
-Full suite: **3036 passed, 0 failed, 0 skipped** — up from `2174` at the end of Phase 3 and
-`1421` at the end of Phase 2. Wall clock `2274 s` on this machine, measured while other
-verification scripts were running, so treat it as an upper bound; the load-bearing figure is
-`3036 / 3036`.
+Full suite: **3338 passed, 0 failed, 0 skipped** — up from `3036` at the end of Phase 4, `2174`
+at the end of Phase 3 and `1421` at the end of Phase 2. Wall clock about `1310 s` (21:50) on
+this machine; the load-bearing figure is `3338 / 3338`.
 
 ## Roadmap
 
@@ -273,15 +272,19 @@ verification scripts were running, so treat it as an upper bound; the load-beari
 | 3 | Attack suite — the four adversaries above, plus count starvation and realistic channel noise | ✅ Complete |
 | 4 | Detection engine — QBER, CHSH, mismatch statistics, **derived** thresholds and a family-wise bound | ✅ Complete |
 | 5 | Evaluation — forgery probability vs. key length, ROC, FAR/FRR, benchmarks | ⬜ |
-| 6 | Web dashboard — live attack/detection demo | ⬜ |
+| 6 | Web dashboard — live attack/detection demo | ✅ Complete |
+| 7 | Submission docs — mathematical modelling and security analysis | ⬜ |
 
-> **Phase 6 is built before Phase 5 runs.** The numbers are the phase order; the work order is
-> 4 → 6 → 5 → 7. Phase 6 depends only on `Detection.to_dict()`, which Phase 4 froze, so it is
+> **Phase 6 was built before Phase 5 runs.** The numbers are the phase order; the work order is
+> 4 → 6 → 5 → 7. Phase 6 depends only on `Detection.to_dict()`, which Phase 4 froze, so it was
 > not waiting on anything — while Phase 5's production sweep is a long unattended run whose
 > results only Phase 7 consumes. Building the dashboard first means the thing a reviewer
 > actually looks at exists early, and the sweep can then run without blocking anyone. Phase 7
 > is last either way, because it publishes Phase 5's numbers.
-| 7 | Submission docs — mathematical modelling and security analysis | ⬜ |
+>
+> **The dashboard therefore reports no evaluation results, and says so on the screen.** It
+> demonstrates a live run; it does not present a study. The one table of measured rates on the
+> page is labelled *"not a Phase 5 result — a Phase 4 calibration"*.
 
 > **Note on scope.** The published problem statement ends with an unfilled placeholder where
 > the organization's deliverables table should be (*"Add 'Delivery Table (Expected
@@ -295,6 +298,34 @@ Requires Python 3.11+. Verified on Python 3.14.4 / Windows 11.
 ```bash
 pip install -r requirements.txt
 ```
+
+## Running the dashboard
+
+One process serves the JSON API and the frontend. No Node, no bundler, no build step.
+
+```bash
+python -m sih141.web
+```
+
+Then open the address it prints — `http://127.0.0.1:8141`. `--host` and `--port` change it;
+the default is loopback rather than `0.0.0.0` because this server runs unauthenticated quantum
+simulation on request, so exposing it on a venue network should be a deliberate act.
+
+**Nothing is fetched from a network, ever.** Every asset is vendored: 26 files, 486 KB, only
+`.html`, `.css`, `.js` and `.json`. No chart library, no web font, no CDN — the charts are
+hand-rolled SVG. There is exactly one `fetch()` call site in the frontend and every path it is
+given is root-relative, so no request can leave the origin; the test suite scans the *contents*
+of every served file to keep it that way. A demo that dies on unreachable venue wifi is the
+worst possible failure, and this one cannot.
+
+Live runs are capped at `key_length = 1024`, and a longer request is **refused, never clamped**
+— a screen reporting a clamped run under the label of the one that was asked for is the easiest
+way for a dashboard to lie. At the default `L = 192` a click returns a verdict in about
+**0.43 s**; at the ceiling, about **2.3 s**. The security-grade set `L = 115200` is roughly four
+minutes a session and is published as closed forms rather than run.
+
+Full details, the eight things the screen must not misstate and how each is rendered, the
+measured latencies, and the three defects integration found: [`docs/PHASE6.md`](docs/PHASE6.md).
 
 ## Running the tests
 
@@ -352,6 +383,17 @@ sih141/detect/     the detection engine (Phase 4)
                    zero
   detector.py      the composite rule, the allocation of the budget over the three
                    families, and the union bound that recombines them
+
+sih141/web/        the dashboard (Phase 6) — one FastAPI process, both halves
+  __main__.py      the one command: python -m sih141.web
+  api.py           create_app(), six endpoints, the concurrency gate
+  limits.py        every cap the UI can send, and the refusals that name them
+  driver.py        mounts an adversary, runs a session, keeps the harness's
+                   ground truth in its own object where the detector cannot read it
+  catalogue.py     the attack roster, each row stating its detectability explicitly
+  payload.py       the transcript facts the screen needs
+  static/          the frontend — 26 vendored files, nothing fetched from a network
+
 tests/             pytest suite
 docs/              engineering notes per phase
 ```

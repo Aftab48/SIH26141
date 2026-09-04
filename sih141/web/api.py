@@ -500,11 +500,20 @@ def create_app(static_dir: Path | None = None) -> FastAPI:
         turned a correct schema rejection into ``500 Internal Server Error``.
         Every leaf goes through :func:`~sih141.web.limits.json_safe`, so the
         value is named as text and the refusal survives being serialised.
+
+        ``json_safe`` runs FIRST and ``jsonable_encoder`` second, which is the
+        whole of the fix for the second version of this bug. A body of ``[``
+        two thousand times is refused correctly by pydantic and echoed back
+        inside ``input``; ``jsonable_encoder`` then walks it one stack frame
+        per level and raised :exc:`RecursionError` from inside this handler,
+        so a properly refused request came back as ``500``. ``json_safe``
+        bounds the depth before anything else walks the value, so the encoder
+        only ever sees a structure it can survive.
         """
         del request
         return JSONResponse(
             status_code=422,
-            content={"detail": json_safe(jsonable_encoder(invalid.errors()))},
+            content={"detail": jsonable_encoder(json_safe(invalid.errors()))},
         )
 
     @app.get("/api/health")

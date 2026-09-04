@@ -353,6 +353,12 @@ const App = (function () {
         window.scrollTo(0, 0);
       })
       .catch(function (error) {
+        // Same rule as a refused live run: clear the stage. This is the path
+        // that runs when the service has died, which is exactly when nobody
+        // in the room can check what is on screen against anything else.
+        Render.refused(document.getElementById("stage"), error.message, {
+          recorded_run: entry.file,
+        });
         setStatus(`could not load ${entry.file}: ${error.message}`, "failed");
       });
   }
@@ -416,7 +422,25 @@ const App = (function () {
         setStatus("live run complete", "");
       })
       .catch(function (error) {
+        // Clear the stage as well as the status line. A refusal that only
+        // wrote to the rail left the previous run's verdict on screen under
+        // the new parameters, which is the one thing the caps exist to stop.
+        Render.refused(
+          document.getElementById("stage"),
+          error.message,
+          body
+        );
         setStatus(`the run was refused or failed — ${error.message}`, "failed");
+        // The mode is decided once at start-up, so a service that dies DURING
+        // a demonstration left the masthead reading LIVE API while the API was
+        // gone. `getJson` throws "HTTP <status> ..." when the server answered
+        // and something else when the fetch itself failed, so the two cases
+        // are distinguishable: a 400 cap refusal or a 503 from the run gate is
+        // the service working, and only a failed fetch means it is not there.
+        if (error.message.indexOf("HTTP ") !== 0) {
+          state.mode = "recorded";
+          paintMode();
+        }
       })
       .then(function () {
         state.busy = false;
@@ -448,6 +472,11 @@ const App = (function () {
   /**
    * Wire the projector-mode toggle. It changes one CSS variable and no number.
    *
+   * The class goes on the ROOT element. `--scale` is read by the `html` rule
+   * that sets the root font-size, and a custom property set on `<body>` is
+   * invisible to a rule matching `<html>`, so toggling the class on the body
+   * sets the variable somewhere nothing reads it and the page does not move.
+   *
    * @returns {void}
    */
   function wireProjector() {
@@ -456,7 +485,7 @@ const App = (function () {
       return;
     }
     button.addEventListener("click", function () {
-      const on = document.body.classList.toggle("projector");
+      const on = document.documentElement.classList.toggle("projector");
       button.setAttribute("aria-pressed", on ? "true" : "false");
     });
   }

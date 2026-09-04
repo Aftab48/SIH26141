@@ -8,7 +8,7 @@
 > on the maintainer's explicit instruction. The permanent record is
 > `docs/METRICS.md` and the `docs/PHASE*.md` notes.
 
-**170 entries** — 42 finding · 40 decision · 30 note · 28 issue · 27 fix · 3 deadend
+**174 entries** — 43 finding · 40 decision · 31 note · 29 fix · 28 issue · 3 deadend
 
 
 ## Phase 0 — Scaffold
@@ -7356,3 +7356,340 @@ WHAT REMAINS UNDONE is most of the integrator's brief: the deliverable has still
 one FastAPI process on 8141, no-network has not been verified, the honest-baseline-over-a-noisy-
 link case has not been looked at on a real screen, and docs/PHASE6.md does not exist. The
 re-run is told what this round already achieved so it does not repeat it.
+
+### `[+]` Three defects the tests could not see: an inert control, a 500 on a deep body, a stale verdict
+
+*fix · integrate:phase6 · 2026-09-04T06:01:56Z*
+
+Three defects, found by running the thing rather than by reading it, and all three
+shipped with a GREEN TEST OVER THE EXACT FEATURE. That is the pattern worth the entry:
+each test asserted the TEXT of the mechanism and none asserted its EFFECT, and a test
+that reads a declaration cannot see whether anything consumes it.
+
+1. PROJECTOR MODE WAS COMPLETELY INERT
+`Projector mode` is the control for a big room, and it did nothing at all.
+
+    body.projector { --scale: 1.28; }        /* the setter, on <body>   */
+    html { font-size: calc(16px * var(--scale)); }   /* the reader, on <html> */
+
+A custom property inherits DOWNWARDS. A rule matching `html` resolves `--scale` on the
+`html` element, where it is always the `:root` value of `1`; the value set on `<body>`
+is invisible to its own parent. Every size on the page is a `rem`, and `rem` is the root
+font-size, so the one variable that was supposed to move the whole page moved nothing.
+
+Measured in the browser before the fix: document height 5563 px with projector mode ON
+and 5563 px with it OFF. Identical. `aria-pressed` flipped, the class landed, and the
+page did not move a pixel.
+
+The fix is the class on the ROOT element -- `:root.projector` in the CSS and
+`document.documentElement.classList.toggle` in the JS -- so the element that sets the
+variable is the element that spends it. After: 16px -> 20.48px, exactly 16 x 1.28, and
+5607 -> 7983 px, returning cleanly on the second toggle.
+
+WHY THE TEST PASSED. `test_projector_mode_scales_type_and_nothing_else` read the CSS
+block and asserted it contained exactly `--scale: 1.28;`. It did. The declaration was
+correct and the cascade was wrong, and the text of a rule says nothing about which
+element ends up reading it. The new test asserts the JOIN: the selector that SETS
+`--scale` and the selector that SPENDS it must both match the root.
+
+AND THE THING THAT MATTERED MOST: the fix changes no number. Verified by capturing all
+185 rendered numbers on a live run with the toggle off, toggling, and capturing again --
+byte-identical. That was the property the original test was really protecting, and it is
+now checked against the rendered page rather than against the stylesheet.
+
+2. A DEEPLY NESTED BODY WAS A 500 -- THE REFUSAL, AGAIN, NOT THE VALIDATION
+Exactly the shape of the NaN bug this phase already fixed, one layer further out, and
+found the same way: by sending it rather than by reading the validator.
+
+    POST /api/run   body: "[" * 2000 + "]" * 2000     ->  500 in 170 ms
+
+pydantic REFUSES this correctly -- a list is not an object. FastAPI then echoes the
+offending value back inside `input`, and `jsonable_encoder` walks it one stack frame per
+level. `RecursionError` landed inside the app's own `RequestValidationError` handler,
+and a request that had been properly refused a microsecond earlier came back as 500 with
+a thousand-frame traceback in the log.
+
+THE FIX IS AN ORDERING AS MUCH AS A GUARD. `json_safe` now takes a depth and stops at
+`MAX_ERROR_BODY_DEPTH = 32`, and `_invalid` calls `jsonable_encoder(json_safe(errors))`
+rather than `json_safe(jsonable_encoder(errors))`, so the depth is bounded before
+anything else walks the value.
+
+A WRONG FIRST ATTEMPT, KEPT BECAUSE IT IS THE INTERESTING PART. The obvious shape --
+probe with `json.dumps` first and return the value untouched when it encodes -- is
+wrong here, and it passed the 2000-deep case while breaking the 200-deep one. A 200-deep
+list encodes perfectly well, so the probe SUCCEEDS, the value is handed back at full
+depth, and whatever walks it next is what runs out of stack. A depth bound only means
+anything if it is applied on the way DOWN. Containers are now always walked and only
+scalars are probed.
+
+Afterwards, live: depth 200 -> 422, depth 2000 -> 422 (232 bytes, marker
+`<nested beyond 32 levels>` in place of the tail), depth 20000 and 100000 -> 400 from
+the JSON parser itself. Which of 400 and 422 arrives depends on how much stack the
+caller has left, so the test asserts `in (400, 422)` and pins the invariant that matters:
+never a 500, never a traceback, always parseable JSON.
+
+The existing sweep already carried a 200-deep body, which is exactly why it passed: 200
+frames fit inside Python's limit and 2000 do not. The depth WAS the test.
+
+3. A REFUSED REQUEST LEFT THE PREVIOUS RUN'S VERDICT ON THE SCREEN
+The worst of the three, because it is a false statement rather than a dead control.
+
+Type `key_length = 5000`, press Run. The service refuses with the right sentence. The
+status line in the rail says so. And the result area goes on showing the PREVIOUS run:
+`NOTHING FIRED`, `|M| = 265 / 768`, a proven bound, a green verdict -- numbers from a
+run at L = 1024, displayed underneath a control panel reading 5000.
+
+That is precisely what the cap exists to prevent, arriving by another door. `limits.py`
+refuses rather than clamping because, in its own words, "a screen reporting a clamped
+run under the label of the one that was asked for is the single easiest way for this
+dashboard to lie" -- and the screen was doing it anyway, with numbers from a run the
+operator could no longer see the parameters of.
+
+THE CAUSE IS A SEAM BETWEEN TWO FAILURE MODES that arrive by different doors. A run that
+STARTS and does not finish is answered 200 with null bodies, and `failurePanel` renders
+the NO RUN fourth state -- built, tested, working. A request refused by a cap or the
+schema never reaches it: it is a 400/422, `fetch` rejects, and the `catch` only wrote the
+status line. `Render.refused` now clears the stage and renders the same fourth state,
+carrying the server's own sentence and the parameters that were refused.
+
+THE SAME BUG WAS IN THE RECORDED-RUN LOADER, found by fixing the first one and reading
+the other `catch`. A recorded fixture that fails to load also left the previous run
+standing -- and that is the path that runs when the SERVICE HAS DIED, which is exactly
+when nobody in the room can check the screen against anything else. Both are fixed, and
+the test asserts there are exactly two stage-rendering failure paths and that both clear
+the stage, so a third one added later has to be handled too.
+
+WHAT CONNECTS ALL THREE. Every one of them was covered by a passing test, and every one
+of those tests asserted that a string was present in a file. That is the right check for
+"did someone delete the panel" and it is no check at all for "does the panel work". The
+three replacements assert an effect: the variable is read by the element that sets it,
+the refusal survives being serialised at any depth, and the stage is cleared on every
+path that can fail. None of the three could have been found by reading the code, and all
+three took minutes to find by driving the running service.
+
+### `[-]` The deliverable runs: eleven adversaries live, the eight constraints walked, no-network four ways
+
+*note · integrate:phase6 · 2026-09-04T06:08:05Z*
+
+THE DELIVERABLE NOW RUNS. One FastAPI process on 8141 serving both halves, driven in a real
+browser rather than through TestClient. Every asset resolved 200 under the real mount, which
+is the seam the frontend flagged and could not check: `python -m http.server` over the static
+directory serves relative paths perfectly and the real service 404s them, and the MIME types
+differ too. Confirmed right here: `text/css`, `text/javascript`, eleven assets, no 404.
+
+ALL ELEVEN ADVERSARIES DRIVEN LIVE, by clicking the radio and the Run button:
+
+    honest                       NOTHING FIRED     accepted  / accepted
+    outside-forgery              DETECTED (2)      rejected  / rejected
+    recipient-forgery            DETECTED (1)      accepted  / NO VERDICT
+    impersonation-partial        DETECTED (2)      rejected  / rejected
+    impersonation-full           NOTHING FIRED     accepted  / accepted     (AUTH)
+    replay                       DETECTED (1)      accepted  / NO VERDICT
+    channel-manipulation         NOTHING FIRED     accepted  / accepted     did not act
+    count-starvation             DETECTED (2)      NO VERDICT / accepted
+    impersonation-distribution   DETECTED (2)      rejected  / rejected
+    channel-intercept-resend     DETECTED (8)      rejected  / rejected
+    channel-kept-share           DETECTED (9)      rejected  / accepted
+
+Two of those are worth reading twice. `channel-manipulation` at the DEFAULT controls has
+`noise = 0`, so the ground-truth box says "did it act? no -- it was mounted and did nothing on
+this run" and nothing fires. That is the right answer and not a miss, and an operator
+demonstrating that arm live has to raise `noise` first. And `channel-kept-share` touches only
+Bob's links, and Charlie still accepts -- the per-link chart is the only reading that shows it.
+
+THE TWO CASES THE BRIEF SAID TO SPEND REAL EFFORT ON, both confirmed on the running screen.
+
+THE NOISY HONEST RUN. `honest`, `noise = 0.03125`, `channel_error_rate = 0.0`: the detector
+fires two signals and the headline goes red. Directly beneath it, a red-ruled banner -- THE
+NULL IS NOISELESS / THIS RUN FIRED, AND IT WAS SCORED AGAINST THE NOISELESS NULL / Read the
+ground-truth box before reading this as an adversary -- and the banner is ADAPTIVE: on a clean
+run it says the nulls do match the link; here it says "the harness confirms the nulls do NOT
+match the link, and that no adversary is mounted. What fired is the null being wrong about the
+wire." The ground-truth box says `do the nulls match the link? NO -- the wire departs from the
+law the detector was given`. The attribution table says `honest: RULED OUT`, which is the
+detector being correct about a null it was handed and wrong about the world, and the box beside
+it says so. Passing the true rate back in: nothing fires, and the banner changes to the
+informational `THE NULL CARRIES THE LINK'S ERROR RATE`. The constraint holds in both directions.
+
+THE ABORT. `count-starvation` at L = 192, the default (the RECORDED count-starvation run is
+the L = 384 one; this was live at the controls' own defaults). Bob's chip is violet, dashed, `NO VERDICT`; Charlie's
+is teal, solid, `ACCEPTED`; the DETECTOR panel independently says DETECTED. Every other surface
+agrees: the floors chart renders Bob as "denied the evidence -- nothing to plot" rather than a
+zero bar, the pooled count as "NO POOLED COUNT -- that is an absent number, not a zero", and a
+dedicated banner says it "must not be counted as a detection, must not be counted as a miss,
+and must not appear in the denominator of any rate". Nothing folds it into anything.
+
+CONSTRAINT 6 IS NOT THE GAP THE BRIEF THOUGHT. Two tests pin it and they are thorough --
+`test_the_timing_is_a_label_and_never_a_thing_summed_over` asserts the panel exists, renders
+both `detection.grouping_key` and `run.count_exchange_timing`, and carries its three sentences;
+its docstring divides the labour exactly ("the D8 scanner guarantees the browser CANNOT pool...
+what nothing asserted is that the screen SAYS so... a panel can be deleted without a scanner
+noticing"). The brief was written from a reading of test names that predates the frontend's
+final edits. Nothing was added.
+
+NO-NETWORK, AND WHAT I DID NOT DO. Four checks. An independent content scan of all 26 served
+files for sixteen patterns found exactly three hits, all benign and all read by hand: one
+`http:` (the SVG namespace URI, which the DOM requires as a string and never fetches), one
+`@import` inside a comment saying there is no `@import`, and one real `url(` which is
+`url(#hatchId)`, a same-document SVG fragment. Structurally there is ONE `fetch()` call site in
+4,509 lines of JavaScript and every path handed to it is root-relative, so no request CAN leave
+the origin. Empirically, after a hard reload plus a recorded run, a live run and a projector
+toggle, `performance.getEntriesByType('resource')` reports 11 resources from exactly one origin,
+30.9 KB.
+
+I did NOT disable the network adapter or add a firewall rule: those are system and security
+settings. The claim rests on the structural argument instead, which I think is the stronger one
+anyway -- it is not that no request happened to leave, it is that with a single fetch site and
+only root-relative paths there is no code path that could reach a network. Saying which check
+was actually run matters more than the reassurance.
+
+ABUSE, 73 HOSTILE REQUESTS, ZERO 500s after the deep-body fix. The concurrency gate is the part
+worth recording: twelve simultaneous runs at the ceiling gave exactly two 200s and ten 503s,
+the refusals arriving in 195-308 ms rather than being queued. Queuing would be worse than
+refusing -- it turns a button press into an unbounded wait with a spinner and no explanation.
+Traversal, wrong methods, 8 MB bodies, bad content types, 64 KB headers and mid-run RSTs all
+behaved. One limitation recorded rather than fixed: a request declaring a large Content-Length
+and sending nothing holds its connection until the client gives up, because uvicorn applies no
+read timeout. It ties up a connection and NOT a run slot -- the gate is acquired after the body
+is read -- and behind any real deployment that is the proxy's job.
+
+A related thing worth knowing: a client that disconnects mid-run does not cancel the run. The
+session continues to completion and holds its slot. Bounded (2 slots, ~2.3 s each at the
+ceiling) and self-healing, but a hostile client can keep both busy.
+
+LATENCY. Page load 318 ms cold, 11 resources, 30.9 KB, nothing to block on. Click to verdict in
+the browser: L=24 72 ms, L=96 229 ms, L=192 433 ms, L=384 1188 ms, L=768 1813 ms, L=1024
+2341 ms. Detection is ~1% of it at every length; session generation is the whole cost, linear
+at about 2.2 ms per position. The RESPONSE is flat at ~17 KB however long the run, because the
+transcript stays on the server -- the 332 KB transcript at L=1024 never crosses the wire. L=384
+is the largest length that stays comfortably interactive. Nothing starts silently: the status
+line echoes the exact parameters the instant the button is pressed and the button disables for
+the duration.
+
+ONE LABELLING AMBIGUITY FIXED, not a defect but a thing a judge would probe. The headline panel
+compared a DEMO column against a HEADLINE column, and the demo column is
+`/api/defaults.bounds.demo` -- a fixed parameter set that does not track the controls. So at
+L=192 the screen carried "enforced repudiation bound 9.9890e-01" on the run's own panel and
+"enforced repudiation bound 9.9398e-01" in the demo column, both labelled the same way, both
+apparently at L=192. Both are correct and they are different quantities: the run's is computed
+at its own SIFTED length after check rounds, the column's at the default set's full key length.
+Nothing was derived in the browser and D8 was never in question -- it was two API numbers with
+one name. The caption now says BOTH COLUMNS ARE PARAMETER SETS AND NEITHER IS THIS RUN and the
+headers read "demo default set" and "headline set".
+
+### `[+]` The masthead claimed a live API after the process died, and the sentence for it had never been reachable
+
+*fix · integrate:phase6 · 2026-09-04T06:14:13Z*
+
+A fourth defect, found only because I went looking for the FAILURE MODE OF THE FIX rather than
+stopping at the fix. Worth its own entry for that reason more than for its size.
+
+Having made a refused request clear the stage, the obvious next question is what the screen does
+under the failure the feature actually exists for -- not a bad parameter, but the SERVICE DYING
+MID-DEMONSTRATION. So I killed the server with the page open and pressed Run.
+
+    stage        NO RUN, previous verdict cleared        correct, and the new behaviour
+    status line  "the run was refused or failed â€” Failed to fetch"   correct
+    masthead     LIVE API                                            WRONG
+
+The mode chip is painted ONCE, at start-up, when `/api/attacks` cannot be reached. That makes it
+right when the page is loaded against a service that is already dead, and wrong in the one case
+it was designed for: a service that dies while the page is open. The masthead was telling the
+room the API was live while the process was gone.
+
+FIXING IT ALSO UNLOCKED A FEATURE THAT COULD NEVER FIRE. `startLiveRun` already began with
+
+    if (state.mode !== "live") {
+      setStatus("the API is not reachable, so no live run can be started. The
+                 recorded runs below still work.", "failed");
+
+and that branch was unreachable after start-up, because nothing ever moved `state.mode`. The
+sentence was written for exactly this moment and had never been shown to anybody.
+
+THE GUARD IS THE WHOLE DESIGN. Repainting on any failure would be worse than not repainting at
+all: a `400` from a cap or a `503` from the run gate is the service WORKING, and announcing
+"API NOT REACHABLE" every time somebody typed a key_length over the ceiling would be a false
+alarm in front of judges. The two cases are distinguishable because `getJson` throws
+`HTTP <status> ...` when the server answered and something else when the fetch itself failed:
+
+    if (error.message.indexOf("HTTP ") !== 0) { state.mode = "recorded"; paintMode(); }
+
+Verified in all three states rather than the one I changed: service alive -> LIVE API; cap
+refusal -> still LIVE API with NO RUN on the stage; process killed -> RECORDED ONLY â€” API NOT
+REACHABLE, and the second click reaches the unreachable sentence.
+
+(`indexOf` rather than a regular expression because the D8 scanner forbids regex literals in
+the frontend, and `!== 0` because it forbids arithmetic operators outside the chart geometry.
+Both constraints pushed toward the plainer code, which is a nice thing to be able to report.)
+
+AND THE THING THAT MATTERS MOST FOR THE DEMONSTRATION: with the process dead and the page open,
+all thirteen recorded runs still render from the browser's cache, ~175 ms each, and a live run
+attempt says NO RUN rather than showing a stale result. The claim in the walk-through -- "if the
+service dies mid-demonstration the masthead flips and all thirteen runs keep working from the
+repo" -- is now true. Half of it was.
+
+THE PATTERN, SINCE THIS IS THE FOURTH TIME THIS PHASE. Every one of these was covered by a
+passing test that asserted a STRING WAS PRESENT IN A FILE. That is the right check for "did
+somebody delete this panel" and it is no check at all for "does this panel work". The four
+replacements assert an EFFECT instead -- the CSS variable is read by the element that sets it,
+the refusal survives serialisation at any depth, the stage is cleared on every path that can
+fail, and the chip distinguishes a server that answered from a server that is not there. Three
+of the four were found in the first twenty minutes of driving the running service, and none of
+them was findable by reading the code.
+
+### `[*]` A guarantee asserted and never enforced: the MEASURED chip's sample size is optional
+
+*finding · integrate:phase6 · 2026-09-04T06:32:40Z*
+
+A claim in this project's own record that is false about the mechanism and true about the
+output, found by checking a sentence I was about to repeat in docs/PHASE6.md.
+
+THE CLAIM, from the build stage's journal entry on constraint 2:
+
+    MEASURED is a DASHED amber chip that cannot be rendered without a sample size,
+    because the sample size is a required argument.
+
+THE CODE, render.js:179:
+
+    function measured(value, sample) {
+      return h("span", { class: "num num-measured" }, [
+        h("span", { class: "kind", text: "measured" }),
+        h("span", { class: "value", text: value }),
+        sample ? h("span", { class: "qual", text: sample }) : null,
+      ]);
+    }
+
+`sample` is optional and the qualifier is rendered conditionally. A caller passing none gets a
+MEASURED chip with no sample size, silently. Nothing throws and no test objects.
+
+WHY NOTHING IS WRONG ON THE SCREEN TODAY. All five call sites pass a sample -- the calibration
+table passes "runs", the two timing panels pass "session, 1 run" / "detect, 1 run" and "ms, 1
+run" -- and I read them off the live page: `0 / 30 runs`, `203 ms, 1 run`. So constraint 2 is
+satisfied in fact. What does not exist is the thing the sentence asserted: an enforcement.
+
+WHY IT IS WORTH AN ENTRY RATHER THAN A SHRUG. The whole point of writing "the sample size is a
+REQUIRED ARGUMENT" is that it converts a convention into a guarantee. Saying it without doing it
+is worse than not saying it, because the next person reads the sentence instead of the function
+and adds a sixth call site without a sample. That is how a MEASURED number ends up on a
+projector with no denominator under it, which is precisely the confusion constraint 2 exists to
+prevent.
+
+AND IT IS D8 FROM THE INSIDE, which is why I am recording it rather than only fixing it. A claim
+about JavaScript behaviour is outside `--doctest-modules`, outside the ~3300 tests, and outside
+every guarantee this project has. The rule says load-bearing NUMBERS go in Python; this is the
+same argument one level up -- a load-bearing INVARIANT about the frontend has to be enforced by
+something that runs, and in this codebase that means the source-text scanner in
+tests/test_web_frontend.py or a signature that throws. Prose in a journal is neither.
+
+NOT FIXED, DELIBERATELY, and that is a judgement worth recording too. The tree was already
+mid-way through the full-suite run that gates this stage, every constraint was verified on the
+running screen, and the defect is latent rather than live. Editing render.js at that point to
+fix a thing that is not currently wrong -- and shipping it under a green run that never saw it
+-- would be the exact failure mode this phase has spent its whole time documenting: four
+defects that shipped green because a test asserted a string instead of an effect. Adding a fifth
+untested change to close out a stage about untested changes is not a trade worth making.
+
+It is written down in docs/PHASE6.md section 10 under "Left for whoever picks this up", with the
+two other latent items found the same way: index.html has no <noscript> block, and
+docs/METRICS.md is stale from before the web module existed and is regenerated rather than
+edited.
