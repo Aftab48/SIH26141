@@ -1573,7 +1573,7 @@ def measure_cross_session_pairing(
         )
         if _refused(outcome):
             refusals += 1
-        elif outcome.accepted:
+        elif _accepted(outcome):
             successes += 1
     predicted = forgery_probability(checked, party=verifier)
     return AttackOutcome(
@@ -2079,7 +2079,7 @@ def measure_shared_identifier(
         )
         if _refused(outcome):
             refusals += 1
-        elif outcome.accepted:
+        elif _accepted(outcome):
             successes += 1
     predicted = forgery_probability(checked, party=Party.BOB)
     return AttackOutcome(

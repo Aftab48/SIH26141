@@ -652,7 +652,7 @@ def test_a_threshold_cannot_be_passed_in_at_the_call_site() -> None:
     record = _distribute(key, params)
     with pytest.raises(TypeError):
         verify(  # type: ignore[call-arg]
-            sign(0, key, params), record, params, threshold=0.4
+            sign(0, key, params), record, params, threshold=0.4  # pyright: ignore[reportCallIssue]
         )
 
 
