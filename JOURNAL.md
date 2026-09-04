@@ -8,7 +8,7 @@
 > on the maintainer's explicit instruction. The permanent record is
 > `docs/METRICS.md` and the `docs/PHASE*.md` notes.
 
-**168 entries** — 42 finding · 40 decision · 29 note · 28 issue · 26 fix · 3 deadend
+**170 entries** — 42 finding · 40 decision · 30 note · 28 issue · 27 fix · 3 deadend
 
 
 ## Phase 0 — Scaffold
@@ -7279,3 +7279,80 @@ launch.json describes on port 8141 -- has never been started. http.server at /in
 FastAPI at / differ in asset path resolution, MIME types and route precedence, so 'works under
 the stand-in' is not the claim that matters. No-network verification, API abuse, the honest
 baseline over a noisy link in the real UI, and docs/PHASE6.md all remain undone.
+
+### `[+]` Two 500s on non-finite input: the refusal, not the validation, was what crashed
+
+*fix · integrate:phase6 · 2026-09-04T00:06:39Z*
+
+Two 500s, found by abusing the RUNNING service and not by reading it. Both are the same
+shape and neither could have been found from the code: the validator was right in both
+cases and the report of the refusal was what crashed.
+
+WHAT HAPPENS
+`NaN` and `Infinity` are valid Python and are NOT JSON. Python's own encoder emits them
+by default, so `json.dumps({"noise": float("nan")})` puts the bare token `NaN` on the
+wire, and every Python client -- this project's own tooling included -- will do that
+without being asked. Both the pydantic layer and this project's range checks parse them
+happily, and both then REFUSE them correctly:
+
+  * `limits._as_float` refuses a non-finite float by name, with the right sentence: a
+    non-finite value compares false against every bound and would pass a range check
+    unexamined. That check was already there and is the reason this was only ever a
+    reporting bug rather than a NaN reaching the protocol.
+  * pydantic refuses one in `key_length` or `seed` with `finite_number` before this
+    project's code runs at all.
+
+Then both put the offending value into the error body, and Starlette's `JSONResponse`
+encodes with `allow_nan=False`. The 400 handler raised while serialising; FastAPI's own
+`request_validation_exception_handler` raised while serialising. The caller got
+
+    HTTP 500 Internal Server Error
+
+for a request that had been rejected properly a microsecond earlier. Measured, against
+the live service:
+
+    {"check_fraction": Infinity}   -> 500        {"noise": NaN}        -> 500
+    {"seed": NaN}                  -> 500        {"key_length": NaN}   -> 500
+
+THE FIX, AND WHY IT IS WHERE IT IS
+`limits.json_safe` returns its argument untouched wherever `json.dumps(..., allow_nan=
+False)` accepts it, walks containers, and renders any leaf JSON cannot carry as its
+`repr`. `RequestRefused.to_dict` passes `value` and `cap` through it, and `create_app`
+now registers its own `RequestValidationError` handler that passes FastAPI's error list
+through it. Nothing is lost: the sentence in `message` already names the value, and the
+value now appears as the string "nan" rather than as a token no JSON parser will read.
+
+Afterwards, over the same battery: 400/422 on every row, zero 500s, slowest malformed
+request 0.028 s.
+
+WHY THIS IS WORTH THE ENTRY RATHER THAN JUST THE FIX
+It is an error path that only fails on the inputs that reach it. `test_web_api.py`
+already had a test per bounded field asserting a 400 that names the field -- and it
+passed, because httpx's `json=` never produced a non-finite float, so the refusal it
+asserted on was always one that could be serialised. A test suite that constructs its
+own inputs will not find this class of defect; driving the service with a hostile client
+does. The three new tests construct the body as raw text for exactly that reason.
+
+### `[-]` The repair agent died on a network drop 36 minutes in; its work is kept
+
+*note · claude · 2026-09-04T05:03:12Z*
+
+The Phase 6 integrator failed with 'Can't reach the API server (ENOTFOUND)' after 36 minutes
+and 167 tool calls. The machine's connection dropped; DNS and TCP 443 both recover cleanly, so
+this is the same class of interruption that killed a Phase 2 audit earlier in the project.
+
+ITS WORK IS KEPT RATHER THAN REVERTED, because it is coherent and it found something real. Two
+500s on non-finite input, found by abusing the RUNNING service rather than by reading the code:
+NaN and Infinity are valid Python and are not JSON, both validators refused them CORRECTLY, and
+then both crashed while serialising the refusal into the error body. A request rejected properly
+a microsecond earlier came back as HTTP 500. Fixed with limits.json_safe.
+
+VERIFIED INDEPENDENTLY BEFORE KEEPING IT, because a process killed mid-edit can leave anything:
+all four web test files plus the sih141/web doctests pass, and the four cases the agent recorded
+as 500s now answer 400, 400, 422, 422 against a live TestClient. The full suite gates this
+commit.
+
+WHAT REMAINS UNDONE is most of the integrator's brief: the deliverable has still never run as
+one FastAPI process on 8141, no-network has not been verified, the honest-baseline-over-a-noisy-
+link case has not been looked at on a real screen, and docs/PHASE6.md does not exist. The
+re-run is told what this round already achieved so it does not repeat it.

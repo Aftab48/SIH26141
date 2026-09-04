@@ -59,6 +59,7 @@ key_length 1024 True
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
 from typing import Any, Final
@@ -85,6 +86,7 @@ __all__ = [
     "check_probability",
     "check_seed",
     "check_timing",
+    "json_safe",
     "limits_payload",
 ]
 
@@ -169,6 +171,62 @@ COUNT_EXCHANGE_TIMINGS: Final[tuple[str, str]] = (
 )
 
 
+def json_safe(item: Any) -> Any:
+    """Return ``item`` when JSON can carry it, and text where it cannot.
+
+    An error body's whole job is to name the value that was refused -- and the
+    one value that most needs naming is the one JSON cannot encode. Python's
+    own parser reads the bare tokens ``NaN`` and ``Infinity``, which are valid
+    Python and are **not** JSON, so a body carrying either reaches the range
+    checks and is correctly refused by :func:`_as_float`. Before this guard the
+    *refusal* then raised while being serialised, and the caller got a ``500``
+    for a request the validator had already rejected properly -- an error path
+    that only fails on the inputs that reach it, which is the kind that is
+    found by driving the service rather than by reading it.
+
+    Containers are walked, so one non-finite leaf costs its own leaf and not
+    the whole body. Everything JSON already accepts is returned untouched, so
+    this is a guard and never a transformation.
+
+    Parameters
+    ----------
+    item : object
+        A candidate for a JSON response body.
+
+    Returns
+    -------
+    object
+        ``item`` unchanged where ``json.dumps(..., allow_nan=False)`` accepts
+        it; otherwise the same shape with each unencodable leaf as its
+        ``repr``.
+
+    Examples
+    --------
+    >>> from sih141.web.limits import json_safe
+    >>> json_safe(1024), json_safe("honest"), json_safe(None)
+    (1024, 'honest', None)
+    >>> json_safe(float("nan")), json_safe(float("inf")), json_safe(float("-inf"))
+    ('nan', 'inf', '-inf')
+    >>> json_safe({"nested": [1, 2]})
+    {'nested': [1, 2]}
+    >>> json_safe({"loc": ["body", "seed"], "input": float("nan")})
+    {'loc': ['body', 'seed'], 'input': 'nan'}
+    >>> json_safe(object())[:7]
+    '<object'
+    """
+    try:
+        json.dumps(item, allow_nan=False)
+    except (TypeError, ValueError):
+        pass
+    else:
+        return item
+    if isinstance(item, dict):
+        return {str(key): json_safe(value) for key, value in item.items()}
+    if isinstance(item, (list, tuple)):
+        return [json_safe(value) for value in item]
+    return repr(item)
+
+
 class RequestRefused(Exception):
     """One request parameter was out of bounds, with the bound that refused it.
 
@@ -218,13 +276,26 @@ class RequestRefused(Exception):
         Returns
         -------
         dict
-            ``field``, ``message``, ``value`` and ``cap``.
+            ``field``, ``message``, ``value`` and ``cap``. Both ``value`` and
+            ``cap`` pass through :func:`json_safe`, so the one value a
+            refusal most needs to name -- the one JSON cannot carry -- is
+            named as text rather than crashing the refusal.
+
+        Examples
+        --------
+        >>> import json
+        >>> from sih141.web.limits import RequestRefused
+        >>> body = RequestRefused("noise", "must be finite", float("nan")).to_dict()
+        >>> body["value"]
+        'nan'
+        >>> json.loads(json.dumps(body, allow_nan=False))["field"]
+        'noise'
         """
         return {
             "field": self.field,
             "message": str(self),
-            "value": self.value,
-            "cap": self.cap,
+            "value": json_safe(self.value),
+            "cap": json_safe(self.cap),
         }
 
 

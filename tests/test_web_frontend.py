@@ -1557,6 +1557,74 @@ def test_the_noise_calibration_matches_the_docstring_it_cites(
             assert f"from ``{level['noise']}`` up" in text
 
 
+def test_the_timing_is_a_label_and_never_a_thing_summed_over() -> None:
+    """Constraint 6, pinned rather than merely implied.
+
+    ``count_exchange_timing`` is a control the operator sets and a label on the
+    result: the two orderings answer different questions -- one is a forgery,
+    the other a denial of service -- so a mean taken across them is a mean over
+    two different experiments and means nothing.
+
+    Half of this was already enforced and the other half was not, which is why
+    it is worth its own test. That the browser *cannot* pool is guaranteed by
+    the D8 scanner above: no arithmetic operator and no ``Math.`` survives
+    outside the chart geometry, and ``.reduce`` appears nowhere, so no total of
+    any kind can exist here. What nothing asserted is that the screen SAYS so
+    -- that the timing and the detector's own ``grouping_key`` are rendered on
+    every run, beside the sentence that forbids averaging over them. A panel
+    can be deleted without a scanner noticing.
+    """
+    code = (STATIC / "js" / "render.js").read_text(encoding="utf-8")
+    block = re.search(
+        r"function groupingPanel\(payload\) \{(.*?)\n  \}", code, re.S
+    )
+    assert block is not None, (
+        "the Grouping key panel is gone. Constraint 6 asks the screen to say "
+        "which experiment a run belongs to; nothing else on the page does."
+    )
+    body = block.group(1)
+    assert "detection.grouping_key" in body, (
+        "the panel no longer renders the detector's own grouping key"
+    )
+    assert "run.count_exchange_timing" in body, (
+        "the panel no longer renders the ordering the run was taken under"
+    )
+    # Join adjacent string literals, so a phrase that happens to be wrapped
+    # across a `"..." + "..."` is still one phrase to look for.
+    joined = re.sub(r'"\s*\+\s*"', "", body)
+    for phrase in (
+        "never average over it",
+        "answer different questions",
+        "never a thing summed over, and no total on this page crosses it",
+    ):
+        assert phrase in joined, (
+            f"the grouping panel lost the phrase {phrase!r}"
+        )
+    # And the panel is rendered on every run, not only on some of them.
+    assert "target.appendChild(groupingPanel(payload));" in code
+
+
+def test_the_two_orderings_are_two_experiments_and_the_recorded_set_says_so(
+    recordings: dict[str, dict[str, Any]]
+) -> None:
+    """Why pooling would be wrong, from the recorded runs themselves.
+
+    Every run carries the ordering it was taken under, inside
+    ``detection.grouping_key`` as well as in ``run``. Pooling would require
+    those keys to be interchangeable; they are not, and the key exists to say
+    which group a run belongs to.
+    """
+    for name, payload in recordings.items():
+        run = payload["run"]
+        timing = run["count_exchange_timing"]
+        assert timing in ("before-forwarding", "after-forwarding"), name
+        key = payload["detection"]["grouping_key"]
+        assert timing in [str(part) for part in key], (
+            f"{name}: the ordering is not in grouping_key, so a reader "
+            f"grouping on that key would pool two different experiments"
+        )
+
+
 def test_nothing_on_the_page_offers_a_false_negative_bound(
     constants: dict[str, Any]
 ) -> None:

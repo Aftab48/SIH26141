@@ -79,6 +79,8 @@ from pathlib import Path
 from typing import Any, Final
 
 from fastapi import FastAPI, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
@@ -111,6 +113,7 @@ from sih141.web.limits import (
     MAX_CONCURRENT_RUNS,
     NOISE_MAX,
     RequestRefused,
+    json_safe,
     limits_payload,
 )
 
@@ -483,6 +486,26 @@ def create_app(static_dir: Path | None = None) -> FastAPI:
         """Render a bounds refusal as a body that names the cap."""
         del request
         return JSONResponse(status_code=400, content=refusal.to_dict())
+
+    @app.exception_handler(RequestValidationError)
+    async def _invalid(
+        request: Request, invalid: RequestValidationError
+    ) -> JSONResponse:
+        """Render a schema error, including one JSON itself cannot quote.
+
+        FastAPI's own handler echoes the offending ``input`` back inside the
+        ``422`` body and then encodes that body with ``allow_nan=False``. A
+        request carrying the bare token ``NaN`` -- valid Python, not JSON, and
+        what every Python client emits for a float NaN by default -- therefore
+        turned a correct schema rejection into ``500 Internal Server Error``.
+        Every leaf goes through :func:`~sih141.web.limits.json_safe`, so the
+        value is named as text and the refusal survives being serialised.
+        """
+        del request
+        return JSONResponse(
+            status_code=422,
+            content={"detail": json_safe(jsonable_encoder(invalid.errors()))},
+        )
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:

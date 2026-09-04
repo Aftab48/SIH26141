@@ -249,6 +249,40 @@ def test_the_same_request_gives_the_same_response(client):
     assert first["ground_truth"] == second["ground_truth"]
 
 
+def test_the_two_count_exchange_orderings_are_two_experiments(client):
+    """Constraint 6, from the side that can prove pooling would be wrong.
+
+    The screen's half of this is a label and a sentence
+    (``tests/test_web_frontend.py``). This is the fact underneath it: with
+    every other parameter held fixed and the same seed, the two orderings of
+    Phase C' produce different verdicts from the same adversary -- under
+    ``before-forwarding`` the forwarded recipient refuses on provenance and
+    reaches NO VERDICT, under ``after-forwarding`` he scores it and rejects.
+    One is a denial of transfer and the other is a forgery caught. A mean over
+    the two is a mean over two different questions, and the response carries
+    the ordering inside ``grouping_key`` so that a reader groups rather than
+    pools.
+    """
+    outcomes = {}
+    for timing in ("before-forwarding", "after-forwarding"):
+        body = _run_body(
+            attack="recipient-forgery",
+            key_length=192,
+            seed=41,
+            count_exchange_timing=timing,
+        )
+        payload = client.post("/api/run", json=body).json()
+        assert payload["run"]["count_exchange_timing"] == timing
+        assert timing in [str(part) for part in payload["detection"]["grouping_key"]]
+        outcomes[timing] = payload["detection"]["outcomes"]
+    assert outcomes["before-forwarding"] != outcomes["after-forwarding"], (
+        "the two orderings produced the same outcomes, so this test no longer "
+        "demonstrates why they must not be pooled"
+    )
+    assert "refused-to-score" in outcomes["before-forwarding"].values()
+    assert "rejected" in outcomes["after-forwarding"].values()
+
+
 # --------------------------------------------------------------------------- #
 # 2. Bounds: refused by name, never clamped, never ignored.
 # --------------------------------------------------------------------------- #
@@ -322,6 +356,136 @@ def test_a_nonsense_type_is_refused_before_the_protocol_sees_it(client):
     assert (
         client.post("/api/run", json=_run_body(eps=0.0)).status_code == 400
     )
+
+
+@pytest.mark.parametrize(
+    ("field", "literal"),
+    [
+        ("noise", "NaN"),
+        ("check_fraction", "Infinity"),
+        ("channel_error_rate", "-Infinity"),
+        ("eps", "NaN"),
+        ("tolerated_depolarising", "Infinity"),
+    ],
+)
+def test_a_non_finite_value_is_refused_and_the_refusal_is_renderable(
+    client, field, literal
+):
+    """The refusal must survive being serialised, or the 400 becomes a 500.
+
+    ``NaN`` and ``Infinity`` are valid **Python** and are not JSON, and
+    Python's own encoder emits them by default -- so any Python client, this
+    project's own tooling included, can put one on the wire. The range checks
+    already refuse them by name (a non-finite value compares false against
+    every bound, which is exactly why it is checked for). What did not work is
+    what happened next: the refusal body carried the offending value, the
+    response encoder rejects non-finite floats, and the caller got ``500
+    Internal Server Error`` for a request the validator had handled correctly.
+    Found by driving the running service rather than by reading it.
+    """
+    body = dict(_run_body())
+    body.pop(field, None)
+    raw = json.dumps(body)[:-1] + f', "{field}": {literal}}}'
+    response = client.post(
+        "/api/run",
+        content=raw,
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 400, response.text
+    payload = response.json()
+    assert payload["field"] == field
+    assert "finite" in payload["message"]
+    # The value is named, as text, and the whole body is strict JSON.
+    assert isinstance(payload["value"], str)
+    json.dumps(payload, allow_nan=False)
+
+
+@pytest.mark.parametrize("field", ["key_length", "seed"])
+def test_a_non_finite_integer_field_is_a_422_and_not_a_500(client, field):
+    """The same trap one layer up, in the schema rather than in the caps.
+
+    ``key_length`` and ``seed`` are integers, so a ``NaN`` never reaches this
+    project's range checks: pydantic rejects it first and FastAPI's own handler
+    writes the offending ``input`` into the ``422`` body -- where the response
+    encoder, which forbids non-finite floats, then raised. The rejection was
+    right and the report of it was a ``500``. This service renders that body
+    itself for exactly that reason.
+    """
+    raw = f'{{"attack": "honest", "{field}": NaN}}'
+    response = client.post(
+        "/api/run",
+        content=raw,
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 422, response.text
+    payload = response.json()
+    assert payload["detail"][0]["loc"] == ["body", field]
+    assert payload["detail"][0]["input"] == "nan"
+    json.dumps(payload, allow_nan=False)
+
+
+def test_no_abuse_of_the_request_surface_produces_a_500(client):
+    """Sweep the shapes a hostile or careless client can send.
+
+    Every row must come back as a refusal the screen can render -- ``400`` from
+    a cap, ``422`` from the schema, ``405`` from a wrong method -- and never as
+    a ``500``, which has no field, no cap and nothing an operator can act on.
+    """
+    bodies = [
+        '{"key_length": 100000}',
+        '{"key_length": 1000000000000}',
+        '{"key_length": -5}',
+        '{"key_length": 1.5}',
+        '{"key_length": "lots"}',
+        '{"key_length": null}',
+        '{"key_length": NaN}',
+        '{"check_fraction": Infinity}',
+        '{"check_fraction": 1.5}',
+        '{"noise": NaN}',
+        '{"noise": -1.0}',
+        '{"eps": 0.0}',
+        '{"eps": -Infinity}',
+        '{"channel_error_rate": NaN}',
+        '{"tolerated_depolarising": Infinity}',
+        '{"count_exchange_timing": "sideways"}',
+        '{"count_exchange_timing": 5}',
+        '{"attack": "drop-tables"}',
+        '{"attack": null}',
+        '{"attack": ""}',
+        '{"seed": -1}',
+        '{"seed": 1208925819614629174706176}',
+        '{"seed": NaN}',
+        '{"keyLength": 512}',
+        "",
+        "<<<not json>>>",
+        "[1, 2, 3]",
+        '"hello"',
+        "null",
+        "[" * 200 + "]" * 200,
+        '{"attack": "' + "a" * 100_000 + '"}',
+    ]
+    statuses = set()
+    for raw in bodies:
+        response = client.post(
+            "/api/run",
+            content=raw,
+            headers={"Content-Type": "application/json"},
+        )
+        assert response.status_code < 500, f"{raw[:60]} -> {response.text[:200]}"
+        assert "Traceback" not in response.text
+        json.dumps(response.json(), allow_nan=False)
+        statuses.add(response.status_code)
+    assert statuses <= {400, 422}
+    for method, path in [
+        ("get", "/api/run"),
+        ("delete", "/api/run"),
+        ("post", "/api/health"),
+        ("get", "/api/nope"),
+        ("get", "/static/../api.py"),
+        ("get", "/static/"),
+    ]:
+        response = getattr(client, method)(path)
+        assert response.status_code < 500, f"{method} {path}"
 
 
 # --------------------------------------------------------------------------- #
