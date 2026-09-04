@@ -8,7 +8,7 @@
 > on the maintainer's explicit instruction. The permanent record is
 > `docs/METRICS.md` and the `docs/PHASE*.md` notes.
 
-**174 entries** — 43 finding · 40 decision · 31 note · 29 fix · 28 issue · 3 deadend
+**177 entries** — 44 finding · 40 decision · 31 fix · 31 note · 28 issue · 3 deadend
 
 
 ## Phase 0 — Scaffold
@@ -7693,3 +7693,260 @@ It is written down in docs/PHASE6.md section 10 under "Left for whoever picks th
 two other latent items found the same way: index.html has no <noscript> block, and
 docs/METRICS.md is stale from before the web module existed and is regenerated rather than
 edited.
+
+### `[+]` The screen instructed a false accusation, and a refusal crashed for the third time
+
+*fix · phase-6 audit fixes · 2026-09-04T13:04:53Z*
+
+Three auditors, three UNSOUND verdicts, twelve defects. Two of them are this
+project's own stated failure mode arriving on a screen, and both were made
+worse by being fixed once before.
+
+A1-1: THE SCREEN TOLD AN OPERATOR TO PRODUCE A FALSE ACCUSATION.
+
+detect() takes TWO nulls -- channel_error_rate for the rate family,
+tolerated_depolarising for the channel family -- and both default to a perfect
+link. Detection.null_is_noiseless is defined over the first alone, correctly,
+because it is the rate family's flag. The banner keyed off it, so there were
+two states on screen where there are three, and the state an operator lands in
+by following the screen's own instruction landed in the reassuring blue INFO
+branch.
+
+Measured, honest arm, L=192, check_fraction=0.25, link strength 0.03125 (the
+design noise level 2*s_a), twelve seeds:
+
+    neither null stated     12/12 detected, honest RULED OUT, 5 adversaries named
+    rate null only          12/12 detected, honest RULED OUT, channel-manipulation
+                            SUPPORTED, under a blue banner reading
+                            "THE NULL CARRIES THE LINK'S ERROR RATE"
+    both nulls stated        0/12, honest SUPPORTED
+
+The middle row is what the screen instructed. "Set the link's true rate in the
+controls", singular, and the calibration panel asserting "0/30 at every level
+when the link's true rate is passed to detect()". Every part of the mechanism
+was already right: tolerated_depolarising was a request field, it was a
+control, and the API already shipped the correcting sentence as
+noise_null_calibration.second_null_note. render.js rendered
+with_true_rate_passed and dropped second_null_note, and no JS and no test
+referenced it. A sentence the API ships and the screen drops is worse than one
+nobody wrote, because it reads as though the question was answered.
+
+The fix that mattered was deciding WHERE the three-way state is computed.
+Comparing a null to zero in JavaScript would have been four characters and a
+D8 violation on the exact axis D8 exists for: the comparison decides what the
+operator is told to do. So sih141.web.payload.nulls_stated() returns the state
+as flags -- both_are_default, both_are_stated, and the two field names -- and
+the browser branches on a boolean Python computed. run.nulls is now a required
+field of the read-side contract.
+
+Verified end to end in the browser afterwards, which is what constraint 3
+demands: run the honest arm over a noisy link, follow the screen's own
+instruction exactly as written, confirm the result is 'honest'. It is.
+
+A3-1: THE THIRD 500 OF ONE SHAPE IN ONE PHASE.
+
+check_key_length's over-ceiling message estimated the run's cost with
+`length * 2.2 / 1000.0`. int -> float overflows above sys.float_info.max, so a
+key_length of 309 or more digits raised OverflowError while its own refusal was
+being formatted. 308 digits -> 400. 309 -> 500.
+
+The first instance was NaN in an error body; the second a body nested 2000
+deep; this is the third. All three are one sentence: a request refused
+CORRECTLY, and then the code reporting the refusal falling over while quoting
+the input back. Each was fixed where it was found, which is why there was a
+third, and PHASE6.md's own framing -- "that ground is covered and is not
+repeated here" -- is what made the third easy to miss. Covering an instance is
+not covering a shape.
+
+So the fix is a rule, written into limits.py:
+
+    Nothing that renders a refusal may compute on caller input, and every
+    caller-supplied value reaches a message or a body through safe_text() or
+    json_safe() -- both of which are total.
+
+safe_text() catches whatever repr throws (an integer beyond
+sys.get_int_max_str_digits() is the one this API actually meets; it reports the
+digit count instead) and truncates what it returns. json_safe() already bounded
+depth and encodability and now bounds length. No message multiplies a caller's
+number any more: the over-ceiling refusal quotes the MEASURED COST_TABLE row at
+the ceiling, which the suite already pins.
+
+And the test is written against the shape. Nine request fields crossed with
+nine values that are hard to RENDER rather than out of range -- NaN, +/-inf,
+309- and 4300-digit integers, a 20 KB string, 400-deep lists and objects -- 81
+cases, each asserted to come back 400/413/422 as JSON with no traceback. It
+contains all three instances and had to know about none of them. Against the
+pre-fix tree it fails on exactly the two cases that were broken.
+
+After: 10, 100, 308, 309, 400, 1000 and 4300 digits are all 400, all naming the
+cap, all under 1100 bytes.
+
+### `[*]` The other ten, one the audit missed, and what a passing test was worth
+
+*finding · phase-6 audit fixes · 2026-09-04T13:05:37Z*
+
+The other ten of the twelve, plus one the auditors did not find, plus what the
+round says about how this phase was tested.
+
+A3-2, no body cap, ~9x memory amplification. RequestRefused echoed the
+offending value twice -- inside `message` via {!r} and again as `value` -- with
+nothing bounding either, and nothing bounded the body. Measured: 1,000,014
+bytes in -> 2,000,707 out (x2.00); 256 MB in -> 537 MB out and RSS 2,363 MB
+that was still 2,375 MB after a later normal run. MAX_CONCURRENT_RUNS offered
+nothing and it is worth being blunt about why: the gate is taken AFTER
+validation, so a request refused by a cap never reaches it. The gate protects
+the CPU and only the CPU.
+Fixed with _BodyLimit, pure ASGI and outermost -- pure ASGI because the point is
+that the bytes are never accumulated, and a middleware handed a Request has
+already lost that argument. Declared Content-Length over 65536 is refused with
+nothing read; a body without one is counted as it arrives and abandoned the
+moment the count passes. After: 1 MB -> 413 in 296 bytes, ratio 0.0003.
+
+A2-1, the dead-service fallback did not exist on a fresh clone. showRecorded
+re-fetched the JSON on every click and the server sent no Cache-Control, so
+survival was Chrome's heuristic freshness -- about a tenth of the file's age,
+minutes on a tree cloned that morning. A fallback that fetches from the thing
+it is falling back from is not a fallback. The whole set is 365 KB, so it is
+now loaded once at boot and showRecorded contains no fetch at all, which is the
+property the test asserts. After, process killed with the page open: three
+recorded runs clicked, three render, status line reads "(from memory)".
+
+A2-2, the masthead never flipped when a RECORDED run failed. The previous
+integration round's fix put the repaint inside startLiveRun's catch only. Two
+answers: one noteTransportFailure() that every failing path calls, and a
+five-second /api/health poll -- because with A2-1 fixed the recorded path can
+no longer fail and therefore can no longer TELL anyone. The poll also brings
+the chip back to LIVE API when the server is restarted, which is what an
+operator who has just fixed something needs to see.
+
+A2-3, the cold load. Documented as "there is nothing to fall back to". What
+happened was the page rendering from cache with the masthead asserting
+RECORDED ONLY -- API NOT REACHABLE above a rail holding ZERO recorded runs: a
+chip promising a fallback mode that was empty. Then, on a tree whose files had
+just been edited, I got a THIRD outcome -- a blank page, because the scripts
+had to revalidate and could not. A failure mode that is a coin flip cannot be
+documented, so the frontend is served Cache-Control: no-cache. Revalidate
+before reuse, not do-not-store: a live server answers 304 over loopback in
+microseconds, a dead one produces the browser's own error page. Measured after:
+chrome-error://chromewebdata/. One behaviour, and it removes the stale-asset
+hazard PHASE6.md warns about elsewhere. The masthead's third state, NOTHING
+LIVE -- NO API AND NO RECORDED RUNS, stays as defence in depth.
+
+A2-4, the NO RUN panel blamed the server for a transport failure. "The service
+refused this request" plus the key_length cap's rationale, for a fetch against
+a process that was not running -- and the same copy for a failed recorded-run
+load, which is a static file no cap has an opinion about. The state was right;
+the attribution was invented. refusalPanel takes a kind now.
+
+A2-5 and A3-3 fixed together, because both are about the bind. open_listeners()
+binds BEFORE the banner is printed, so a busy port prints COULD NOT START, the
+port, no address at all, and exits 1 -- rather than advertising an address it
+never got and then ending on "Application shutdown complete", which reads like a
+clean stop. And it opens one socket per family for loopback and the wildcards,
+because 127.0.0.1 and 0.0.0.0 are IPv4 wildcards and nothing answers on ::1;
+on Windows --host :: is the exact mirror image, V6ONLY by default. A third
+hazard fell out: SO_EXCLUSIVEADDRUSE means a second instance on 127.0.0.1:PORT
+can no longer bind successfully while another holds 0.0.0.0:PORT, which is how
+a forgotten process goes on being demoed against.
+
+A2-6, projector mode overflowed 1024x768 by 307 px with 28 elements past the
+viewport and no scrolling ancestor -- including the PROVEN and MEASURED chips
+that carry constraint 2. white-space: nowrap on .num and .state. Chips may wrap
+now; a NUMBER still never breaks, because .num .value sets
+overflow-wrap: normal, overriding the `anywhere` it inherits. After: all 13
+recorded runs at 1024x768 with projector mode on, scrollWidth == clientWidth.
+Measuring it turned up one more: Charts.bars centres row.unavailable as SVG
+text, and the API's reason for an unevaluable CHSH is a whole sentence, 66 px
+past the window edge. The chart carries a marker; the sentence is rendered
+under it and wraps. Moved, never dropped.
+
+A1-2 and A2-7 were prose. A1-2 is worth the note: "...never eps and never
+evidence_bound, which is a post hoc statement ...: at L = 384, eps = 1e-9 the
+two differ by a factor of 2.944". Grammatically "the two" is the
+false_positive_bound/evidence_bound pair the clause just contrasted, and that
+ratio is 7e9, not 2.944. Marked suspected by the auditor; confirmed here by
+measurement and fixed, because it sits on the one constraint that exists to
+stop those three numbers being confused.
+
+AND ONE THE AUDITORS DID NOT FIND, which came out of writing the test for A1-1.
+The API published, and the screen rendered, "Both verifiers accept in every one
+of them" about those twelve honest noisy runs. Asserting it produced
+{'accepted', 'rejected'}. Measured: the pair of outcomes is IDENTICAL under all
+three null settings on every seed -- which it must be, since the outcomes are
+the protocol's and the nulls are the detector's -- and it is 7 seeds where both
+accept and 5 where Bob REJECTS the honest signature. A link at the design noise
+level costs the signature something, and that is a separate fact from anything
+the detector said. Corrected in api.py, driver.py and constants.json, and the
+corrected sentence is the stronger one: the nulls move the detector and do not
+move the verifiers at all. It is the clearest illustration in the phase of why
+constraint 1 keeps the two questions apart.
+
+WHAT THE ROUND IS ACTUALLY ABOUT.
+
+Every one of the four defects the previous round found had a passing test, and
+every one of those tests asserted that a STRING WAS PRESENT IN A FILE. That is
+the right check for "has someone deleted this" and no check at all for "does
+this work". The twelve found here are what that buys.
+
+The tests added measure the thing that would differ if the fix were absent: the
+status code, the response size, the number of sockets that accept a connection,
+the ratio of two bounds, the count of call sites routing through the shared
+handler, the absence of fetch inside one NAMED function. 20 of them fail
+against the pre-fix tree, verified by running the new tests against a clean
+checkout of the old commit rather than by believing they would.
+
+Nine of the twenty are frontend tests and they are still static analysis,
+because this repo has no JS runtime and must not grow one. What changed is
+scope: they extract a single function body by brace matching and assert about
+THAT, so "showRecorded reaches the network" is a property of the recorded path
+rather than "the file contains the word fetch" being a property of nothing. And
+where a check genuinely cannot run in Python -- a browser laying out a page at
+1024x768 -- the measurement was taken by driving the running screen, is recorded
+in PHASE6.md with its numbers, and the test pins the CSS property that produced
+it. That is weaker than executing the code and it is stated as weaker rather
+than dressed up.
+
+### `[+]` Three corrections, including a heading of my own that could be false
+
+*fix · phase-6 audit fixes · 2026-09-04T13:29:36Z*
+
+Three corrections to the two entries above, made after they were written and
+recorded here rather than edited into them.
+
+1. THE PRE-FIX FAILURE COUNT IS 34, NOT 20. The earlier entry was written
+   before the last two tests existed. Re-measured against a clean checkout of
+   the pre-fix commit with the final test files: 34 test IDs across 25 test
+   functions fail there -- 23 in tests/test_web_api.py, 11 in
+   tests/test_web_frontend.py. docs/PHASE6.md carries the corrected figure.
+
+2. A HEADING I WROTE WHILE FIXING A1-1 COULD ITSELF BE FALSE. The new
+   both-nulls-stated banner was headed "Both nulls carry the link". That is a
+   claim about the WIRE, and the operator can state two nulls describing a link
+   nobody has: put an honest link's numbers on a run with Eve on the resource
+   seam and the heading asserts she is not there. Reproduced --
+   channel-manipulation, noise 0.25, channel_error_rate 0.015625,
+   tolerated_depolarising 0.03125 -- and the banner read "Both nulls carry the
+   link" directly above the harness's own sentence "the nulls do not match the
+   link AND an adversary is mounted on it". Two contradictory statements in one
+   banner.
+
+   The heading now says "Both nulls were stated by the operator", which is
+   exactly what that branch knows. Whether they MATCH is the harness's
+   sentence, in the same banner, because only the harness knows it. Same
+   correction on the other branch: with no run.nulls in the response the banner
+   is standing on the rate family's flag alone, so it is headed "The rate
+   family's null is noiseless" rather than claiming both.
+
+   Worth naming the shape, because it is the shape of A1-1 itself: a heading is
+   read on its own, so it may not claim more than its own branch knows. I
+   introduced it while fixing a defect of exactly that kind.
+
+3. THE LIVENESS CHECK IS NOW UN-CACHEABLE. The five-second /api/health poll is
+   what makes the masthead's LIVE API a checked claim rather than an inference,
+   and a heuristically cached {"ok": true} would put that claim straight back
+   over a dead process -- the defect the poll exists to close, restored by the
+   fix for it. Measured behaviour was already correct (11 polls appeared as
+   network entries and the chip flipped within five seconds of the kill), but
+   "measured correct on this browser today" is not the same as "cannot be
+   otherwise". Every /api/ answer now carries Cache-Control: no-store, with a
+   test.

@@ -139,7 +139,7 @@
   "chsh_classical_bound": 2.0,
   "chsh_tsirelson_bound": 2.8284271247461903,
   "degenerate_below_key_length": 140,
-  "note": "Closed forms evaluated at a parameter set: derived, not measured, and computed without running anything. Nothing here is a detection rate, and none of it is a false-negative bound -- there is no such bound in this project and none can be had from a transcript. What a run publishes afterwards is Detection.false_positive_bound, never eps and never evidence_bound, which is a post hoc statement about the signals that fired and a different claim: at L = 384, eps = 1e-9 the two differ by a factor of 2.944."
+  "note": "Closed forms evaluated at a parameter set: derived, not measured, and computed without running anything. Nothing here is a detection rate, and none of it is a false-negative bound -- there is no such bound in this project and none can be had from a transcript. What a run publishes afterwards is Detection.false_positive_bound. It is NOT eps: at L = 384, eps = 1e-9, false_positive_bound is 3.3964e-10 and the budget is 2.944 times larger, so quoting the budget overstates the error rate by that factor. It is also NOT evidence_bound, which is a post hoc statement about the signals that actually fired -- a different claim on a different scale entirely, smaller than false_positive_bound by about 7e9 on a run where anything fires, and null on a run where nothing does."
  },
  "limits": {
   "fields": {
@@ -185,6 +185,9 @@
    }
   },
   "max_concurrent_runs": 2,
+  "max_request_bytes": 65536,
+  "max_request_bytes_note": "The largest request body the service will read. A larger one is answered 413 before the application sees it, so nothing parses it, echoes it or holds it. The largest legitimate body is nine scalars and about 300 bytes.",
+  "max_echoed_chars": 200,
   "cost_table": [
    {
     "key_length": 96,
@@ -261,8 +264,8 @@
     "detected": 30
    }
   ],
-  "with_true_rate_passed": "0/30 at every level when the link's true rate is passed to detect()",
-  "second_null_note": "That calibration is the RATE family. The CHANNEL family has its own null, tolerated_depolarising, also defaulting to a perfect resource, and stating only the first leaves an honest noisy run firing: measured over twelve seeds at L = 192, check_fraction = 0.25, link strength 0.03125 -- 12/12 detected with both nulls at zero, 12/12 with only channel_error_rate corrected, 0/12 with both stated. Both verifiers accept in every one of them."
+  "with_true_rate_passed": "0/30 at every level when BOTH of detect()'s nulls are stated: the link's true matched-position error rate as channel_error_rate, AND the link's Werner strength as tolerated_depolarising. This table is the RATE family's. Correcting this null alone does not clear an honest noisy run.",
+  "second_null_note": "That calibration is the RATE family. The CHANNEL family has its own null, tolerated_depolarising, also defaulting to a perfect resource, and stating only the first leaves an honest noisy run firing: measured over twelve seeds at L = 192, check_fraction = 0.25, link strength 0.03125 -- 12/12 detected with both nulls at zero, 12/12 with only channel_error_rate corrected, 0/12 with both stated. THE VERIFIERS DO NOT MOVE WITH THE NULLS AT ALL: their outcomes are the protocol's and the nulls are the detector's, and over those twelve seeds the pair of outcomes is identical under all three settings -- both accept on 7 seeds and Bob rejects the honest signature on 5, which is what a link at the design noise level does to a signature and is a separate fact from anything the detector said."
  },
  "attacks": [
   {

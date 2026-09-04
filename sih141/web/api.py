@@ -39,6 +39,16 @@ forbidden -- and concurrency is capped by a non-blocking semaphore, so the
 ``MAX_CONCURRENT_RUNS + 1``-th simultaneous run is refused at once with a
 ``Retry-After`` instead of queueing behind two seconds of quantum simulation.
 
+The bound that has to come **first**, though, is the body's own size, and it is
+enforced by :class:`_BodyLimit` before any route is reached. The concurrency
+gate protects the CPU and protects nothing else: it is taken *after* validation,
+so a request refused by a cap never reaches it. A 256 MB ``attack`` field was
+therefore parsed, refused correctly, echoed back twice inside its own refusal --
+measured at 2x on the wire and about 9x in resident memory, which was never
+released -- and none of that ever met the gate. A body over
+:data:`~sih141.web.limits.MAX_REQUEST_BYTES` is now answered ``413`` having been
+read only up to that bound, so nothing downstream sees it at all.
+
 What is NOT offered, and why it is published anyway
 ---------------------------------------------------
 :data:`~sih141.protocol.params.DEFAULT_PARAMS` (``L = 115200``) is about four
@@ -111,6 +121,7 @@ from sih141.web.limits import (
     KEY_LENGTH_MIN,
     LIVE_KEY_LENGTH_MAX,
     MAX_CONCURRENT_RUNS,
+    MAX_REQUEST_BYTES,
     NOISE_MAX,
     RequestRefused,
     json_safe,
@@ -124,6 +135,10 @@ DEGENERATE_BELOW_KEY_LENGTH: Final[int] = 140
 
 
 __all__ = ["STATIC_DIR", "RunBody", "create_app", "defaults_payload"]
+
+#: Notes: :class:`_BodyLimit` and :func:`_refuse_oversized` are private and are
+#: exercised through :func:`create_app`, which installs the first as the
+#: outermost middleware.
 
 
 #: Where the frontend lives. Served from disk; nothing is fetched
@@ -152,6 +167,196 @@ the dashboard itself: no <code>index.html</code> was found in
 <p>This page is served from memory and loads no scripts, fonts or stylesheets
 from anywhere. Neither does anything else here.</p>
 """
+
+
+def _refuse_oversized(declared: int | None) -> JSONResponse:
+    """Return the ``413`` body for a request too large to read.
+
+    Parameters
+    ----------
+    declared : int or None
+        The ``Content-Length`` the client declared, where it declared one.
+
+    Returns
+    -------
+    fastapi.responses.JSONResponse
+
+    Examples
+    --------
+    >>> from sih141.web.api import _refuse_oversized
+    >>> _refuse_oversized(70000).status_code
+    413
+    """
+    return JSONResponse(
+        status_code=413,
+        content={
+            "field": "body",
+            "message": (
+                f"The request body is larger than the {MAX_REQUEST_BYTES}-byte "
+                f"ceiling and was refused without being read. The largest "
+                f"legitimate body here is nine scalars and about 300 bytes. "
+                f"Nothing parsed it, nothing echoed it, and no run was "
+                f"started."
+            ),
+            "value": (
+                f"{declared} bytes declared"
+                if declared is not None
+                else "more than the ceiling, sent without a Content-Length"
+            ),
+            "cap": MAX_REQUEST_BYTES,
+        },
+    )
+
+
+class _BodyLimit:
+    """Refuse an oversized request body **before the application sees it**.
+
+    Pure ASGI rather than a :class:`starlette.middleware.base.BaseHTTPMiddleware`
+    subclass, because this has to act on the raw receive channel: the point is
+    that the bytes are never accumulated, and a middleware that is handed a
+    ``Request`` has already lost that argument.
+
+    Two paths, because a client picks which one it is on. A declared
+    ``Content-Length`` over the ceiling is refused with nothing read at all. A
+    body sent without one -- chunked, or simply lying -- is read in the chunks
+    the server delivers and abandoned the moment the total passes the ceiling,
+    so at most ``limit`` bytes plus one chunk is ever held.
+
+    Everything under the ceiling is replayed to the application unchanged, so
+    this is a bound and never a transformation.
+
+    Parameters
+    ----------
+    app : callable
+        The ASGI application to wrap.
+    limit : int, optional
+        Ceiling in bytes, :data:`~sih141.web.limits.MAX_REQUEST_BYTES` by
+        default.
+
+    Examples
+    --------
+    >>> from fastapi.testclient import TestClient
+    >>> from sih141.web.api import create_app
+    >>> client = TestClient(create_app())
+
+    A normal run is untouched:
+
+    >>> client.post("/api/run", json={"key_length": 96, "seed": 4}).status_code
+    200
+
+    An oversized body is refused, and the refusal is smaller than the request
+    that caused it -- which is the whole point, since the previous behaviour
+    echoed the offending field back twice:
+
+    >>> huge = client.post(
+    ...     "/api/run",
+    ...     content=b'{"attack": "' + b"x" * 200000 + b'"}',
+    ...     headers={"Content-Type": "application/json"},
+    ... )
+    >>> huge.status_code, huge.json()["cap"]
+    (413, 65536)
+    >>> len(huge.content) < 600
+    True
+    """
+
+    def __init__(self, app: Any, limit: int = MAX_REQUEST_BYTES) -> None:
+        self.app = app
+        self.limit = int(limit)
+
+    @staticmethod
+    def _declared(scope: dict[str, Any]) -> int | None:
+        """Return the request's ``Content-Length``, or ``None``."""
+        for name, value in scope.get("headers", ()):
+            if name == b"content-length":
+                try:
+                    return int(value)
+                except ValueError:
+                    return None
+        return None
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        """Read at most ``limit`` bytes, then hand the request on or refuse it."""
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        declared = self._declared(scope)
+        if declared is not None and declared > self.limit:
+            await _refuse_oversized(declared)(scope, receive, send)
+            return
+
+        body = bytearray()
+        more = True
+        while more:
+            message = await receive()
+            if message["type"] != "http.request":
+                # A disconnect mid-body. Nothing to answer and nothing to run.
+                return
+            body.extend(message.get("body", b""))
+            if len(body) > self.limit:
+                await _refuse_oversized(declared)(scope, receive, send)
+                return
+            more = bool(message.get("more_body", False))
+
+        replayed = [bytes(body)]
+
+        async def replay() -> dict[str, Any]:
+            """Hand the buffered body to the application, once."""
+            if replayed:
+                return {
+                    "type": "http.request",
+                    "body": replayed.pop(),
+                    "more_body": False,
+                }
+            return await receive()
+
+        await self.app(scope, replay, send)
+
+
+class _NoStaleStatic(StaticFiles):
+    """Serve the frontend with ``Cache-Control: no-cache``.
+
+    ``no-cache`` does not mean "do not store". It means **revalidate before
+    reuse**, so the browser keeps the bytes and asks with an ``If-None-Match``;
+    on a live server that is a ``304`` in under a millisecond over loopback, and
+    on a dead one it is a failure the page cannot paper over.
+
+    That second half is the point, and it comes out of a measurement. Without a
+    ``Cache-Control`` header at all, whether an asset survives the process dying
+    is decided by Chrome's *heuristic* freshness -- roughly a tenth of the
+    file's age -- so a cold load against a dead service had no single behaviour.
+    Three were observed on this tree: the whole page rendered from cache with a
+    masthead reading ``RECORDED ONLY -- API NOT REACHABLE`` above a rail holding
+    ZERO recorded runs; the page rendered with some scripts missing; and, on a
+    tree whose files had just been edited, nothing rendered at all. A demo whose
+    failure mode is a coin flip cannot be documented, and the first of those
+    three is a masthead making a promise it cannot keep.
+
+    With this header there is one behaviour: a cold load against a dead service
+    does not load, and the browser says so in its own words. The mode that IS
+    supported -- the page already open when the service dies -- is unaffected,
+    because everything it needs is already in memory by then.
+
+    Examples
+    --------
+    >>> from fastapi.testclient import TestClient
+    >>> from sih141.web.api import create_app
+    >>> client = TestClient(create_app())
+    >>> client.get("/static/js/app.js").headers["cache-control"]
+    'no-cache'
+    >>> client.get("/").headers["cache-control"]
+    'no-cache'
+    """
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Response:
+        """Return the file with revalidation forced.
+
+        Returns
+        -------
+        starlette.responses.Response
+        """
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 class RunBody(BaseModel):
@@ -375,10 +580,14 @@ def defaults_payload() -> dict[str, Any]:
                 "is a detection rate, and none of it is a false-negative bound "
                 "-- there is no such bound in this project and none can be had "
                 "from a transcript. What a run publishes afterwards is "
-                "Detection.false_positive_bound, never eps and never "
-                "evidence_bound, which is a post hoc statement about the "
-                "signals that fired and a different claim: at L = 384, "
-                "eps = 1e-9 the two differ by a factor of 2.944."
+                "Detection.false_positive_bound. It is NOT eps: at L = 384, "
+                "eps = 1e-9, false_positive_bound is 3.3964e-10 and the budget "
+                "is 2.944 times larger, so quoting the budget overstates the "
+                "error rate by that factor. It is also NOT evidence_bound, "
+                "which is a post hoc statement about the signals that actually "
+                "fired -- a different claim on a different scale entirely, "
+                "smaller than false_positive_bound by about 7e9 on a run where "
+                "anything fires, and null on a run where nothing does."
             ),
         },
         # -- every cap the request surface enforces ---------------------------- #
@@ -409,9 +618,18 @@ def defaults_payload() -> dict[str, Any]:
                 {"noise": 0.015, "detected": 30},
                 {"noise": 0.03125, "detected": 30},
             ],
+            # This sentence has to be true READ ALONE, because it is the one
+            # line of the calibration a reader takes away and it sits under a
+            # table of runs that fired. Saying "the link's true rate", singular,
+            # described an instruction that does not work: detect() has TWO
+            # nulls, and correcting only this family's leaves an honest noisy
+            # run detected with an adversary named. See `second_null_note`.
             "with_true_rate_passed": (
-                "0/30 at every level when the link's true rate is passed to "
-                "detect()"
+                "0/30 at every level when BOTH of detect()'s nulls are stated: "
+                "the link's true matched-position error rate as "
+                "channel_error_rate, AND the link's Werner strength as "
+                "tolerated_depolarising. This table is the RATE family's. "
+                "Correcting this null alone does not clear an honest noisy run."
             ),
             "second_null_note": (
                 "That calibration is the RATE family. The CHANNEL family has "
@@ -420,8 +638,14 @@ def defaults_payload() -> dict[str, Any]:
                 "noisy run firing: measured over twelve seeds at L = 192, "
                 "check_fraction = 0.25, link strength 0.03125 -- 12/12 "
                 "detected with both nulls at zero, 12/12 with only "
-                "channel_error_rate corrected, 0/12 with both stated. Both "
-                "verifiers accept in every one of them."
+                "channel_error_rate corrected, 0/12 with both stated. THE "
+                "VERIFIERS DO NOT MOVE WITH THE NULLS AT ALL: their outcomes "
+                "are the protocol's and the nulls are the detector's, and over "
+                "those twelve seeds the pair of outcomes is identical under "
+                "all three settings -- both accept on 7 seeds and Bob rejects "
+                "the honest signature on 5, which is what a link at the design "
+                "noise level does to a signature and is a separate fact from "
+                "anything the detector said."
             ),
         },
         "attacks": roster_payload(),
@@ -475,6 +699,9 @@ def create_app(static_dir: Path | None = None) -> FastAPI:
         docs_url=None,
         redoc_url=None,
     )
+    # Outermost, so that an oversized body is refused before a route, a
+    # validator or an error handler can be handed it.
+    app.add_middleware(_BodyLimit)
     # Non-blocking, so an over-capacity request is refused immediately rather
     # than parked behind seconds of simulation with nothing on the screen.
     gate = threading.BoundedSemaphore(MAX_CONCURRENT_RUNS)
@@ -517,19 +744,36 @@ def create_app(static_dir: Path | None = None) -> FastAPI:
         )
 
     @app.get("/api/health")
-    def health() -> dict[str, Any]:
+    def health(response: Response) -> dict[str, Any]:
         """Report that the process is up, and which build it is.
+
+        Parameters
+        ----------
+        response : fastapi.Response
+            Used to forbid caching. This endpoint is the frontend's liveness
+            check -- it is polled so the masthead's ``LIVE API`` claim is
+            *verified* rather than inferred from something failing -- and a
+            cached ``{"ok": true}`` would be a masthead asserting a live API
+            over a dead process, which is the defect the poll exists to close.
 
         Returns
         -------
         dict
             ``ok`` and ``version``.
         """
+        response.headers["Cache-Control"] = "no-store"
         return {"ok": True, "version": __version__}
 
     @app.get("/api/attacks")
-    def attacks() -> list[dict[str, Any]]:
+    def attacks(response: Response) -> list[dict[str, Any]]:
         """List every arm, with its detectability stated rather than implied.
+
+        Parameters
+        ----------
+        response : fastapi.Response
+            Used to forbid caching, like every other API answer here: these
+            are live facts about the running build, and a cached one is a
+            screen labelled with a process that is not there.
 
         Returns
         -------
@@ -539,16 +783,23 @@ def create_app(static_dir: Path | None = None) -> FastAPI:
             beside eight ``true``\\ s -- see
             :ref:`sih141.web.catalogue <auth-is-not-a-blank>`.
         """
+        response.headers["Cache-Control"] = "no-store"
         return roster_payload()
 
     @app.get("/api/defaults")
-    def defaults() -> dict[str, Any]:
+    def defaults(response: Response) -> dict[str, Any]:
         """Serve the form's starting point, the published caps and the bounds.
+
+        Parameters
+        ----------
+        response : fastapi.Response
+            Used to forbid caching.
 
         Returns
         -------
         dict
         """
+        response.headers["Cache-Control"] = "no-store"
         return defaults_payload()
 
     @app.post("/api/run")
@@ -578,6 +829,7 @@ def create_app(static_dir: Path | None = None) -> FastAPI:
         RequestRefused
             Handled above into a ``400`` naming the cap.
         """
+        response.headers["Cache-Control"] = "no-store"
         request = RunRequest.from_mapping(body.model_dump())
         if not gate.acquire(blocking=False):
             response.status_code = 503
@@ -607,7 +859,7 @@ def create_app(static_dir: Path | None = None) -> FastAPI:
 
     if root.is_dir():
         app.mount(
-            "/static", StaticFiles(directory=str(root)), name="static"
+            "/static", _NoStaleStatic(directory=str(root)), name="static"
         )
 
     @app.get("/", response_class=HTMLResponse)
@@ -623,7 +875,13 @@ def create_app(static_dir: Path | None = None) -> FastAPI:
         """
         page = root / "index.html"
         if page.is_file():
-            return FileResponse(page)
-        return HTMLResponse(content=_NO_FRONTEND, status_code=200)
+            return FileResponse(
+                page, headers={"Cache-Control": "no-cache"}
+            )
+        return HTMLResponse(
+            content=_NO_FRONTEND,
+            status_code=200,
+            headers={"Cache-Control": "no-cache"},
+        )
 
     return app

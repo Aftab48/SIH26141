@@ -75,7 +75,8 @@
     "fields",
     "cost_table",
     "cost_table_note",
-    "max_concurrent_runs"
+    "max_concurrent_runs",
+    "max_request_bytes"
    ],
    "limit_fields_expected": [
     "key_length",
@@ -83,7 +84,8 @@
     "noise",
     "eps",
     "channel_error_rate",
-    "seed"
+    "seed",
+    "tolerated_depolarising"
    ],
    "cost_row_expected": [
     "key_length",
@@ -109,7 +111,16 @@
      "bounds.headline",
      "params"
     ]
-   }
+   },
+   "calibration_expected": [
+    "kind",
+    "what",
+    "runs_per_level",
+    "source",
+    "levels",
+    "with_true_rate_passed",
+    "second_null_note"
+   ]
   },
   "run": {
    "method": "POST",
@@ -137,7 +148,8 @@
     "_comment": "A run-level failure is answered with 200, all four keys present, detection and run null, and `error` filled in. The page renders that as a fourth state -- NO RUN -- which is not a clean run, not a detection and not a no-verdict, and belongs in no rate.",
     "field": "error",
     "null_on_success": true
-   }
+   },
+   "request_note": "The fixed contract's eight fields are unchanged and a body carrying only them behaves exactly as that contract says: tolerated_depolarising defaults to 0.0 on the server. It is optional on the WIRE and mandatory on the SCREEN -- the dashboard always sends both nulls, because detect() reads two of them and an operator who can set one of them is being told to do a thing that leaves an honest noisy run detected with an adversary named."
   }
  },
  "detection": {
@@ -226,7 +238,8 @@
    "count_exchange_timing",
    "security_claim",
    "verifiers",
-   "links"
+   "links",
+   "nulls"
   ],
   "expected": [
    "requested_key_length",
@@ -293,6 +306,17 @@
    "declared_charlie",
    "declared_pooled",
    "declaration_digest_present"
+  ],
+  "nulls_expected": [
+   "channel_error_rate",
+   "tolerated_depolarising",
+   "rate_null_field",
+   "channel_null_field",
+   "rate_null_is_default",
+   "channel_null_is_default",
+   "both_are_default",
+   "both_are_stated",
+   "note"
   ]
  },
  "ground_truth": {
@@ -362,7 +386,8 @@
    "what",
    "runs_per_level",
    "levels",
-   "with_true_rate_passed"
+   "with_true_rate_passed",
+   "second_null_note"
   ]
  }
 }

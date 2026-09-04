@@ -101,7 +101,88 @@ from typing import Any, Mapping, Sequence
 from sih141.detect.statistics import TranscriptStatistics
 
 
-__all__ = ["ground_truth_for", "run_facts"]
+__all__ = ["ground_truth_for", "nulls_stated", "run_facts"]
+
+
+def nulls_stated(
+    channel_error_rate: float, tolerated_depolarising: float
+) -> dict[str, Any]:
+    """Return which of :func:`~sih141.detect.detect`'s two nulls were stated.
+
+    ``detect()`` is told **two** nulls and both default to a perfect link:
+    ``channel_error_rate`` (``p_e``), which the *rate* family reads the
+    verifiers' mismatch counts against, and ``tolerated_depolarising`` (``p0``),
+    which the *channel* family reads the published check rounds against.
+    :attr:`~sih141.detect.detector.Detection.null_is_noiseless` is defined over
+    the first alone, correctly -- it is the rate family's flag -- and a screen
+    that reads it as *the* null-state flag says an honest noisy run has been
+    scored against the right law while the channel family's law is still wrong
+    about the wire.
+
+    Measured, at ``L = 192``, ``check_fraction = 0.25``, an honest run on a link
+    of strength ``0.03125`` over twelve seeds: ``12/12`` detected with both
+    nulls at zero, ``12/12`` with only ``channel_error_rate`` corrected, and
+    ``0/12`` with both stated. So this block is what a banner keys off, and the
+    comparisons happen here rather than in the browser (**D8**).
+
+    Parameters
+    ----------
+    channel_error_rate : float
+        ``p_e`` as the operator set it.
+    tolerated_depolarising : float
+        ``p0`` as the operator set it.
+
+    Returns
+    -------
+    dict
+        The two values, a flag per family saying whether that family's null was
+        left at its default, ``both_are_default``, ``both_are_stated``, and the
+        names of the two request fields so the screen can tell an operator what
+        to set without hard-coding either.
+
+    Examples
+    --------
+    >>> from sih141.web.payload import nulls_stated
+    >>> default = nulls_stated(0.0, 0.0)
+    >>> default["both_are_default"], default["both_are_stated"]
+    (True, False)
+
+    Correcting one is the case that matters: it is neither state, and the two
+    flags say so separately.
+
+    >>> half = nulls_stated(0.015625, 0.0)
+    >>> half["rate_null_is_default"], half["channel_null_is_default"]
+    (False, True)
+    >>> half["both_are_default"], half["both_are_stated"]
+    (False, False)
+    >>> both = nulls_stated(0.015625, 0.03125)
+    >>> both["both_are_stated"], both["channel_null_field"]
+    (True, 'tolerated_depolarising')
+    """
+    rate_default = float(channel_error_rate) == 0.0
+    channel_default = float(tolerated_depolarising) == 0.0
+    return {
+        "channel_error_rate": float(channel_error_rate),
+        "tolerated_depolarising": float(tolerated_depolarising),
+        "rate_null_field": "channel_error_rate",
+        "channel_null_field": "tolerated_depolarising",
+        "rate_null_is_default": bool(rate_default),
+        "channel_null_is_default": bool(channel_default),
+        "both_are_default": bool(rate_default and channel_default),
+        "both_are_stated": bool(not rate_default and not channel_default),
+        "note": (
+            "detect() takes TWO nulls and both default to a perfect link: "
+            "channel_error_rate for the rate family and tolerated_depolarising "
+            "for the channel family. They are two parameterisations of the "
+            "same physics and neither is converted into the other, because "
+            "that would state a null the operator did not ask for. Stating "
+            "only one leaves an honest run over a noisy link DETECTED with an "
+            "adversary named -- 12/12 at L = 192, strength 0.03125, over twelve "
+            "seeds, against 0/12 with both stated. Neither is ever inferred "
+            "from the transcript: at check_fraction = 0 the transcript carries "
+            "no estimate of either, and guessing would be inventing a null."
+        ),
+    }
 
 
 def _interval(interval: Any) -> dict[str, Any] | None:

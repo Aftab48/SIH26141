@@ -558,6 +558,17 @@
   },
   "summary": "Bob: accepted, r_R = 0.000000 vs threshold 0.015625, |M_R| = 46 (z = -0.35)\nCharlie: accepted, r_R = 0.000000 vs threshold 0.062500, |M_R| = 42 (z = -1.06)\npooled: pooled_matched_count: 88/288 = 0.305556 vs null Binomial(288, 1/3) mean 96.000000 (z = -1.00, P(|dev| >= this) <= 1.00e+00)\naborts: 0 refusal(s), 0 structural, 0 evidence\nreplay: 0 refusal(s), 2 spent round(s) over 1 session(s)",
   "transcript_bytes": 64787,
+  "nulls": {
+   "channel_error_rate": 0.0,
+   "tolerated_depolarising": 0.0,
+   "rate_null_field": "channel_error_rate",
+   "channel_null_field": "tolerated_depolarising",
+   "rate_null_is_default": true,
+   "channel_null_is_default": true,
+   "both_are_default": true,
+   "both_are_stated": false,
+   "note": "detect() takes TWO nulls and both default to a perfect link: channel_error_rate for the rate family and tolerated_depolarising for the channel family. They are two parameterisations of the same physics and neither is converted into the other, because that would state a null the operator did not ask for. Stating only one leaves an honest run over a noisy link DETECTED with an adversary named -- 12/12 at L = 192, strength 0.03125, over twelve seeds, against 0/12 with both stated. Neither is ever inferred from the transcript: at check_fraction = 0 the transcript carries no estimate of either, and guessing would be inventing a null."
+  },
   "transcript_summary": "QDS run on message bit 0: L=192, |B|=3, s_a=0.01562, s_v=0.06250\nCHECK ROUNDS: 48 of 192 positions were reserved for channel estimation and dealt between the links, so the key was scored at L=144; 96 observations and 96 channel samples published.\nPOOLED EVIDENCE bit 0: m_B = 46, m_C = 42, M = 88 (floors: m_min = 1, M_min = 4). Every floor met.\nBob ACCEPTED bit 0: 0/46 mismatches on matched positions (98 discarded), rate 0.00000 <= 0.01562\nCharlie ACCEPTED bit 0: 0/42 mismatches on matched positions (102 discarded), rate 0.00000 <= 0.06250\nEVIDENCE: M = m_B + m_C = 88 matched records, so P(repudiation | this run) <= 9.761e-01. This is the per-run bound and the only one that assumes nothing about the signer.\nTRANSFERABLE: Bob accepted and Charlie accepted."
  },
  "ground_truth": {
@@ -594,8 +605,8 @@
   }
  },
  "timings": {
-  "session_ms": 492.7458000020124,
-  "detect_ms": 6.936199963092804
+  "session_ms": 392.8368999622762,
+  "detect_ms": 5.028699990361929
  },
  "error": null
 }

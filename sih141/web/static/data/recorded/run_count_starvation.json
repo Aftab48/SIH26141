@@ -604,6 +604,17 @@
   },
   "summary": "Charlie: accepted, r_R = 0.000000 vs threshold 0.062500, |M_R| = 91 (z = -0.62)\npooled: no pooled matched count (not a full run)\naborts: 1 refusal(s), 0 structural, 1 evidence\nreplay: 0 refusal(s), 1 spent round(s) over 1 session(s)",
   "transcript_bytes": 128288,
+  "nulls": {
+   "channel_error_rate": 0.0,
+   "tolerated_depolarising": 0.0,
+   "rate_null_field": "channel_error_rate",
+   "channel_null_field": "tolerated_depolarising",
+   "rate_null_is_default": true,
+   "channel_null_is_default": true,
+   "both_are_default": true,
+   "both_are_stated": false,
+   "note": "detect() takes TWO nulls and both default to a perfect link: channel_error_rate for the rate family and tolerated_depolarising for the channel family. They are two parameterisations of the same physics and neither is converted into the other, because that would state a null the operator did not ask for. Stating only one leaves an honest run over a noisy link DETECTED with an adversary named -- 12/12 at L = 192, strength 0.03125, over twelve seeds, against 0/12 with both stated. Neither is ever inferred from the transcript: at check_fraction = 0 the transcript carries no estimate of either, and guessing would be inventing a null."
+  },
   "transcript_summary": "QDS run on message bit 0: L=384, |B|=3, s_a=0.01562, s_v=0.06250\nCHECK ROUNDS: 96 of 384 positions were reserved for channel estimation and dealt between the links, so the key was scored at L=288; 192 observations and 192 channel samples published.\nPOOLED EVIDENCE bit 0: m_B = 108, m_C = 2, M = 110 (floors: m_min = 4, M_min = 62). Below the per-verifier floor: Charlie. Neither verifier scores.\nCharlie ACCEPTED bit 0: 0/91 mismatches on matched positions (197 discarded), rate 0.00000 <= 0.06250\nBob NO VERDICT bit 0: 108/288 positions matched, floor 4, honest mean 96.0; pooled M = 108 + 2 = 110, pooled floor 62 (counterpart-matched-count-below-floor). Not a rejection.\nNO VERDICT: Bob (counterpart-matched-count-below-floor) could not score this declaration. This is not a rejection and must not be counted as one."
  },
  "ground_truth": {
@@ -664,8 +675,8 @@
   }
  },
  "timings": {
-  "session_ms": 981.9182999781333,
-  "detect_ms": 14.939500018954277
+  "session_ms": 781.1668999493122,
+  "detect_ms": 13.528999988920987
  },
  "error": null
 }

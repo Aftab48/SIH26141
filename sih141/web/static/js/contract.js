@@ -120,6 +120,17 @@ const Contract = (function () {
         problems.push(`run has no "${name}"`);
       }
     );
+    // The null banner picks one of THREE states off `run.nulls`, and it is the
+    // panel that decides whether an honest run over a noisy link reads as an
+    // attack. A half-supplied block would silently fall back to the rate
+    // family's flag alone, which is the state this contract exists to prevent.
+    if (payload && payload.run && payload.run.nulls) {
+      missing(payload.run.nulls, runRules.nulls_expected || []).forEach(
+        function (name) {
+          problems.push(`run.nulls has no "${name}"`);
+        }
+      );
+    }
 
     const truthRules = rules.ground_truth || {};
     missing(

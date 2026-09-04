@@ -39,9 +39,10 @@
    {"noise": 0.015, "detected": 30},
    {"noise": 0.03125, "detected": 30}
   ],
-  "with_true_rate_passed": "Passing the link's true rate to detect() gives 0/30 at every level.",
+  "with_true_rate_passed": "0/30 at every level when BOTH of detect()'s nulls are stated: the link's true matched-position error rate as channel_error_rate, AND the link's Werner strength as tolerated_depolarising. This table is the RATE family's. Correcting this null alone does not clear an honest noisy run.",
   "design_noise_level": 0.03125,
-  "design_noise_note": "0.03125 is 2*s_a, the design noise level, and it fires on every run out of thirty. The honest baseline over a realistic link is the single most likely thing on this dashboard to be misread."
+  "design_noise_note": "0.03125 is 2*s_a, the design noise level, and it fires on every run out of thirty. The honest baseline over a realistic link is the single most likely thing on this dashboard to be misread.",
+  "second_null_note": "That calibration is the RATE family. The CHANNEL family has its own null, tolerated_depolarising, also defaulting to a perfect resource, and stating only the first leaves an honest noisy run firing: measured over twelve seeds at L = 192, check_fraction = 0.25, link strength 0.03125 -- 12/12 detected with both nulls at zero, 12/12 with only channel_error_rate corrected, 0/12 with both stated. THE VERIFIERS DO NOT MOVE WITH THE NULLS AT ALL: their outcomes are the protocol's and the nulls are the detector's, and over those twelve seeds the pair of outcomes is identical under all three settings -- both accept on 7 seeds and Bob rejects the honest signature on 5, which is what a link at the design noise level does to a signature and is a separate fact from anything the detector said."
  },
  "false_negative": {
   "exists": false,

@@ -561,6 +561,17 @@
   },
   "summary": "Bob: accepted, r_R = 0.000000 vs threshold 0.015625, |M_R| = 51 (z = 0.53)\npooled: no pooled matched count (not a full run)\naborts: 1 refusal(s), 1 structural, 0 evidence\nreplay: 0 refusal(s), 1 spent round(s) over 1 session(s)",
   "transcript_bytes": 69760,
+  "nulls": {
+   "channel_error_rate": 0.0,
+   "tolerated_depolarising": 0.0,
+   "rate_null_field": "channel_error_rate",
+   "channel_null_field": "tolerated_depolarising",
+   "rate_null_is_default": true,
+   "channel_null_is_default": true,
+   "both_are_default": true,
+   "both_are_stated": false,
+   "note": "detect() takes TWO nulls and both default to a perfect link: channel_error_rate for the rate family and tolerated_depolarising for the channel family. They are two parameterisations of the same physics and neither is converted into the other, because that would state a null the operator did not ask for. Stating only one leaves an honest run over a noisy link DETECTED with an adversary named -- 12/12 at L = 192, strength 0.03125, over twelve seeds, against 0/12 with both stated. Neither is ever inferred from the transcript: at check_fraction = 0 the transcript carries no estimate of either, and guessing would be inventing a null."
+  },
   "transcript_summary": "QDS run on message bit 0: L=192, |B|=3, s_a=0.01562, s_v=0.06250\nCHECK ROUNDS: 48 of 192 positions were reserved for channel estimation and dealt between the links, so the key was scored at L=144; 96 observations and 96 channel samples published.\nFORWARDING ALTERED THE DECLARATION: Charlie scored a different key from the one Bob was given.\nPOOLED EVIDENCE bit 0: m_B = 51, m_C = 50, M = 101 (floors: m_min = 1, M_min = 4). Every floor met.\nBob ACCEPTED bit 0: 0/51 mismatches on matched positions (93 discarded), rate 0.00000 <= 0.01562\nCharlie NO VERDICT bit 0: 51/144 positions matched, floor 1, honest mean 48.0; pooled M = 51 + 51 = 102, pooled floor 4 (counts-from-two-declarations). Not a rejection.\nNO VERDICT: Charlie (counts-from-two-declarations) could not score this declaration. This is not a rejection and must not be counted as one."
  },
  "ground_truth": {
@@ -612,8 +623,8 @@
   }
  },
  "timings": {
-  "session_ms": 488.7383000459522,
-  "detect_ms": 6.098999991081655
+  "session_ms": 390.615800046362,
+  "detect_ms": 5.551900016143918
  },
  "error": null
 }

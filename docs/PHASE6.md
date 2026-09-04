@@ -12,10 +12,21 @@ nothing fetched from a network at runtime. Integration found and fixed **four de
 had a passing test**; they are in §9, and the pattern that produced all four is the most
 transferable thing in this document.
 
-Full suite on the shipped tree: **3338 passed, 0 failed, 0 skipped**, exit `0`, about 21:50 wall
-clock. (`pytest -q` does not print its summary line when stdout is not a TTY in this
-environment, so the counts are read off the progress output — 3338 `.` and no `F`, `E` or `s` —
-and cross-checked against `pytest --collect-only -q`, which also reports 3338.)
+Three independent audits then ran against that tree and **all three returned UNSOUND**: twelve
+defects, six of them major, two of which falsified claims made in this document. They are in
+§11 with the measurement that closed each one. Two of the twelve deserve to be read before
+anything else here, because both are this project's own stated failure mode arriving on a
+screen: the screen instructed an operator to state ONE of `detect()`'s two nulls and asserted
+that doing so clears an honest noisy run (it does not — 12/12 detected, `honest` ruled out, an
+adversary named), and a refusal path crashed while formatting its own refusal for the third
+time in one phase. Writing the test for the first of those turned up a **thirteenth**: a
+sentence this API publishes claimed both verifiers accept on every honest noisy run, and Bob
+rejects on 5 of 12.
+
+Full suite on the shipped tree, after the audit round: **3460 passed in 1327.97s (0:22:07)**,
+exit `0`, no failures, no errors, no skips — `python -m pytest` printed that summary line
+verbatim, and `pytest --collect-only -q` sums to the same 3460. The round before it reported
+3338; the 122 new tests are §11's.
 
 > **Phase 6 runs before Phase 5.** Nothing on this screen is an evaluation result. Phase 5 has
 > produced no numbers, and the dashboard demonstrates a live run rather than reporting a study.
@@ -32,12 +43,37 @@ python -m sih141.web
 Then open the address it prints. That is the whole of it.
 
 ```
-SIH26141 0.1.0 -- http://127.0.0.1:8141
+SIH26141 0.1.0 -- listening, bound before this line was printed:
+                  http://127.0.0.1:8141
+                  http://[::1]:8141
   frontend        present (.../sih141/web/static)
   live key length up to L = 1024; longer runs are refused, never clamped
   concurrent runs at most 2
+  request body    at most 65536 bytes; larger is 413 before the app sees it
   network         nothing is fetched; /docs is off because Swagger UI loads from a CDN
 ```
+
+Two things in that banner are load-bearing and both were defects (§11).
+
+**The sockets are open before the address is printed.** The banner used to come first and the
+bind second, inside `uvicorn.run`, so a second instance on a busy port printed an address it
+never bound, then uvicorn's startup lines, then the bind error, and *ended* on `Application
+shutdown complete` — which reads like a clean stop. The exit status was `1`, so scripts were
+fine; the presenter who left an instance running an hour ago, restarts, reads the address line
+and demonstrates against the **old process** was not. A busy port now prints `COULD NOT START`,
+names the port, prints no address at all, and exits `1`. On Windows the new listener also sets
+`SO_EXCLUSIVEADDRUSE`, which closes a second hazard the audit's repro walked past: a second
+instance on `127.0.0.1:8141` used to bind *successfully* while another held `0.0.0.0:8141`, and
+both then answered.
+
+**Both loopback addresses are bound.** `127.0.0.1` and `0.0.0.0` are IPv4 wildcards and nothing
+listens on `::1`; on Windows `--host ::` is the mirror image, since an IPv6 socket is `V6ONLY`
+there. Measured before the fix, server on `--host 0.0.0.0`: `http://127.0.0.1:PORT/api/health`
+answered, `http://[::1]:PORT/api/health` returned nothing. A browser that resolves `localhost`
+to `::1` without falling back cannot open the demo at the address an operator is most likely to
+type. Loopback and the wildcards now open one socket per family and the banner lists every
+address that was actually bound; a machine with no IPv6 stack gets one socket and a
+`not bound` line saying so.
 
 `--host` and `--port` are the only options that matter. The default host is `127.0.0.1` and
 **not** `0.0.0.0`: this server runs unauthenticated quantum simulation on request, so exposing
@@ -356,15 +392,17 @@ floors mean anything at all.
 
 ## 5. Vendoring, and how the no-network claim was verified
 
-**26 files, 486 KB, four extensions.**
+**26 files, 520 KB, four extensions.**
 
 | kind | count | size |
 |---|---:|---:|
-| `.json` (contract, constants, 13 recorded runs + index) | 19 | 341.2 KB |
-| `.js`  (`app`, `render`, `charts`, `contract`, `format`) | 5 | 119.7 KB |
-| `.css` (`app.css`) | 1 | 21.2 KB |
+| `.json` (contract, constants, 13 recorded runs + index) | 19 | 356.2 KB |
+| `.js`  (`app`, `render`, `charts`, `contract`, `format`) | 5 | 137.0 KB |
+| `.css` (`app.css`) | 1 | 22.6 KB |
 | `.html` (`index.html`) | 1 | 3.7 KB |
-| **total** | **26** | **485.9 KB** |
+| **total** | **26** | **519.5 KB** |
+
+No file was added by the audit round; the growth is the fixes and the words that explain them.
 
 No chart library, no web font, no icon font, no image, no analytics, no bundle, no minified
 vendor blob, nothing that needs a toolchain to rebuild. **The charts are hand-rolled SVG** —
@@ -389,20 +427,20 @@ this section.
    `url(`, two in comments and one real — `url(#hatchId)`, a same-document SVG fragment
    reference for the hatch pattern. Everything else: zero.
 
-2. **Structural closure.** There is exactly **one** `fetch()` call site in 3,526 lines of
-   JavaScript (`app.js:77`), and every path handed to it is root-relative: `/api/run`,
-   `/api/attacks`, `/api/defaults`, `/static/…`. A root-relative URL **cannot** leave the
-   origin. There is no other network API anywhere in the frontend. This is stronger than any
-   empirical check: it is not that no request happened to leave, it is that none can.
+2. **Structural closure.** There is exactly **one** `fetch()` call site in the frontend's
+   JavaScript (`app.js`, inside `getJson`), and every path handed to it is root-relative:
+   `/api/run`, `/api/health`, `/api/attacks`, `/api/defaults`, `/static/…`. A root-relative URL
+   **cannot** leave the origin. There is no other network API anywhere in the frontend. This is
+   stronger than any empirical check: it is not that no request happened to leave, it is that
+   none can.
 
 3. **Empirical, against the real service.** The page was hard-reloaded and driven — a recorded
    run, a live run, projector mode toggled — and `performance.getEntriesByType('resource')`
-   reports **11 resources from exactly one origin**, `http://localhost:8141`, totalling 30.9 KB
-   — the five scripts, `app.css`, `api-contract.json`, `constants.json`,
-   `recorded/index.json`, and the two start-up calls `/api/attacks` and `/api/defaults` (the
-   document itself is the navigation entry, not a resource). Not one request left the origin.
-   Driving all 13 recorded runs and further live runs adds only `/api/run` and the recorded
-   fixtures, under the same origin.
+   reports resources from exactly one origin. Re-measured after the audit round, which added
+   two new request kinds — the 13-file recorded preload at boot (§11.4) and the five-second
+   `/api/health` poll (§11.5): **37 resources, 11 of them health polls, and zero from a foreign
+   origin.** Not one request left the origin, and the two new kinds are the reason to say so
+   again rather than to assume the earlier count still stands.
 
 4. **Enforced by the suite.** `test_no_asset_references_a_remote_origin` scans the contents of
    every served file, `test_every_local_reference_resolves_on_disk` checks the other direction,
@@ -479,12 +517,40 @@ noise 0, timing before-forwarding. Generating the session is the slow part; dete
 milliseconds.` — and the Run button is **disabled** for the duration, so a click cannot start a
 second run or be lost.
 
-**If the service dies mid-demonstration**, the masthead flips to `RECORDED ONLY — API NOT
-REACHABLE`, all 13 recorded runs keep working from the browser's cache, and an attempted live
-run says `NO RUN` rather than leaving a stale verdict on screen. Verified by killing the
-process with the page open (§9.3, §9.4). What does *not* work is a **cold** load against a dead
-service: the page itself is served by that process, so there is nothing to fall back to. Start
-the server before the room fills.
+**If the service dies mid-demonstration**, the masthead flips to
+`RECORDED ONLY (13) — API NOT REACHABLE` within five seconds, all 13 recorded runs keep working
+**from this page's memory**, and an attempted live run says `NO RUN` rather than leaving a stale
+verdict on screen.
+
+That paragraph used to say the recorded runs kept working "from the browser's cache", and the
+audit showed they did not. `showRecorded` re-fetched `data/recorded/<file>.json` on every click
+and the server sent no `Cache-Control`, so survival was decided by Chrome's *heuristic*
+freshness — roughly a tenth of the file's age, which on a tree cloned that morning is a couple
+of minutes. On a fresh clone: page loaded, process killed, three recorded runs clicked, three
+`Failed to fetch` and three `NO RUN` panels. The whole set is 365 KB, so it is now fetched once
+at boot while the service is alive and every click reads memory; the rail says
+`13 of 13 held in this page's memory`, so a partial preload is visible before the click that
+needs it rather than after.
+
+**A cold load against a dead service does not load at all, and that is now deliberate.** This
+document used to say the page "is served by that process, so there is nothing to fall back to",
+which was not what happened either: it rendered from cache with the masthead asserting
+`RECORDED ONLY — API NOT REACHABLE` above a rail holding **zero** recorded runs — a chip
+promising a fallback mode that was empty. Nothing numeric was wrong on that screen (every
+control read `range not supplied by the API`, the headline panel read `THE API DID NOT SUPPLY
+THIS`), but the chip was, and the chip is what a presenter points at. On a tree whose files had
+just been edited the same reload produced a *third* outcome: a blank page, because the scripts
+had to revalidate and could not.
+
+A failure mode that is a coin flip cannot be documented, so the frontend is served with
+`Cache-Control: no-cache` — revalidate before reuse, not do-not-store. A live server answers
+`304` over loopback in well under a millisecond; a dead one produces the browser's own error
+page. There is one behaviour, it is the honest one, and it also removes the stale-asset hazard
+this document warns about elsewhere. The masthead's third state (`NOTHING LIVE — NO API AND NO
+RECORDED RUNS`) stays as defence in depth for a browser or proxy that serves a stale shell
+anyway.
+
+Start the server before the room fills.
 
 ## 7. Abusing the running service
 
@@ -495,13 +561,28 @@ tracebacks on the wire**, plus two afterwards — a health check and a normal ru
 service still worked. Status histogram over the single-request sections: 23 × `400`, 16 × `422`,
 8 × `404`, 5 × `405`, 6 × `200`, 1 × `503`.
 
+> **That "zero `500`s" was false, and the way it was false is the point.** An audit sent a
+> `key_length` with 309 digits and got a `500`. The battery above stopped at ten digits. The
+> defect was a *third* instance of the shape the two earlier ones had — a request refused
+> **correctly**, then the code reporting the refusal falling over while quoting the input back —
+> and this section's own framing ("that ground is covered") is what made the third instance easy
+> to miss. Covering an instance is not covering a shape. §11.1 has the fix and the sweep that
+> replaces this battery: every field on the request surface crossed with every value that is
+> hard to *render*, which contains all three instances and did not have to know about any of
+> them.
+
 * **Bounds.** Every out-of-range value returns `400` naming the field, the value and the cap:
   `key_length` at 0, −192, 1025, 2⁷⁰ and 1,048,576; `check_fraction` at 1.0, 1.5, −0.5; `noise`
   at 2.0 and −1; `eps` at 0, −1e−9 and 1e300; `seed` at −1 and 2⁶⁴. Wrong types return `422`
   with a structured detail. Unknown fields return `422 extra_forbidden`. An `attack` of
   `'; DROP TABLE runs;--` returns `400` listing the eleven valid keys.
 * **Malformed bodies.** Truncated JSON, HTML, NUL bytes, invalid UTF-8, an empty body, a bare
-  `null`, an array, and 1 MB and 8 MB of junk — all `400`/`422`, the 8 MB case in 89 ms.
+  `null` and an array — all `400`/`422`. The 1 MB and 8 MB junk bodies in this battery were
+  handled *and were the wrong measurement*: they were refused, and the refusal echoed the
+  offending field back twice, once inside its message and once as `value`, for a measured **2.00×**
+  on the wire and about **9×** in resident memory that was never released. 256 MB took the process
+  to 2.4 GB and it stayed there. Bodies are now capped at **65536 bytes** and answered `413`
+  before the application sees them (§11.2).
 * **Content types.** `text/plain`, `application/x-www-form-urlencoded`, `multipart/form-data`,
   `application/octet-stream` and a missing `Content-Type` are all handled; only the last is
   accepted, which is correct, since the body is valid JSON either way.
@@ -582,6 +663,30 @@ it is not worth a bespoke timeout, and it is recorded here rather than discovere
    derived in the browser and D8 was never in question — it was two API numbers sharing a name.
    The caption now says **BOTH COLUMNS ARE PARAMETER SETS AND NEITHER IS THIS RUN** and the
    headers read `demo default set` and `headline set`.
+9. **The audit round adds two more additive extensions and one new status code**, all in §11 and
+   none of them removing anything.
+
+   *One more response field*: `run.nulls`, from `sih141.web.payload.nulls_stated()`. It reports
+   which of `detect()`'s two nulls the operator actually stated — three states, not two — and it
+   exists because the alternative was the browser comparing a null to zero to decide what the
+   screen says, which is a decision made outside every test this project has (**D8**).
+   `Detection.null_is_noiseless` is untouched: it is the rate family's flag and remains exactly
+   that.
+
+   *One more status code*: `413`, for a request body over `MAX_REQUEST_BYTES` (65536). The brief
+   requires that a request cannot exhaust the server, and nothing bounded the body: `413` is the
+   correct answer and is refused before the application sees the bytes.
+
+   *Two more response headers*: `Cache-Control: no-cache` on the frontend, so a cold load against
+   a dead service has one behaviour instead of three (§11.6), and `Cache-Control: no-store` on
+   every `/api/` answer — `/api/health` is polled so the masthead's `LIVE API` claim is verified
+   rather than inferred, and a cached `{"ok": true}` would put that claim back over a dead
+   process.
+10. **The dashboard always sends both nulls**, so the eight-field body of the fixed contract is
+   still exactly what the server accepts and is no longer what the screen sends. The contract
+   manifest records this: `tolerated_depolarising` stays under `request_optional`, optional on
+   the wire and mandatory on the screen, because an operator who can set one of two nulls is
+   being told to do something that leaves an honest run reported as an attack (§11.1).
 
 ## 9. Four defects that each had a passing test
 
@@ -683,9 +788,342 @@ made an existing feature reachable: `startLiveRun` already carried the message *
 reachable, so no live run can be started. The recorded runs below still work"*, and it could
 never fire, because nothing ever moved the mode after start-up.
 
-**The demo genuinely survives the service dying.** With the process killed and the page open,
-all 13 recorded runs still render from the browser's cache in ~175 ms each, and a live run
-attempt says `NO RUN` rather than showing a stale verdict.
+> **This fix covered one of the two paths, and the audit found the other.** The repaint lived
+> inside `startLiveRun`'s catch. `showRecorded`'s catch called `Render.refused` and `setStatus`
+> and never touched `state.mode`, so clicking three recorded runs against a dead process gave
+> three `Failed to fetch` panels under a masthead still reading `LIVE API` — and the recorded
+> path is the one a presenter falls back to. §11.4 and §11.5 close it: one shared handler that
+> every failing path calls, and a five-second `/api/health` poll, because with recorded runs now
+> served from memory there is no longer any failure on that path to learn from.
+
+**The demo genuinely survives the service dying** — but not for the reason this section
+originally gave, and the difference is §11.4. With the process killed and the page open, all 13
+recorded runs render **from memory**, because they are fetched once at boot rather than on each
+click; a live run attempt says `NO RUN`; and the masthead flips within five seconds whether or
+not anything has been clicked, because `/api/health` is polled rather than waited on. The
+earlier claim — "from the browser's cache" — was measured false on a fresh clone.
+
+## 11. Three audits, thirteen defects
+
+Three independent auditors ran against the tree §9 closed and **all three returned UNSOUND**:
+twelve defects, six major. A thirteenth turned up while writing the test for the first of them.
+Each entry below carries the measurement before the fix and the measurement after, because a
+summary count hides the one that did not work.
+
+Two of them are the reason this round happened at all rather than the phase being declared done:
+both are this project's own stated failure mode arriving on a screen a judge reads.
+
+### 11.1 The screen instructed an operator to produce a false accusation — MAJOR
+
+`detect()` takes **two** null parameters. `channel_error_rate` (`p_e`) is what the *rate* family
+reads the verifiers' mismatch counts against; `tolerated_depolarising` (`p0`) is what the
+*channel* family reads the published check rounds against. Both default to a perfect link, and
+neither is converted into the other, because doing that silently would state a null the operator
+did not ask for.
+
+`Detection.null_is_noiseless` is defined over the first alone — correctly; it is the rate
+family's flag. The banner keyed off it, so there were two states on screen where there are three,
+and the calibration panel asserted *"0/30 at every level when the link's true rate is passed to
+`detect()`"* while the warning above it said *"Set the link's true rate in the controls"*,
+singular.
+
+An operator who follows that instruction, on an **honest** run over a noisy link:
+
+| nulls stated | banner before | verdict | attribution |
+|---|---|---|---|
+| neither | red `The null is noiseless` | `DETECTED` | `honest` RULED OUT, 5 adversaries named |
+| **rate only — what the screen said to do** | **blue INFO `The null carries the link's error rate`** | `DETECTED` | `honest` RULED OUT, `channel-manipulation` **SUPPORTED** |
+| both | *unreachable by following the instruction* | — | — |
+
+Measured over twelve seeds at `L = 192`, `check_fraction = 0.25`, link strength `0.03125` (the
+design noise level `2 s_a`): **12/12** detected with neither null stated, **12/12** with only
+`channel_error_rate` corrected, **0/12** with both. `0.015625` is exactly the figure the same
+screen's ground-truth box prints as the link's true error rate.
+
+The mechanism was right — `tolerated_depolarising` was already a request field, already a
+control, and the API already shipped the correcting sentence as
+`noise_null_calibration.second_null_note`. What was wrong was everything the operator reads:
+`render.js`'s `noiseCalibration()` rendered `with_true_rate_passed` and **dropped**
+`second_null_note`, and no JavaScript or test referenced it. A sentence the API ships and the
+screen drops is worse than one nobody wrote: it reads as though the question was answered.
+
+**Fixed** in four places, and the shape of the fix matters more than any one of them.
+
+* `sih141/web/payload.py` gains `nulls_stated()`, which returns the three-way state — both
+  default, one stated, both stated — as flags **computed in Python**. The browser branches on a
+  boolean the API sent; it does not compare a null to zero (**D8**).
+* `render.js`'s `nullBanners()` has three branches, and the middle one — the state the old
+  instruction led into — is an `alarm`/`caution` banner headed **"Only one of the two nulls is
+  stated"**, never the calm blue INFO. The info banner is now reachable only when both are.
+* The calibration panel renders `second_null_note` in a `.warn-note` block, visually distinct
+  from the line it corrects.
+* The two controls are labelled `NULL 1 of 2` and `NULL 2 of 2` under a standing note reading
+  *"TWO NULLS, AND BOTH DEFAULT TO A PERFECT LINK … setting either alone leaves the other family
+  scoring against a link nobody has, and the run still fires."* `with_true_rate_passed` itself
+  now names both request fields, so it is true read alone.
+
+**Verified end to end in the browser**, which is what constraint 3 demands: run the honest arm
+over a noisy link and follow the screen's own instruction exactly as written.
+
+| nulls | banner after | verdict | `honest` row |
+|---|---|---|---|
+| `0, 0` | red alarm — *Both nulls are noiseless* | `DETECTED` | RULED OUT |
+| `0.015625, 0` | **red alarm — *Only one of the two nulls is stated*** | `DETECTED` | RULED OUT |
+| `0.015625, 0.03125` | blue info — *Both nulls were stated by the operator* | **`NOTHING FIRED`** | **SUPPORTED** |
+
+That last heading is deliberately weaker than it could be. It says both nulls were **stated**,
+not that they are the right ones: an operator can state two nulls describing a link nobody has —
+type an honest link's numbers on a run with Eve on the resource seam and a heading reading "both
+nulls carry the link" would assert she is not there. Whether the nulls *match* the wire is the
+harness's sentence, printed in the same banner, because only the harness knows it.
+
+Nothing about the detector changed. The thresholds are derived and were never touched (**D7**);
+what changed is that the screen now asks for the two nulls it actually has.
+
+### 11.2 `key_length` with 309 digits was a `500` — MAJOR, and the third of its shape
+
+`check_key_length`'s over-ceiling message estimated the run's cost as
+`f"{length * 2.2 / 1000.0:.0f} s"`. `int → float` overflows above `sys.float_info.max`, so any
+`key_length` of 309 or more digits raised `OverflowError` **while its own refusal was being
+formatted**. Measured before: 10 digits → `400`, 100 → `400`, 308 → `400`, **309 → `500`**,
+400 → `500`, 1000 → `500`, with `Internal Server Error` on the wire and a traceback in the log.
+The existing test used `key_length = 10**9` — ten digits — and passed.
+
+This is the **third instance of one shape** in this phase: a request refused *correctly*, and
+then the code reporting the refusal falling over while quoting the input back. §9.2 was the
+second (a body nested 2000 deep, `RecursionError` inside the `422` handler); a bare `NaN` in the
+error body was the first. Each was fixed where it was found, which is why there was a third.
+
+**Fixed as a rule rather than as an instance**, in `sih141/web/limits.py`:
+
+> Nothing that renders a refusal may compute on caller input, and every caller-supplied value
+> reaches a message or a body through `safe_text()` or `json_safe()` — both of which are total.
+
+`safe_text()` catches whatever `repr` throws (an integer beyond `sys.get_int_max_str_digits()`
+is the one this API meets; it reports the digit count instead) and truncates what it returns.
+`json_safe()` already bounded depth and encodability and now bounds length too. No message
+anywhere multiplies a caller's number: the over-ceiling refusal quotes the **measured**
+`COST_TABLE` row at the ceiling instead, which is a figure the suite already pins.
+
+Measured after: 10, 100, 308, 309, 400, 1000 and 4300 digits are **all `400`**, all naming the
+cap, all under 1100 bytes.
+
+**The test is written against the shape, not the instance.**
+`test_no_field_can_be_made_to_crash_its_own_refusal` crosses all nine request fields with nine
+values that are hard to *render* — `NaN`, `±Infinity`, 309- and 4300-digit integers, a 20 KB
+string, 400-deep lists and objects — 81 cases, and asserts every one comes back `400`/`413`/`422`
+carrying JSON with no traceback. It contains all three instances and had to know about none of
+them. Run against the pre-fix tree it fails on exactly the two cases that were broken.
+
+### 11.3 No request body size cap, ~9× memory amplification — MAJOR
+
+`RequestRefused.to_dict()` echoed the offending value twice — once inside `message` via `{!r}`
+and once as `value` — with no bound on either, and there was no cap on the body itself. Measured
+by the auditor: a 1,000,014-byte request produced a 2,000,707-byte response (**×2.00**); 64 MB in
+→ 134 MB out; 128 MB in → 268 MB out, RSS 347 MB; 256 MB in → 537 MB out, RSS **2,363 MB**,
+still 2,365 MB after 20 s idle and 2,375 MB after a subsequent normal run. Three concurrent
+200 MB bodies: three 419 MB responses and a settled RSS of 5,520 MB.
+
+`MAX_CONCURRENT_RUNS` offered nothing, and that is worth stating plainly: the gate is taken
+**after** validation, so a request refused by a cap never reaches it. The gate protects the CPU
+and only the CPU.
+
+**Fixed** with `_BodyLimit`, a pure-ASGI middleware installed outermost — pure ASGI because the
+point is that the bytes are never accumulated, and a middleware handed a `Request` has already
+lost that argument. A declared `Content-Length` over `MAX_REQUEST_BYTES` (65536) is refused with
+nothing read; a body without one is counted as it arrives and abandoned the moment the count
+passes the ceiling. Everything under the ceiling is replayed unchanged.
+
+Measured after, same request sizes: 100 KB → `413` in 295 bytes (**×0.0029**), 1 MB → `413` in
+296 bytes (**×0.0003**), 8 MB → `413` in 296 bytes. A 1 KB body still gets its `400` with the
+offending value quoted, truncated at 200 characters with a count of what was dropped. The
+ceiling is published under `/api/defaults` → `limits.max_request_bytes` and printed in the
+start-up banner.
+
+Measured against the **running server**, which is where the auditor's numbers were taken. A
+64 MB body: `413`, **297 bytes** of response, **1.3 ms**, and `curl` reports `size_upload: 0` —
+the declared `Content-Length` is refused before the body is sent at all. A 256 MB body: `413` in
+816 ms, and the process's `WorkingSet64` is **111 MB before and 111 MB after**, unchanged, with
+`GET /api/health` answering immediately afterwards. The auditor measured 2,363 MB, still held
+20 s later and after a subsequent normal run.
+
+### 11.4 The dead-service fallback did not exist on a fresh clone — MAJOR
+
+`showRecorded` re-fetched `/static/data/recorded/<file>.json` on **every click** with no
+in-memory copy, and the server sent no `Cache-Control`, so whether the fallback worked was
+decided by Chrome's heuristic freshness — about a tenth of the file's age. Reproduced on a fresh
+clone: page loaded, process killed, three recorded runs clicked → `could not load
+run_outside_forgery.json: Failed to fetch`, same for `run_impersonation_full.json` and
+`run_replay.json`, `NO RUN` on the stage each time, three `net::ERR_CONNECTION_REFUSED` in the
+console. This document claimed all 13 kept working.
+
+**Fixed** by loading the whole set — 365 KB — once at boot, in parallel, into
+`state.recordedPayloads`. `showRecorded` now contains no `fetch` at all, which is the property
+the test asserts: *"showRecorded reaches the network; with the service dead that is the click
+that fails, in front of the room."* The rail prints `13 of 13 held in this page's memory`, so a
+partial preload is visible before the click that needs it.
+
+Measured after, process killed with the page open: three recorded runs clicked, all three render
+fully — `Outside forgery` → `DETECTED`, `Impersonation, both seams` → `NOTHING FIRED`, `Replay` →
+`DETECTED` — with the status line reading `(from memory)`.
+
+### 11.5 The masthead never flipped when a *recorded* run failed — MAJOR
+
+§9.4's fix put the mode repaint inside `startLiveRun`'s catch only. `showRecorded`'s catch called
+`Render.refused` and `setStatus` and never touched `state.mode`, so three failed recorded clicks
+against a dead process left `mode-chip` reading `LIVE API` — measured verbatim by the auditor —
+and the recorded path is the one a presenter falls back to.
+
+**Fixed** two ways, because with 11.4 in place the recorded path can no longer fail and so can no
+longer *tell* anyone.
+
+* One `noteTransportFailure()` that every failing path calls: the live run's catch, the live
+  run's not-reachable guard, and the recorded loader's not-held branch. The test asserts the
+  count of call sites rather than the presence of a string, because a fix that lives in one
+  branch of one function is a fix for one branch of one function.
+* A five-second `/api/health` poll, so the chip is **checked** rather than waiting to be
+  surprised — and so it comes *back* to `LIVE API` by itself when the server is restarted, which
+  is what an operator who has just fixed something needs to see.
+
+Measured after: server killed with the page open, the chip reads
+`RECORDED ONLY (13) — API NOT REACHABLE` before the first recorded click completes; a cap refusal
+with the service alive leaves it on `LIVE API`.
+
+### 11.6 A cold load against a dead service behaved three different ways — MAJOR (docs)
+
+Documented as *"the page itself is served by that process, so there is nothing to fall back to"*.
+What actually happened: it rendered from cache, with the masthead asserting `RECORDED ONLY — API
+NOT REACHABLE` above a rail containing **zero** recorded runs. The numeric honesty held — every
+control read `range not supplied by the API`, the headline panel read `THE API DID NOT SUPPLY
+THIS. Nothing is shown in its place.` — but the chip promised a fallback mode that was empty. On
+a tree whose files had just been edited, the same reload produced a third outcome: a blank page.
+
+**Fixed** at the root by serving the frontend with `Cache-Control: no-cache` — revalidate before
+reuse, not do-not-store. One behaviour now: a live server answers `304` over loopback in
+microseconds; a dead one produces the browser's own error page (measured:
+`chrome-error://chromewebdata/`). It also removes the stale-asset hazard §5 warns about. The
+masthead gains a third state, `NOTHING LIVE — NO API AND NO RECORDED RUNS`, as defence in depth
+for a browser or proxy that serves a stale shell anyway. The paragraph in §6 is rewritten.
+
+### 11.7 The `NO RUN` panel blamed the server for a transport failure — MINOR
+
+`Failed to fetch` against a process that is not running was rendered under *"The service refused
+this request, so no session was generated and nothing was scored"*, followed by the `key_length`
+cap's rationale — for a request nobody refused. The same copy appeared for a failed recorded-run
+load, which is a static JSON file no cap has an opinion about. The **state** was right (fourth
+state, stage cleared, raw reason shown); the attribution was invented.
+
+**Fixed**: `refusalPanel(message, request, kind)` has two headings and two explanations.
+Measured after — cap refusal with the service alive: *"This run was refused / The service refused
+this request …"* plus the cap paragraph, chip stays `LIVE API`. Transport failure: *"Nothing
+answered this request / The request never reached a service. Nothing refused it and nothing
+scored it …"*, no cap paragraph anywhere on the page, chip flips.
+
+### 11.8 The banner advertised an address it had not bound — MINOR
+
+Covered in §0. Measured before: banner with `http://127.0.0.1:8141`, then `Started server
+process`, `Application startup complete`, then the bind error, ending on `Application shutdown
+complete`. Measured after: `COULD NOT START`, the port named, **no address line at all**,
+exit `1`.
+
+### 11.9 Nothing listened on `::1` — MINOR (audited as *suspected*, confirmed at the socket)
+
+Covered in §0. Confirmed here at the socket level in both directions: `--host 0.0.0.0` answered
+on `127.0.0.1` and not on `[::1]`; `--host ::` answered on `[::1]` and not on `127.0.0.1`,
+because Windows sets `IPV6_V6ONLY` by default.
+
+The auditor could not demonstrate a *browser* failing this way and said so, so the browser half
+was measured here rather than assumed. Chrome on this machine **does** fall back, and the cost is
+latency: an IPv4-only server opened as `http://localhost:PORT` gave a time to first byte of
+**319 ms**, against **7 ms** with a connect time of **0 ms** on the same page served by a
+dual-bound server. So on this browser the defect is a third of a second on every navigation
+rather than a failure — and on a browser that does not fall back it is a demo that will not
+open at the address an operator types. Both families are bound now; both numbers go away.
+
+### 11.10 Projector mode overflowed at 1024×768 — MINOR
+
+The classic projector resolution. `white-space: nowrap` on `.num` and `.state` put **307 px** of
+the page off-screen with projector mode on — `documentElement.clientWidth` 1009,
+`scrollWidth` **1316**, 28 elements past the viewport with no scrolling ancestor, including the
+`⊢ PROVEN` and `MEASURED` chips that carry constraint 2 and the
+`⊘ NO — ABOUT FOUR MINUTES PER SESSION` chip. Page-level overflow, not contained by the
+`.table-wrap` scrollers, so reading them needed a horizontal page scroll.
+
+**Fixed**: chips may wrap (`flex-wrap: wrap`, `max-width: 100%`) and the two definition-list
+grids use `fit-content(16rem)` instead of `max-content`. A **number** still never breaks —
+`.num .value` sets `overflow-wrap: normal`, which overrides the `anywhere` it inherits — while
+the prose and the comma-separated lists around it wrap at their spaces.
+
+One more overflow surfaced while measuring: `Charts.bars` draws `row.unavailable` as SVG text
+centred in the hatched cell, and the API's reason for an unevaluable CHSH statistic is a whole
+sentence, which ran 66 px past the window edge. The chart now carries `NOT EVALUATED — see
+below` and the sentence is rendered under it as text that wraps. It is moved, never dropped.
+
+Measured after, all 13 recorded runs at 1024×768 with projector mode **on**:
+`scrollWidth == clientWidth == 1009` on every one, zero uncontained overflowing elements.
+
+### 11.11 `2.944` was attached to the wrong pair — MINOR (audited as *suspected*)
+
+The headline panel's note, rendered verbatim on screen, read *"…is
+`Detection.false_positive_bound`, never `eps` and never `evidence_bound`, which is a post hoc
+statement about the signals that fired and a different claim: at `L = 384`, `eps = 1e-9` the two
+differ by a factor of `2.944`."* The nearest antecedent for *"the two"* is the
+`false_positive_bound`/`evidence_bound` pair the clause has just contrasted.
+
+Measured: at `L = 384`, `eps = 1e-9`, honest, seed 7 — `false_positive_bound = 3.3964e-10`,
+`eps = 1e-9`, ratio **2.944** exactly (it is `slack_factor`), `evidence_bound = null`. On a run
+where something fires (count-starvation, `L = 192`), `false_positive_bound = 3.8649e-10` and
+`evidence_bound = 5.4210e-20` — a ratio of about **7×10⁹**. So the sentence, read the way its
+grammar invites, states a factor of 2.944 for a pair nine orders of magnitude apart, on the one
+constraint that exists to stop those three numbers being confused. Every other statement of
+2.944 in this repository binds it to the budget-versus-bound pair.
+
+**Confirmed as a real defect** and fixed by naming the pair in the same clause as the number, and
+by giving `evidence_bound` its own scale. `test_the_published_bound_note_names_the_pair_the_factor_belongs_to`
+measures both ratios and asserts the sentence's structure, so the prose and the arithmetic cannot
+drift apart again.
+
+### 11.12 README pointed at "the three defects" — MINOR
+
+§9 describes four. Fixed, and the line now points at this section too.
+
+### 11.13 "Both verifiers accept in every one of them" was false — found while writing the test
+
+Not from the audit. `noise_null_calibration.second_null_note`, published by the API and rendered
+on screen, and the same sentence in `driver.py`'s module docstring, claimed that both verifiers
+accept in every one of the twelve honest noisy runs 11.1 rests on. Writing the test that asserts
+it produced `{'accepted', 'rejected'}`.
+
+Measured over those twelve seeds: the pair of outcomes is **identical under all three null
+settings on every seed** — which it must be, since the verifiers' outcomes belong to the protocol
+and the nulls belong to the detector — and it is **7 seeds where both accept and 5 where Bob
+rejects** the honest signature. A link at the design noise level costs the signature something,
+and that is a separate fact from anything the detector said.
+
+The claim is corrected in all three places it appeared and the corrected version is now the
+stronger statement: the nulls move the *detector* and do not move the *verifiers* at all. This is
+the clearest illustration in the phase of why constraint 1 keeps the two questions apart.
+
+### What the round is worth reading for
+
+Every one of §9's four defects had a passing test. Every one of those tests asserted that a
+**string was present in a file** — the right check for "has someone deleted this" and no check at
+all for "does this work". The tests added here measure the thing that would differ if the fix
+were absent: the status code, the response size, the number of sockets that accept a connection,
+the ratio of two bounds, the count of call sites that route through the shared handler, the
+absence of `fetch` inside one named function. Verified by running the new test files against a
+clean checkout of the pre-fix commit rather than by believing they would: **34 test IDs across 25
+test functions fail** there — 23 IDs in `test_web_api.py`, 11 in `test_web_frontend.py`.
+
+Eleven of those are frontend tests and they are still static analysis, because this repository
+has no JavaScript runtime and must not grow one. What changed is *scope*: they extract a single
+function body by brace matching and assert about **that**, so "`showRecorded` reaches the
+network" is a property of the recorded path, where "the file contains the word `fetch`" was a
+property of nothing.
+
+Where a check genuinely cannot run in Python — a browser laying out a page — the measurement was
+taken by driving the running screen and is recorded above with its numbers, and the test pins the
+CSS property that produced it.
 
 ## 10. Where the code is
 
@@ -693,10 +1131,10 @@ attempt says `NO RUN` rather than showing a stale verdict.
 |---|---|
 | `sih141/web/__main__.py` | the one command; `--host`, `--port`, `--log-level` |
 | `sih141/web/api.py` | `create_app()`, the six endpoints, the concurrency gate |
-| `sih141/web/limits.py` | every cap, `RequestRefused`, `json_safe` |
+| `sih141/web/limits.py` | every cap, `RequestRefused`, `json_safe`, `safe_text` |
 | `sih141/web/driver.py` | mounts an adversary, runs a session, splits ground truth out |
 | `sih141/web/catalogue.py` | the attack roster and its `detectable`/`assumption` fields |
-| `sih141/web/payload.py` | the `run` object the screen reads |
+| `sih141/web/payload.py` | the `run` object the screen reads, and `nulls_stated()` |
 | `sih141/web/static/` | the frontend: 26 files, nothing fetched |
 | `tools/phase6_fixtures.py` | records the 13 walk-through runs through `TestClient`, verbatim |
 | `tests/test_web_api.py` | the API, the caps, the abuse sweep |

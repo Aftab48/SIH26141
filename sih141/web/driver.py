@@ -65,12 +65,24 @@ Which matters here for one measured reason. Over twelve seeds at ``L = 192``,
 -- the design noise level -- with **both** nulls left at zero the detector fires
 on ``12/12``; with only ``channel_error_rate`` corrected it still fires on
 ``12/12``, the rate family having gone quiet and the channel family not; with
-both stated, ``0/12``. Both verifiers accept in every one of those runs. So an
-operator who can set only one of the two cannot ever show an honest noisy link
-as clean, which is the single failure mode this dashboard was most warned
-about. The request therefore carries ``tolerated_depolarising`` as a ninth,
-optional field defaulting to ``0.0`` -- a body carrying only the eight fields
-of the fixed contract behaves exactly as that contract says.
+both stated, ``0/12``. So an operator who can set only one of the two cannot
+ever show an honest noisy link as clean, which is the single failure mode this
+dashboard was most warned about. The request therefore carries
+``tolerated_depolarising`` as a ninth, optional field defaulting to ``0.0`` --
+a body carrying only the eight fields of the fixed contract behaves exactly as
+that contract says.
+
+**The verifiers do not move with the nulls, and it is worth saying why not.**
+Their outcomes are the protocol's; the nulls are the detector's, and no
+transcript changes when ``detect()`` is told a different law. Over those same
+twelve seeds the pair of outcomes is identical under all three null settings:
+both verifiers accept on **7** seeds and Bob **rejects** the honest signature on
+**5**, which is what a link at the design noise level does to a signature and
+has nothing to do with what fired. An earlier version of this paragraph, and of
+the sentence the API publishes with it, said "both verifiers accept in every one
+of those runs". That was wrong on five of the twelve, and it was wrong in the
+direction that matters: it made the detector's noise sensitivity sound like the
+only thing noise costs.
 
 .. _ground-truth-is-separate:
 
@@ -151,8 +163,9 @@ from sih141.web.limits import (
     check_probability,
     check_seed,
     check_timing,
+    safe_text,
 )
-from sih141.web.payload import ground_truth_for, run_facts
+from sih141.web.payload import ground_truth_for, nulls_stated, run_facts
 
 
 __all__ = [
@@ -490,9 +503,15 @@ class RunRequest:
         """
         attack = body.get("attack", "honest")
         if not isinstance(attack, str) or attack not in ATTACK_KEYS:
+            # Quoted through `safe_text`, never with `!r`. This field is a
+            # free-form string from the wire and it appears in the body twice
+            # -- here and as `value` -- so `!r` made a refusal about twice the
+            # size of whatever the caller chose to send
+            # (:ref:`sih141.web.limits <refusals-cannot-raise>`).
             raise RequestRefused(
                 "attack",
-                f"attack={attack!r} is not one of {list(ATTACK_KEYS)}. It is "
+                f"attack={safe_text(attack)} is not one of "
+                f"{list(ATTACK_KEYS)}. It is "
                 f"refused rather than defaulted to the honest control: running "
                 f"a different experiment than the one asked for and reporting "
                 f"it under the requested label is how a dashboard lies.",
@@ -1185,6 +1204,12 @@ def run_once(request: RunRequest) -> RunResult:
             check_fraction=request.check_fraction,
         )
         facts["transcript_bytes"] = len(text)
+        # Which of the detector's two nulls the operator actually stated. The
+        # comparison belongs here and not in the browser (D8), and
+        # `Detection.null_is_noiseless` answers for the rate family only.
+        facts["nulls"] = nulls_stated(
+            request.channel_error_rate, request.tolerated_depolarising
+        )
         # The TRANSCRIPT's own summary, not the statistics'. It is the only
         # prose in the response that names the per-run repudiation bound, and
         # at demo lengths that number is order one -- which is exactly what a
@@ -1201,7 +1226,12 @@ def run_once(request: RunRequest) -> RunResult:
                 "kind": "run-failed",
                 "attack": request.attack,
                 "exception": type(failure).__name__,
-                "message": str(failure),
+                # Bounded like every other value that reaches a client, for
+                # the same reason: this is a failure REPORT, and a report that
+                # falls over or amplifies while being written is the shape
+                # this phase paid for three times
+                # (:ref:`sih141.web.limits <refusals-cannot-raise>`).
+                "message": safe_text(str(failure), 2000),
                 "detail": (
                     "The arm was mounted and the run did not complete. This is "
                     "not a clean run and it is not a detection: no verdict was "

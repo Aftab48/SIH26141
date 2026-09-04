@@ -849,6 +849,13 @@ def test_every_recording_satisfies_the_contract(
             assert name in payload["run"], f"{scenario}: run has no {name!r}"
         for name in contract["run_facts"]["expected"]:
             assert name in payload["run"], f"{scenario}: run has no {name!r}"
+        for name in contract["run_facts"]["nulls_expected"]:
+            assert name in payload["run"]["nulls"], (
+                f"{scenario}: run.nulls has no {name!r}. The null banner picks "
+                f"one of three states off this block, and a half-supplied one "
+                f"falls back to the rate family's flag alone -- which is the "
+                f"state where an honest noisy run reads as an attack."
+            )
         for name in contract["ground_truth"]["required"]:
             assert name in payload["ground_truth"]
         for name in contract["timings"]["required"]:
@@ -921,6 +928,14 @@ def test_the_defaults_carry_every_cap_the_ui_shows(
     for row in defaults["limits"]["cost_table"]:
         for name in spec["cost_row_expected"]:
             assert name in row
+    # The calibration the panel renders, including the sentence that says the
+    # table is one family's and that there are two nulls. Rendering the first
+    # line without this one is how the screen came to instruct an operator to
+    # state one null and told them it would clear the run.
+    for name in spec["calibration_expected"]:
+        assert name in defaults["noise_null_calibration"], (
+            f"/api/defaults noise_null_calibration has no {name!r}"
+        )
     assert defaults["live_key_length_max"] < 115200, (
         "the live cap must be well below DEFAULT_PARAMS: a session there is "
         "about four minutes and cannot come from a button click."
@@ -1081,117 +1096,381 @@ def test_a_failed_run_is_a_fourth_thing_and_the_screen_says_so(
         )
 
 
+def _js_function_body(source: str, name: str) -> str:
+    """Return the balanced body of ``function NAME(...) { ... }``.
+
+    Brace-matched, so a nested function or object literal does not end the
+    block early. It is what lets the assertions below be about ONE FUNCTION
+    rather than about the file: "``showRecorded`` contains no fetch" is a
+    property of the recorded path, while "the file contains a fetch" is a
+    property of nothing at all.
+
+    Parameters
+    ----------
+    source : str
+    name : str
+
+    Returns
+    -------
+    str
+
+    Examples
+    --------
+    >>> _js_function_body('function f(a) { if (a) { return 1; } }', 'f')
+    ' if (a) { return 1; } '
+    """
+    opening = source.index(f"function {name}(")
+    start = source.index("{", opening)
+    depth = 0
+    for index in range(start, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start + 1 : index]
+    raise AssertionError(f"function {name} is not closed in the source")
+
+
+def _flatten(source: str) -> str:
+    """Return JavaScript source with adjacent string concatenations joined.
+
+    ``"a " +\\n  "b"`` is one sentence to a reader and two literals to a
+    scanner. Joining them lets a test assert on the sentence.
+
+    Parameters
+    ----------
+    source : str
+
+    Returns
+    -------
+    str
+
+    Both quoting styles, because the frontend uses template literals wherever a
+    value is interpolated and plain strings everywhere else, and a sentence can
+    be built from a run of either.
+
+    Examples
+    --------
+    >>> _flatten('x = "one " +\\n      "two";')
+    'x = "one two";'
+    >>> _flatten('x = `one ` +\\n      `two`;')
+    'x = `one two`;'
+    """
+    joined = re.sub(r'"\s*\+\s*"', "", source)
+    return re.sub(r"`\s*\+\s*`", "", joined)
+
+
 def test_a_refused_request_clears_the_previous_run_from_the_screen() -> None:
     """A refusal must not leave another run's verdict standing.
 
     There are two ways a run fails and they arrive by different doors. A run
     that STARTS and does not finish is answered ``200`` with null bodies and
-    reaches ``failurePanel`` above. A request refused by a cap or by the
-    schema never gets that far: it is an HTTP ``400``/``422``, ``fetch``
-    rejects, and the only handler is the ``catch``.
+    reaches ``failurePanel``. A request refused by a cap or by the schema never
+    gets that far: it is an HTTP ``400``/``422``, ``fetch`` rejects, and the
+    only handler is the ``catch``.
 
     That catch used to write the status line and nothing else, so the result
-    area kept rendering the PREVIOUS run. Driving the live service:
-    ``key_length = 5000`` was refused with the right sentence, and the screen
-    went on showing ``NOTHING FIRED``, ``|M| = 265 / 768``, over a control
-    panel reading 5000 -- a verdict from a run at 1024 displayed under the
-    parameters of a run that never happened.
-
-    That is precisely what the cap exists to prevent. ``limits.py`` refuses
-    rather than clamping because "a screen reporting a clamped run under the
-    label of the one that was asked for is the single easiest way for this
-    dashboard to lie", and the screen was doing it anyway by another route.
+    area kept rendering the PREVIOUS run: ``key_length = 5000`` was refused with
+    the right sentence and the screen went on showing ``NOTHING FIRED``,
+    ``|M| = 265 / 768``, over a control panel reading 5000.
     """
     render = (STATIC / "js" / "render.js").read_text(encoding="utf-8")
     app = (STATIC / "js" / "app.js").read_text(encoding="utf-8")
 
-    assert "function refusalPanel(" in render, (
-        "the refusal panel is gone; a refused request would fall back to "
-        "leaving the previous run on screen"
-    )
+    assert "function refusalPanel(" in render
     assert "refused: refused," in render, "Render.refused is not exported"
 
-    block = re.search(r"function refused\(target, message, request\) \{(.*?)\n  \}",
-                      render, re.S)
-    assert block is not None, "Render.refused is not defined"
-    assert 'target.textContent = "";' in block.group(1), (
+    block = _js_function_body(render, "refused")
+    assert 'target.textContent = "";' in block, (
         "Render.refused does not clear the stage, so the previous run's "
         "panels stay on screen underneath the refusal"
     )
 
-    panel = re.search(r"function refusalPanel\(message, request\) \{(.*?)\n  \}",
-                      render, re.S)
-    assert panel is not None
-    body = panel.group(1)
+    body = _flatten(_js_function_body(render, "refusalPanel"))
     assert "STATE.withheld.glyph" in body, (
         "the refusal no longer uses the fourth state's glyph, so it is not "
         "visually distinct from a verdict"
     )
     assert '"NO RUN"' in body
-    joined = re.sub(r'"\s*\+\s*"', "", body)
     for phrase in (
         "NOT a clean run",
         "NOT a detection",
         "belongs in no rate",
         "has been cleared",
     ):
-        assert phrase in joined, f"the refusal panel lost the phrase {phrase!r}"
+        assert phrase in body, f"the refusal panel lost the phrase {phrase!r}"
 
-    # And EVERY failure path actually calls it. Both of them render into the
-    # same stage, so both can leave another run's numbers standing: the live
-    # run, and the recorded loader -- which is the one that runs when the
-    # service has died, i.e. exactly when nobody can check the screen against
-    # anything else.
-    catches = re.findall(r"\.catch\(function \(error\) \{(.*?)\n      \}\)",
-                         app, re.S)
-    assert len(catches) == 2, (
-        f"expected the two stage-rendering failure paths, found "
-        f"{len(catches)}. A new one that only writes the status line would "
-        f"leave the previous run on screen."
+    # Every path that renders into the stage and can fail must clear it. There
+    # is now exactly one function that does that, and it is called by all of
+    # them: the live run's catch, the live run's not-reachable guard, and the
+    # recorded loader.
+    handler = _js_function_body(app, "noteTransportFailure")
+    assert "Render.refused(" in handler
+    assert app.count("noteTransportFailure(") >= 4, (
+        "a failure path stopped routing through the shared handler; a fix "
+        "that lives in one branch of one function is a fix for one branch of "
+        "one function"
     )
-    for body_of_catch in catches:
-        assert "Render.refused(" in body_of_catch, (
-            "a failure path does not clear the stage; a refused request "
-            "would leave the previous run's numbers under the new parameters"
-        )
 
 
-def test_the_masthead_stops_claiming_a_live_api_when_the_api_dies() -> None:
-    """The mode chip is decided at start-up, and demos fail mid-flight.
+def test_a_dead_service_is_never_reported_as_a_refusal_by_that_service() -> None:
+    """`Failed to fetch` is not a cap refusal, and must not be dressed as one.
 
-    ``RECORDED ONLY — API NOT REACHABLE`` is painted once, when the page loads
-    and ``/api/attacks`` cannot be reached. A service that dies DURING a
-    demonstration therefore left the masthead reading ``LIVE API`` with the
-    process gone -- verified by killing the server with the page open: the run
-    failed with ``Failed to fetch``, the stage correctly showed ``NO RUN``, and
-    the chip still said ``LIVE API``.
+    The NO RUN panel said "The service refused this request, so no session was
+    generated and nothing was scored", followed by the ``key_length`` cap's
+    rationale -- for a fetch against a process that was not running and had
+    refused nothing. The same copy appeared for a failed recorded-run load,
+    which is a static JSON file no cap has an opinion about. The state was
+    right (fourth state, stage cleared, raw reason shown); the attribution was
+    invented.
+    """
+    render = (STATIC / "js" / "render.js").read_text(encoding="utf-8")
+    app = (STATIC / "js" / "app.js").read_text(encoding="utf-8")
+    body = _flatten(_js_function_body(render, "refusalPanel"))
 
-    The two failures have to stay distinguishable, which is the whole reason
-    this is a condition and not an unconditional repaint. ``getJson`` raises
-    ``HTTP <status> ...`` when the server ANSWERED -- a ``400`` from a cap or a
-    ``503`` from the run gate is the service working exactly as designed -- and
-    anything else means the fetch itself failed. Repainting on an HTTP error
-    would tell the room the API is gone every time somebody typed a key_length
-    over the ceiling.
+    assert 'kind === "unreachable"' in body, (
+        "refusalPanel no longer distinguishes a service that refused from a "
+        "service that never answered"
+    )
+    assert "The request never reached a service" in body
+    assert "Nothing refused it and nothing scored it" in body
+    # The cap rationale belongs to the refusal branch only. Both sentences must
+    # exist, and they must be on opposite sides of the same conditional.
+    assert "The service refused this request" in body
+    assert "refused rather than quietly run at the nearest" in body
+    assert "No cap was hit and no parameter was rejected" in body
+
+    # And the transport path really passes that kind.
+    handler = _js_function_body(app, "noteTransportFailure")
+    assert '"unreachable"' in handler
+
+
+def test_the_masthead_never_claims_more_than_it_can_deliver() -> None:
+    """Three states, and the chip is CHECKED rather than inferred from a failure.
+
+    Two defects met here. The mode repaint lived only in ``startLiveRun``'s
+    catch, so clicking three recorded runs against a dead process gave three
+    ``Failed to fetch`` panels under a masthead still reading ``LIVE API`` --
+    and the recorded path is the one a presenter falls back to. And
+    ``RECORDED ONLY`` is itself a promise: on a cold load against a dead
+    service the page rendered from cache with that chip above a rail holding
+    ZERO recorded runs.
+
+    So: one shared handler for every discovered failure, a periodic health
+    check so the chip is not waiting to be surprised, and a third state for
+    "nothing is live and there is nothing recorded either".
     """
     app = (STATIC / "js" / "app.js").read_text(encoding="utf-8")
-    assert 'chip.textContent = "RECORDED ONLY' in app, (
-        "the mode chip no longer has a not-reachable state"
+    paint = _js_function_body(app, "paintMode")
+    assert '"LIVE API"' in paint
+    assert "RECORDED ONLY" in paint
+    assert "state.recordedHeld > 0" in paint, (
+        "the chip promises a recorded fallback without checking that there is "
+        "one; on a cold load against a dead service there is not"
     )
-    assert 'error.message.indexOf("HTTP ") !== 0' in app, (
-        "the failure path no longer distinguishes a server that answered "
-        "from a server that is not there, so either a cap refusal claims the "
-        "API is dead or a dead API keeps claiming to be live"
+    assert "NOTHING LIVE" in paint, "the third state is gone"
+
+    # The chip is verified, not merely revised on failure. Recorded runs no
+    # longer touch the network, so nothing on that path can fail and tell it.
+    watch = _js_function_body(app, "watchService")
+    assert '"/api/health"' in watch
+    assert 'state.mode = "recorded"' in watch
+    assert 'state.mode = "live"' in watch, (
+        "the health check cannot recover the chip, so restarting the server "
+        "leaves the masthead claiming the API is gone"
     )
-    # The repaint has to be inside the guard, not beside it.
-    guard = re.search(
-        r'if \(error\.message\.indexOf\("HTTP "\) !== 0\) \{(.*?)\n        \}',
-        app,
-        re.S,
+    assert "watchService();" in app, "the health check is never started"
+
+    # A cap refusal is the service WORKING and must not announce a dead API.
+    live = _js_function_body(app, "startLiveRun")
+    assert 'error.message.indexOf("HTTP ") === 0' in live, (
+        "the failure path no longer distinguishes a server that answered from "
+        "a server that is not there, so either a cap refusal claims the API "
+        "is dead or a dead API keeps claiming to be live"
     )
-    assert guard is not None, "the guard is gone"
-    assert 'state.mode = "recorded";' in guard.group(1)
-    assert "paintMode();" in guard.group(1)
+
+
+def test_a_recorded_run_never_needs_the_service_it_falls_back_from() -> None:
+    """The fallback is held in memory, not left to the browser's cache.
+
+    ``showRecorded`` re-fetched ``data/recorded/<file>.json`` on every click
+    with no in-memory copy, and the server sent no ``Cache-Control``, so
+    survival came down to Chrome's heuristic freshness -- about a tenth of the
+    file's age, which on a freshly cloned tree is minutes. Measured on a fresh
+    clone: page loaded, process killed, three recorded runs clicked, three
+    ``Failed to fetch`` and three ``NO RUN`` panels. The documentation said all
+    thirteen keep working.
+
+    A fallback that fetches from the thing it is falling back from is not a
+    fallback, so the whole set is loaded once at boot and every click reads
+    memory.
+    """
+    app = (STATIC / "js" / "app.js").read_text(encoding="utf-8")
+
+    show = _js_function_body(app, "showRecorded")
+    assert "getJson(" not in show and "fetch(" not in show, (
+        "showRecorded reaches the network; with the service dead that is the "
+        "click that fails, in front of the room"
+    )
+    assert "state.recordedPayloads[entry.file]" in show
+
+    preload = _js_function_body(app, "preloadRecorded")
+    assert "state.recordedPayloads[entry.file] = payload" in preload
+    assert "state.recordedHeld" in preload
+    assert "preloadRecorded" in _js_function_body(app, "boot"), (
+        "the preload is never run at boot, so nothing is ever held"
+    )
+
+    # How many are held is SHOWN, so a partial preload is visible before the
+    # click that needs it rather than after.
+    listing = _flatten(_js_function_body(app, "recordedList"))
+    assert "held in this page's memory" in listing
+    assert "state.recordedHeld" in listing
+
+
+def test_the_null_banner_has_three_states_and_the_middle_one_warns() -> None:
+    """Setting one of two nulls is its own state, and it is not reassuring.
+
+    ``detect()`` takes TWO nulls. ``Detection.null_is_noiseless`` is defined
+    over ``channel_error_rate`` alone, so keying the banner off it gave two
+    states where there are three -- and the state the screen's own instruction
+    led an operator into, one null stated, landed in the calm blue INFO branch
+    headed "THE NULL CARRIES THE LINK'S ERROR RATE" while the run read
+    DETECTED with ``honest`` RULED OUT and ``channel-manipulation`` NAMED.
+    """
+    render = (STATIC / "js" / "render.js").read_text(encoding="utf-8")
+    body = _flatten(_js_function_body(render, "nullBanners"))
+
+    # The three states come off a flag Python computed, not off a comparison
+    # made here: `run.nulls` is `sih141.web.payload.nulls_stated`.
+    assert "payload.run && payload.run.nulls" in body
+    assert "nulls.both_are_default" in body
+    assert "nulls.both_are_stated" in body
+    assert "const onlyOneStated" in body
+
+    # And the middle state is a WARNING, never the info tone.
+    middle = body[
+        body.index("if (onlyOneStated)") : body.index("} else if (bothDefault)")
+    ]
+    assert '"alarm" : "caution"' in middle, (
+        "the one-null-stated state is not rendered as a warning; it is the "
+        "state in which an honest run is reported as an attack"
+    )
+    assert "ONE OF THE TWO NULLS IS STILL THE DEFAULT" in middle
+    assert "tolerated_depolarising" in body or "field.channel" in body
+
+    # The info banner is reachable only when BOTH are stated, and its heading
+    # says only that -- not that the two nulls are the RIGHT ones. An operator
+    # can state two nulls that describe a link nobody has, so a heading reading
+    # "both nulls carry the link" would assert, on a run with an adversary on
+    # the resource seam, that the adversary is not there. Whether they match is
+    # the harness's sentence, and only the harness knows it.
+    assert "Both nulls were stated by the operator" in body
+    assert "Both nulls carry the link" not in body
+    assert "Both nulls are noiseless" in body
+    assert "whether they are the laws the wire obeyed is a separate" in body
+
+    # And where the response supplies no `run.nulls` at all, the heading claims
+    # only the half the rate-family flag actually knows. A heading is read on
+    # its own.
+    assert "The rate family's null is noiseless" in body
+
+
+def test_the_screen_tells_an_operator_to_set_both_nulls() -> None:
+    """The instruction has to be one that actually clears the run.
+
+    "Set the link's true rate in the controls", singular, is an instruction
+    whose result is an honest run reported as detected with an adversary named.
+    Measured: 12/12 detected over twelve seeds at L = 192 with only
+    ``channel_error_rate`` corrected, 0/12 with both.
+    """
+    app = _flatten((STATIC / "js" / "app.js").read_text(encoding="utf-8"))
+    render = _flatten((STATIC / "js" / "render.js").read_text(encoding="utf-8"))
+
+    assert "TWO NULLS, AND BOTH DEFAULT TO A PERFECT LINK" in app
+    assert "NULL 1 of 2" in app and "NULL 2 of 2" in app
+    assert '"tolerated_depolarising"' in app, (
+        "the channel family's null is not a control, so an operator cannot "
+        "carry out the instruction they are given"
+    )
+    # No surviving sentence tells an operator to set one thing.
+    assert "Set the link's true rate in the controls" not in render
+    assert "Set BOTH" in render
+
+
+def test_the_calibration_panel_renders_the_sentence_that_corrects_it() -> None:
+    """A sentence the API ships and the screen drops reads as an answer.
+
+    ``noise_null_calibration.second_null_note`` says there are two nulls and
+    what happens when only one is stated. ``noiseCalibration`` rendered only
+    ``with_true_rate_passed`` and dropped it, so the screen carried "0/30 at
+    every level when the link's true rate is passed to detect()" as the whole
+    story.
+    """
+    render = (STATIC / "js" / "render.js").read_text(encoding="utf-8")
+    body = _js_function_body(render, "noiseCalibration")
+    assert "calibration.second_null_note" in body, (
+        "the correcting sentence is still dropped"
+    )
+    assert "with_true_rate_passed" in body
+    # It is not rendered in the same grey as the line it corrects.
+    assert "warn-note" in body
+    css = (STATIC / "css" / "app.css").read_text(encoding="utf-8")
+    assert ".warn-note" in css
+
+
+def test_no_chip_is_pinned_to_a_single_line() -> None:
+    """A chip that cannot wrap pushes the page off a projector.
+
+    At 1024x768 -- the classic projector resolution -- with projector mode on,
+    ``white-space: nowrap`` on ``.num`` and ``.state`` put 307 px of the page
+    off-screen with no scrolling ancestor: 28 elements past the viewport,
+    including the PROVEN and MEASURED chips that carry constraint 2. Measured
+    after: ``scrollWidth == clientWidth`` on all thirteen recorded runs, with
+    projector mode on and off.
+    """
+    css = (STATIC / "css" / "app.css").read_text(encoding="utf-8")
+
+    def rule(selector: str) -> str:
+        start = css.index(selector + " {")
+        return css[start : css.index("}", start)]
+
+    for selector in (".num", ".state"):
+        block = rule(selector)
+        assert "white-space: nowrap" not in block, (
+            f"{selector} cannot wrap, so a long chip leaves the viewport"
+        )
+        assert "flex-wrap: wrap" in block
+        assert "max-width: 100%" in block
+
+    # A NUMBER still never breaks; only the prose around it does.
+    value = rule(".num .value")
+    assert "overflow-wrap: normal" in value
+
+    # And the two definition-list grids cannot let one long term set a width
+    # the viewport does not have.
+    for selector in (".kv", ".truth dl"):
+        assert "fit-content(" in rule(selector), selector
+
+
+def test_a_long_unavailable_reason_is_not_drawn_inside_a_chart() -> None:
+    """SVG text is not clipped by the panel it sits in.
+
+    The API's reason for an unevaluable CHSH statistic is a whole sentence, and
+    ``Charts.bars`` centres ``row.unavailable`` inside the hatched cell: at
+    1024x768 in projector mode it ran 66 px past the right edge of the window.
+    The chart carries a short marker; the sentence is rendered under it as text
+    that wraps.
+    """
+    render = (STATIC / "js" / "render.js").read_text(encoding="utf-8")
+    body = _flatten(_js_function_body(render, "channelPanel"))
+    assert "chshReasons" in body
+    assert 'unavailable: "NOT EVALUATED' in body
+    assert "link.chsh_unavailable" in body
+    # The reason still reaches the screen -- it is moved, not dropped.
+    assert "chshReasons.push(" in body
+    assert "chshReasons.length === 0" in body
 
 
 def test_a_detected_run_can_also_carry_a_no_verdict(

@@ -307,11 +307,14 @@ One process serves the JSON API and the frontend. No Node, no bundler, no build 
 python -m sih141.web
 ```
 
-Then open the address it prints — `http://127.0.0.1:8141`. `--host` and `--port` change it;
-the default is loopback rather than `0.0.0.0` because this server runs unauthenticated quantum
-simulation on request, so exposing it on a venue network should be a deliberate act.
+Then open one of the addresses it prints — `http://127.0.0.1:8141` and `http://[::1]:8141`,
+because `localhost` is two addresses and a browser may pick either. `--host` and `--port` change
+them; the default is loopback rather than `0.0.0.0` because this server runs unauthenticated
+quantum simulation on request, so exposing it on a venue network should be a deliberate act.
+The sockets are bound *before* the address is printed, so a busy port fails with a sentence
+naming it rather than advertising an address it never got.
 
-**Nothing is fetched from a network, ever.** Every asset is vendored: 26 files, 486 KB, only
+**Nothing is fetched from a network, ever.** Every asset is vendored: 26 files, 520 KB, only
 `.html`, `.css`, `.js` and `.json`. No chart library, no web font, no CDN — the charts are
 hand-rolled SVG. There is exactly one `fetch()` call site in the frontend and every path it is
 given is root-relative, so no request can leave the origin; the test suite scans the *contents*
@@ -324,8 +327,14 @@ way for a dashboard to lie. At the default `L = 192` a click returns a verdict i
 **0.43 s**; at the ceiling, about **2.3 s**. The security-grade set `L = 115200` is roughly four
 minutes a session and is published as closed forms rather than run.
 
+Every parameter a click can send is bounded and **refused by name** rather than clamped, request
+bodies are capped at 64 KiB and answered `413` before the application reads them, and the one
+command binds its sockets — both loopback address families — before it prints an address, so it
+can never advertise a port it did not get.
+
 Full details, the eight things the screen must not misstate and how each is rendered, the
-measured latencies, and the three defects integration found: [`docs/PHASE6.md`](docs/PHASE6.md).
+measured latencies, the four defects integration found, and the thirteen the three audits after
+it found and closed: [`docs/PHASE6.md`](docs/PHASE6.md).
 
 ## Running the tests
 

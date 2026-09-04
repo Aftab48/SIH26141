@@ -279,6 +279,17 @@
   },
   "summary": "Bob: accepted, r_R = 0.000000 vs threshold 0.015625, |M_R| = 78 (z = 2.14)\nCharlie: accepted, r_R = 0.000000 vs threshold 0.062500, |M_R| = 62 (z = -0.31)\npooled: pooled_matched_count: 140/384 = 0.364583 vs null Binomial(384, 1/3) mean 128.000000 (z = 1.30, P(|dev| >= this) <= 1.00e+00)\naborts: 0 refusal(s), 0 structural, 0 evidence\nreplay: 0 refusal(s), 2 spent round(s) over 1 session(s)",
   "transcript_bytes": 44098,
+  "nulls": {
+   "channel_error_rate": 0.0,
+   "tolerated_depolarising": 0.0,
+   "rate_null_field": "channel_error_rate",
+   "channel_null_field": "tolerated_depolarising",
+   "rate_null_is_default": true,
+   "channel_null_is_default": true,
+   "both_are_default": true,
+   "both_are_stated": false,
+   "note": "detect() takes TWO nulls and both default to a perfect link: channel_error_rate for the rate family and tolerated_depolarising for the channel family. They are two parameterisations of the same physics and neither is converted into the other, because that would state a null the operator did not ask for. Stating only one leaves an honest run over a noisy link DETECTED with an adversary named -- 12/12 at L = 192, strength 0.03125, over twelve seeds, against 0/12 with both stated. Neither is ever inferred from the transcript: at check_fraction = 0 the transcript carries no estimate of either, and guessing would be inventing a null."
+  },
   "transcript_summary": "QDS run on message bit 0: L=192, |B|=3, s_a=0.01562, s_v=0.06250\nPOOLED EVIDENCE bit 0: m_B = 78, m_C = 62, M = 140 (floors: m_min = 1, M_min = 22). Every floor met.\nBob ACCEPTED bit 0: 0/78 mismatches on matched positions (114 discarded), rate 0.00000 <= 0.01562\nCharlie ACCEPTED bit 0: 0/62 mismatches on matched positions (130 discarded), rate 0.00000 <= 0.06250\nEVIDENCE: M = m_B + m_C = 140 matched records, so P(repudiation | this run) <= 9.623e-01. This is the per-run bound and the only one that assumes nothing about the signer.\nTRANSFERABLE: Bob accepted and Charlie accepted."
  },
  "ground_truth": {
@@ -315,8 +326,8 @@
   }
  },
  "timings": {
-  "session_ms": 448.9280999987386,
-  "detect_ms": 4.547299991827458
+  "session_ms": 368.06630005594343,
+  "detect_ms": 3.946900018490851
  },
  "error": null
 }

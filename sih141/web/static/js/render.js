@@ -459,13 +459,42 @@ const Render = (function () {
    * ---------------------------------------------------------------------- */
 
   /**
-   * Say which null the mismatch members were scored against, whenever it is
-   * the noiseless one -- which is `detect()`'s default.
+   * The two null-setting controls, named exactly as the request field is.
+   *
+   * The API supplies both names in `run.nulls`, so the sentence that tells an
+   * operator what to set cannot drift from the field they have to set. Where
+   * the API does not supply them the fallback is the contract's own spelling.
+   *
+   * @param {Object} nulls `run.nulls`, or an empty object.
+   * @returns {Object} `{rate, channel}` field names.
+   */
+  function nullFields(nulls) {
+    return {
+      rate: (nulls && nulls.rate_null_field) || "channel_error_rate",
+      channel:
+        (nulls && nulls.channel_null_field) || "tolerated_depolarising",
+    };
+  }
+
+  /**
+   * Say which nulls the run was scored against. THERE ARE TWO OF THEM.
    *
    * This is the dashboard's worst failure mode: an honest run over a noisy
-   * link departs from the noiseless null and is correctly reported as detected,
-   * so the baseline lights up red in front of an audience. The banner is what
-   * turns that from a lie into a lesson.
+   * link departs from a null nobody meant to state and is correctly reported
+   * as detected, so the baseline lights up red in front of an audience. The
+   * banner is what turns that from a lie into a lesson — and it only works if
+   * the instruction it gives is one that actually clears the run.
+   *
+   * `detect()` takes TWO nulls, `channel_error_rate` for the rate family and
+   * `tolerated_depolarising` for the channel family, and both default to a
+   * perfect link. `Detection.null_is_noiseless` is the RATE family's flag and
+   * nothing more. Keying this banner off it alone told an operator to set "the
+   * link's true rate", singular, and then congratulated them with a calm blue
+   * INFO banner while the channel family's null was still wrong about the wire:
+   * measured over twelve seeds at L = 192 with a link at the design noise
+   * level, that state is 12/12 DETECTED with `honest` RULED OUT and
+   * `channel-manipulation` NAMED. So there are three states here, not two, and
+   * the middle one is a warning.
    *
    * @param {Object} payload
    * @param {Object} context `{defaults, attacks, constants}`. Any of them may
@@ -474,67 +503,160 @@ const Render = (function () {
    */
   function nullBanners(payload, context) {
     const detection = payload.detection;
+    const nulls = (payload.run && payload.run.nulls) || null;
+    const field = nullFields(nulls);
     const out = [];
 
-    if (detection.null_is_noiseless === true) {
+    // Every branch below is chosen by a flag PYTHON computed
+    // (`sih141.web.payload.nulls_stated`). Nothing here compares a null to
+    // zero: that comparison decides what an operator is told to do, and a
+    // decision that changes the screen is not a thing the browser gets to make
+    // (D8). Where the API supplies no `run.nulls` the detector's own rate-family
+    // flag is used and the banner says that is all it knows.
+    const bothDefault = nulls
+      ? nulls.both_are_default === true
+      : detection.null_is_noiseless === true;
+    const onlyOneStated = nulls
+      ? nulls.both_are_default === false && nulls.both_are_stated === false
+      : false;
+
+    // The harness knows whether the nulls actually matched the link, and the
+    // detector does not. Saying so turns a standing caution into a statement
+    // about THIS run -- and it is the harness's sentence, quoted, not an
+    // inference drawn from the transcript. It belongs on every branch: "both
+    // nulls stated" is not the same claim as "both nulls match the wire", and
+    // a run can be in one without the other.
+    const truthLink = (payload.ground_truth || {}).link;
+    let harness = null;
+    if (truthLink && truthLink.nulls_match_link === true) {
+      harness =
+        "On this run the harness confirms the nulls DO match the link, so a " +
+        "wrongly stated null is not the explanation for anything that fired. " +
+        "That is the harness's knowledge and not the detector's.";
+    } else if (truthLink && truthLink.nulls_match_link === false) {
+      harness = (payload.ground_truth || {}).adversary_present
+        ? "On this run the harness confirms the nulls do not match the link " +
+          "AND that an adversary is mounted on it. Both readings fit the same " +
+          "transcript; the detector cannot separate them, and this screen " +
+          "does not pretend it can."
+        : "On this run the harness confirms the nulls do NOT match the link, " +
+          "and that no adversary is mounted. What fired is a null being wrong " +
+          "about the wire.";
+    }
+
+    if (onlyOneStated) {
+      const rateStated = nulls.rate_null_is_default === false;
       const paragraphs = [
-        "detect() was given channel_error_rate = 0.0, which is its default. " +
-          "The null for every mismatch member is therefore that a matched " +
-          "position NEVER disagrees.",
-        "An honest run over a noisy link departs from that null and is " +
-          "reported as detected. The arithmetic is right; the row is still a " +
-          "false claim if nobody says which null it was scored against. Set " +
-          "the link's true rate in the controls to score it against that " +
-          "instead — the value is never inferred from the transcript, " +
-          "because at check_fraction = 0 the transcript does not carry it and " +
-          "guessing would be inventing a null.",
+        "ONE OF THE TWO NULLS IS STILL THE DEFAULT. detect() is told two, " +
+          "and both default to a perfect link: " +
+          `${field.rate} is the null the RATE family reads the verifiers' ` +
+          `mismatch counts against, and ${field.channel} is the null the ` +
+          "CHANNEL family reads the published check rounds against.",
+        rateStated
+          ? `${field.rate} = ${Fmt.rate(nulls.channel_error_rate)} was ` +
+            `supplied. ${field.channel} is still ` +
+            `${Fmt.rate(nulls.tolerated_depolarising)}, which claims an ideal ` +
+            "entanglement resource — so the channel family is still scoring " +
+            "this run against a link nobody has."
+          : `${field.channel} = ` +
+            `${Fmt.rate(nulls.tolerated_depolarising)} was supplied. ` +
+            `${field.rate} is still ` +
+            `${Fmt.rate(nulls.channel_error_rate)}, which claims a matched ` +
+            "position never disagrees — so the rate family is still scoring " +
+            "this run against a link nobody has.",
+        "They are two parameterisations of the same physics and neither is " +
+          "converted into the other: doing that silently would state a null " +
+          "the operator did not ask for. Set BOTH in the controls, or read " +
+          "what fired as a departure from the half that was left at its " +
+          "default. Neither is ever inferred from the transcript.",
+        nulls.note || "",
       ];
       if (detection.detected === true) {
         paragraphs.unshift(
-          "THIS RUN FIRED, AND IT WAS SCORED AGAINST THE NOISELESS NULL. " +
-            "Read the ground-truth box before reading this as an adversary."
+          "THIS RUN FIRED WITH ONLY ONE NULL STATED. That is exactly the " +
+            "state in which an HONEST run is reported as detected with an " +
+            "adversary named. Read the ground-truth box before reading this " +
+            "as an attack."
         );
       }
-      // The harness knows whether the nulls actually matched the link, and the
-      // detector does not. Saying so here turns a standing caution into a
-      // statement about THIS run -- and it is the harness's sentence, quoted,
-      // not an inference drawn from the transcript.
-      const truthLink = (payload.ground_truth || {}).link;
-      if (truthLink && truthLink.nulls_match_link === true) {
-        paragraphs.push(
-          "On this run the harness confirms the nulls DO match the link, so " +
-            "the noiseless null is not the explanation for anything that " +
-            "fired. That is the harness's knowledge and not the detector's."
-        );
-      } else if (truthLink && truthLink.nulls_match_link === false) {
-        paragraphs.push(
-          (payload.ground_truth || {}).adversary_present
-            ? "On this run the harness confirms the nulls do not match the " +
-                "link AND that an adversary is mounted on it. Both readings " +
-                "fit the same transcript; the detector cannot separate them, " +
-                "and this screen does not pretend it can."
-            : "On this run the harness confirms the nulls do NOT match the " +
-                "link, and that no adversary is mounted. What fired is the " +
-                "null being wrong about the wire."
-        );
-      }
+      paragraphs.push(harness);
       out.push(
         banner(
           detection.detected === true ? "alarm" : "caution",
           "⚠",
-          "The null is noiseless",
+          "Only one of the two nulls is stated",
+          paragraphs
+        )
+      );
+    } else if (bothDefault) {
+      const paragraphs = [
+        `detect() was given ${field.rate} = 0.0 AND ${field.channel} = 0.0, ` +
+          "which are its defaults and are TWO separate claims about a perfect " +
+          "link: that a matched position never disagrees, and that the " +
+          "entanglement resource is ideal.",
+        "An honest run over a noisy link departs from both and is reported as " +
+          "detected. The arithmetic is right; the row is still a false claim " +
+          "if nobody says which nulls it was scored against. Set BOTH " +
+          `controls — ${field.rate} to the link's true matched-position error ` +
+          `rate and ${field.channel} to its Werner strength — to score it ` +
+          "against the link instead. Setting only one does not clear the run. " +
+          "Neither is ever inferred from the transcript, because at " +
+          "check_fraction = 0 the transcript carries no estimate of either " +
+          "and guessing would be inventing a null.",
+      ];
+      if (detection.detected === true) {
+        paragraphs.unshift(
+          "THIS RUN FIRED, AND IT WAS SCORED AGAINST BOTH NOISELESS NULLS. " +
+            "Read the ground-truth box before reading this as an adversary."
+        );
+      }
+      if (!nulls) {
+        paragraphs.push(
+          "The API did not supply run.nulls on this response, so the only " +
+            "flag available here is the RATE family's " +
+            "(Detection.null_is_noiseless). The channel family's null is not " +
+            "reported and this banner cannot speak for it."
+        );
+      }
+      paragraphs.push(harness);
+      out.push(
+        banner(
+          detection.detected === true ? "alarm" : "caution",
+          "⚠",
+          // Without `run.nulls` this branch is standing on the rate family's
+          // flag alone, and the heading says only what that flag knows. A
+          // heading is read on its own; it does not get to claim the half of
+          // the state the response did not supply.
+          nulls
+            ? "Both nulls are noiseless"
+            : "The rate family's null is noiseless",
           paragraphs
         )
       );
     } else {
+      // The heading says what is TRUE of this branch -- that both nulls were
+      // stated -- and not that they are the right ones. "Both nulls carry the
+      // link" would be a claim about the wire, and the operator can state two
+      // nulls that describe a link nobody has: type an honest link's numbers
+      // on a run with Eve on the resource seam and the heading would assert
+      // she is not there. Whether the nulls MATCH is the harness's sentence,
+      // below, and only the harness knows it.
       out.push(
-        banner("info", "ℹ", "The null carries the link's error rate", [
-          `The mismatch members were scored against channel_error_rate = ` +
-            `${Fmt.rate(detection.channel_error_rate)}, supplied by the ` +
-            `operator rather than read off the transcript.`,
-          "The channel family is unaffected: its null is the ideal " +
-            "entanglement resource, so a noisy link still departs from it and " +
-            "a channel signal here is not a mismatch signal.",
+        banner("info", "ℹ", "Both nulls were stated by the operator", [
+          `The rate family's mismatch members were scored against ` +
+            `${field.rate} = ${Fmt.rate(detection.channel_error_rate)} and ` +
+            `the channel family's check rounds against ${field.channel} = ` +
+            `${Fmt.rate((nulls || {}).tolerated_depolarising)}. Both were ` +
+            `supplied by the operator rather than read off the transcript, ` +
+            `and neither was inferred from it.`,
+          "Stating both is necessary for an honest run over a noisy link to " +
+            "come back quiet, and it is not sufficient: these are the laws " +
+            "the run was SCORED against, and whether they are the laws the " +
+            "wire obeyed is a separate question that only the harness can " +
+            "answer. Stating either one alone does not reach even this far — " +
+            "the family whose null is still the default goes on scoring the " +
+            "run against a link nobody has.",
+          harness,
         ])
       );
     }
@@ -565,6 +687,16 @@ const Render = (function () {
 
   /**
    * The measured cost of the noiseless null, with its sample size on it.
+   *
+   * TWO sentences follow the table and both are the API's, verbatim.
+   * `with_true_rate_passed` says what the table becomes when the nulls are
+   * stated; `second_null_note` says that there are TWO of them and what
+   * happens when only one is. Rendering the first alone put "0/30 at every
+   * level when the link's true rate is passed to detect()" on the screen as
+   * the whole story, under an instruction to set one control — and an operator
+   * who followed it got an honest run reported as detected with an adversary
+   * named. A sentence the API ships and the screen drops is worse than one that
+   * was never written: it reads as though the question was answered.
    *
    * @param {Object} calibration
    * @returns {HTMLElement}
@@ -614,6 +746,9 @@ const Render = (function () {
           class: "note",
           text: calibration.with_true_rate_passed || "",
         }),
+        calibration.second_null_note
+          ? h("p", { class: "warn-note", text: calibration.second_null_note })
+          : notSupplied(["noise_null_calibration.second_null_note"]),
       ]
     );
   }
@@ -852,6 +987,12 @@ const Render = (function () {
     const fired = firedLinks(detection.signals);
     const qberRows = [];
     const chshRows = [];
+    // The API's reason for an unevaluable CHSH is a whole sentence, and a whole
+    // sentence drawn as SVG text inside a chart cell is centred on that cell
+    // and clipped by nothing: at 1024x768 in projector mode it ran 66 px past
+    // the right edge of the window. The chart carries a short marker and the
+    // sentence is rendered under it as text that wraps.
+    const chshReasons = [];
     links.forEach(function (link) {
       const key = `${link.party}/${link.message_bit}`;
       const alarm = fired[key] === true;
@@ -895,8 +1036,11 @@ const Render = (function () {
           value: null,
           valueLabel: Fmt.ABSENT,
           className: cls,
-          unavailable: link.chsh_unavailable || "no CHSH statistic here",
+          unavailable: "NOT EVALUATED — see below",
         });
+        chshReasons.push(
+          `${label} — ${link.chsh_unavailable || "no CHSH statistic here"}`
+        );
       }
     });
 
@@ -997,6 +1141,23 @@ const Render = (function () {
             "the Signals table with their critical values.",
         }),
         chshChart,
+        chshReasons.length === 0
+          ? null
+          : h("div", { class: "panel-body" }, [
+              h("p", {
+                class: "note",
+                text:
+                  "Why a link has no CHSH statistic — the API's own sentence, " +
+                  "in full. NOT EVALUATED is not a zero and is not a pass:",
+              }),
+              h(
+                "ul",
+                {},
+                chshReasons.map(function (reason) {
+                  return h("li", { class: "note", text: reason });
+                })
+              ),
+            ]),
         h("p", {
           class: "note",
           text:
@@ -1811,61 +1972,89 @@ const Render = (function () {
    * door: the API refuses rather than clamping precisely so that no result is
    * ever shown under the label of parameters that were not run.
    *
+   * TWO CAUSES, TWO PANELS. A request the service answered with a `400` was
+   * refused BY the service, and the cap paragraph is the right thing to read
+   * next. A `Failed to fetch` was not refused by anybody: the process is not
+   * there. Rendering the second under the first's words told a presenter, in
+   * front of a room, that a cap had rejected their parameters when the truth
+   * was that the demo server had died — and the same copy appeared for a
+   * recorded run, which is a static JSON file that no cap has an opinion about.
+   * The state is the same fourth state either way; the attribution is not.
+   *
    * The sentence is the server's, verbatim. The parameters are the ones the
    * operator typed, echoed back so the panel says what was refused; nothing
    * here is derived (D8).
    *
-   * @param {string} message The service's own refusal sentence.
+   * @param {string} message The service's own refusal sentence, or the
+   *   transport error.
    * @param {Object} request The control values that were sent.
+   * @param {string} [kind] `"refused"` when the service answered and said no,
+   *   `"unreachable"` when the fetch itself failed. Defaults to `"refused"`.
    * @returns {HTMLElement}
    */
-  function refusalPanel(message, request) {
+  function refusalPanel(message, request, kind) {
+    const unreachable = kind === "unreachable";
     const rows = Object.keys(request || {}).map(function (key) {
       return [key, String(request[key])];
     });
-    return panel("This run was refused", "not a result of any kind", [
-      h("div", { class: "verdict is-withheld" }, [
-        h("div", { class: "headline" }, [
-          h("span", {
-            class: "glyph",
-            text: STATE.withheld.glyph,
-            attrs: { "aria-hidden": "true" },
+    return panel(
+      unreachable ? "Nothing answered this request" : "This run was refused",
+      "not a result of any kind",
+      [
+        h("div", { class: "verdict is-withheld" }, [
+          h("div", { class: "headline" }, [
+            h("span", {
+              class: "glyph",
+              text: STATE.withheld.glyph,
+              attrs: { "aria-hidden": "true" },
+            }),
+            h("span", { text: "NO RUN" }),
+          ]),
+          h("div", {
+            class: "sub",
+            text: unreachable
+              ? "The request never reached a service. Nothing refused it and " +
+                "nothing scored it: the fetch itself failed, which means the " +
+                "process serving this page is not answering. This is NOT a " +
+                "clean run, NOT a detection and NOT a no-verdict. It belongs " +
+                "in no rate at all, and any result previously on this screen " +
+                "belonged to a different request and has been cleared."
+              : "The service refused this request, so no session was " +
+                "generated and nothing was scored. This is NOT a clean run, " +
+                "NOT a detection and NOT a no-verdict. It belongs in no rate " +
+                "at all, and any result previously on this screen belonged to " +
+                "different parameters and has been cleared.",
           }),
-          h("span", { text: "NO RUN" }),
         ]),
-        h("div", {
-          class: "sub",
-          text:
-            "The service refused this request, so no session was generated " +
-            "and nothing was scored. This is NOT a clean run, NOT a " +
-            "detection and NOT a no-verdict. It belongs in no rate at all, " +
-            "and any result previously on this screen belonged to different " +
-            "parameters and has been cleared.",
+        h("p", { class: "note", text: message }),
+        h("p", {
+          class: "note",
+          text: unreachable
+            ? "No cap was hit and no parameter was rejected — there was " +
+              "nobody there to reject one. Check that the server is still " +
+              "running; the recorded runs held in this page's memory keep " +
+              "working without it."
+            : "The request is refused rather than quietly run at the nearest " +
+              "allowed value: a screen reporting one run under the label of " +
+              "another is the single easiest way for this dashboard to lie.",
         }),
-      ]),
-      h("p", { class: "note", text: message }),
-      h("p", {
-        class: "note",
-        text:
-          "The request is refused rather than quietly run at the nearest " +
-          "allowed value: a screen reporting one run under the label of " +
-          "another is the single easiest way for this dashboard to lie.",
-      }),
-      kv(rows),
-    ]);
+        kv(rows),
+      ]
+    );
   }
 
   /**
-   * Clear the stage and say that the request was refused.
+   * Clear the stage and say that nothing was run, and why.
    *
    * @param {HTMLElement} target
    * @param {string} message
    * @param {Object} request
+   * @param {string} [kind] `"refused"` or `"unreachable"`.
    * @returns {void}
    */
-  function refused(target, message, request) {
+  function refused(target, message, request, kind) {
     target.textContent = "";
-    target.appendChild(refusalPanel(message, request));
+    target.appendChild(refusalPanel(message, request, kind));
   }
 
   /* ---------------------------------------------------------------------- *

@@ -274,14 +274,42 @@ body {
   color: var(--ink);
 }
 
+/* A note that CORRECTS the note above it. The calibration panel ends with two
+ * sentences from the API: one says what the measured table becomes when the
+ * detector's nulls are stated, the other says there are TWO nulls and that
+ * stating one is not stating both. Rendering the second in the same grey as
+ * the first is how the first came to be read alone. */
+.warn-note {
+  font-size: 0.86rem;
+  color: var(--measured);
+  background: var(--measured-wash);
+  border-left: 6px solid var(--measured);
+  border-radius: var(--radius);
+  padding: 0.45rem 0.6rem;
+  margin: 0;
+}
+
 /* --------------------------------------------------------------------------
    State tokens -- constraint 1 and constraint 5 live here
    -------------------------------------------------------------------------- */
 
+/* `white-space: nowrap` here and on `.num` below used to be unconditional, and
+ * at 1024x768 -- the classic projector resolution -- with projector mode ON
+ * that pushed 307 px of the page off-screen: 28 elements past the viewport with
+ * no scrolling ancestor, including the PROVEN and MEASURED chips that carry
+ * constraint 2 and the "NO -- ABOUT FOUR MINUTES PER SESSION" chip. A chip
+ * whose text a room cannot read has failed at the one job it has, and a page
+ * that needs a horizontal scrollbar during a demonstration will not get one.
+ *
+ * So a chip may WRAP rather than overflow, and the parts that must never break
+ * -- the glyph and the number -- say so individually. A chip that fits is
+ * unchanged. */
 .state {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
+  flex-wrap: wrap;
+  max-width: 100%;
   font-family: var(--mono);
   font-size: 0.78rem;
   font-weight: 700;
@@ -290,12 +318,13 @@ body {
   padding: 0.16rem 0.5rem;
   border-radius: var(--radius);
   border-width: 2px;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .state .glyph {
   font-size: 1em;
   line-height: 1;
+  white-space: nowrap;
 }
 
 .is-clean {
@@ -413,11 +442,13 @@ body {
   display: inline-flex;
   align-items: baseline;
   gap: 0.4rem;
+  flex-wrap: wrap;
+  max-width: 100%;
   font-family: var(--mono);
   border-radius: var(--radius);
   padding: 0.1rem 0.45rem;
   border: 1px solid;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .num .kind {
@@ -425,11 +456,22 @@ body {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.09em;
+  white-space: nowrap;
 }
 
+/* A number may never break across lines: a bound split over two is a bound a
+ * reader has to reassemble. `overflow-wrap: normal` says exactly that and
+ * overrides the `anywhere` inherited from `.num`, so no token ever splits --
+ * while `white-space: normal` still lets the chip wrap AT ITS SPACES. That
+ * matters because the same chip renders lists as well as numbers: the grouping
+ * key and the link roster are comma-separated and, held on one line, they were
+ * two of the elements standing off the right edge of a 1024x768 projector. A
+ * number has no spaces in it and so is untouched by this. */
 .num .value {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+  white-space: normal;
+  overflow-wrap: normal;
 }
 
 .num .qual {
@@ -488,7 +530,7 @@ body {
 .truth dl {
   margin: 0;
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
+  grid-template-columns: fit-content(16rem) minmax(0, 1fr);
   gap: 0.15rem 0.8rem;
   font-size: 0.86rem;
 }
@@ -953,10 +995,14 @@ details.claim-details p {
    Odds and ends
    -------------------------------------------------------------------------- */
 
+/* `max-content` for the term column lets one long term set a width the
+ * viewport does not have; `fit-content()` caps it and wraps instead. The rule
+ * this pair of grids is under is the same one as on the chips above: nothing on
+ * this page may need a horizontal page scroll to be read. */
 .kv {
   margin: 0;
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
+  grid-template-columns: fit-content(16rem) minmax(0, 1fr);
   gap: 0.2rem 0.8rem;
   font-size: 0.88rem;
   align-items: baseline;

@@ -21,6 +21,25 @@
  *             service dies: the page falls back by itself and says so in the
  *             masthead.
  *
+ * THE FALLBACK IS HELD IN MEMORY, NOT LEFT TO THE BROWSER CACHE
+ * -------------------------------------------------------------
+ * Every recorded run is fetched ONCE, at boot, while the service is still
+ * alive, and kept in `state.recordedPayloads`. Clicking one after that touches
+ * no network at all.
+ *
+ * That is the difference between a fallback and a hope. The previous version
+ * re-fetched `data/recorded/<file>.json` on every click, and the service sends
+ * no `Cache-Control`, so whether a click worked after the process died came
+ * down to Chrome's heuristic freshness — roughly a tenth of the file's age,
+ * which on a tree cloned that morning is a couple of minutes. Measured on a
+ * fresh clone: the page loaded, the process was killed, and three recorded runs
+ * in a row failed with `Failed to fetch`. The masthead said RECORDED ONLY and
+ * the rail's recorded list was the only thing that could have honoured it.
+ *
+ * The whole set is 365 KB, fetched in parallel behind the first paint, and the
+ * rail says how many are actually held — so a partial preload is visible rather
+ * than a promise that fails on the click that needs it.
+ *
  * The headline parameters are never faked into a run. `/api/defaults` returns
  * them and the bounds they imply -- `family_budget` derives those without
  * running anything -- and the panel says in as many words that no session was
@@ -46,6 +65,10 @@ const App = (function () {
     attacks: null,
     constants: null,
     recorded: null,
+    // file name -> the recorded `POST /api/run` response, held from boot so a
+    // click never needs the network. See the header.
+    recordedPayloads: {},
+    recordedHeld: 0,
     busy: false,
   };
 
@@ -233,14 +256,30 @@ const App = (function () {
         numberField("key_length", "key_length", "1"),
         numberField("check_fraction", "check_fraction", "0.05"),
         numberField("noise", "noise — the LINK", "0.005"),
+        // The two nulls are ONE instruction and are labelled as one. Setting
+        // only the first leaves an honest run over a noisy link detected, with
+        // 'honest' ruled out and an adversary named — 12/12 at L = 192 over
+        // twelve seeds — so a heading that reads as a single "the null" is not
+        // a cosmetic problem.
+        h("p", {
+          class: "warn-note",
+          text:
+            "TWO NULLS, AND BOTH DEFAULT TO A PERFECT LINK. detect() reads " +
+            "the verifiers' mismatch counts against channel_error_rate and " +
+            "the published check rounds against tolerated_depolarising. To " +
+            "score an honest run over a noisy link against the link, SET " +
+            "BOTH: setting either alone leaves the other family scoring " +
+            "against a link nobody has, and the run still fires. Neither is " +
+            "ever inferred from the transcript.",
+        }),
         numberField(
           "channel_error_rate",
-          "channel_error_rate — the NULL (rate family)",
+          "NULL 1 of 2 — channel_error_rate (rate family)",
           "0.005"
         ),
         numberField(
           "tolerated_depolarising",
-          "tolerated_depolarising — the NULL (channel family)",
+          "NULL 2 of 2 — tolerated_depolarising (channel family)",
           "0.005"
         ),
         numberField("eps", "eps — the budget", "any"),
@@ -302,6 +341,34 @@ const App = (function () {
    * ---------------------------------------------------------------------- */
 
   /**
+   * Fetch every recorded run into memory, once, at boot.
+   *
+   * The fallback exists for the moment the service dies mid-demonstration, and
+   * a fallback that fetches is not a fallback. Each entry is fetched once here,
+   * while the service is up, and every later click reads `recordedPayloads`.
+   * A run that failed to preload simply is not held, and the rail says how many
+   * are — `13 of 13 held in memory` is a promise the page can keep.
+   *
+   * @returns {Promise<void>}
+   */
+  function preloadRecorded() {
+    const entries = state.recorded || [];
+    return Promise.all(
+      entries.map(function (entry) {
+        return getJson(`${STATIC}/data/recorded/${entry.file}`)
+          .then(function (payload) {
+            state.recordedPayloads[entry.file] = payload;
+          })
+          .catch(function () {
+            /* Not held. `recordedHeld` below counts what actually is. */
+          });
+      })
+    ).then(function () {
+      state.recordedHeld = Object.keys(state.recordedPayloads).length;
+    });
+  }
+
+  /**
    * Build the recorded-run list: the walk-through, in order.
    *
    * @returns {HTMLElement}
@@ -309,9 +376,14 @@ const App = (function () {
   function recordedList() {
     const list = h("ul", { class: "recorded-list" });
     (state.recorded || []).forEach(function (entry) {
+      const held = Object.prototype.hasOwnProperty.call(
+        state.recordedPayloads,
+        entry.file
+      );
       const button = h("button", { attrs: { type: "button" } }, [
         h("span", { class: "attack-name", text: entry.label }),
         Render.token("neutral", "RECORDED"),
+        held ? null : Render.token("withheld", "NOT LOADED"),
         h("span", { class: "attack-why", text: entry.why }),
       ]);
       button.addEventListener("click", function () {
@@ -319,6 +391,7 @@ const App = (function () {
       });
       list.appendChild(h("li", {}, [button]));
     });
+    const total = (state.recorded || []).length;
     return h("section", { class: "panel" }, [
       h("h2", { text: "Recorded runs" }, [
         h("span", { class: "hint", text: "generated ahead of time, not now" }),
@@ -333,34 +406,52 @@ const App = (function () {
             "adversaries, then the runs that exist to show what this screen " +
             "must not claim.",
         }),
+        h("p", {
+          class:
+            total > 0 && state.recordedHeld === total ? "note" : "warn-note",
+          text:
+            total === 0
+              ? "NONE. The walk-through is served by the same process as this " +
+                "page and it did not answer, so there is nothing here to " +
+                "click and no fallback to fall back to. Start the server and " +
+                "reload."
+              : `${state.recordedHeld} of ${total} held in this page's ` +
+                `memory. Held runs render with no network at all, so they ` +
+                `keep working if the service stops answering. Anything not ` +
+                `held would need the service back.`,
+        }),
         list,
       ]),
     ]);
   }
 
   /**
-   * Load and render one recorded run.
+   * Render one recorded run, from memory.
+   *
+   * No fetch here, by design: this is the path a presenter falls back to when
+   * the service has died, and it must not depend on the thing that died. A run
+   * that was not preloaded is reported as not held rather than fetched on the
+   * off-chance.
    *
    * @param {Object} entry An `index.json` row.
    * @returns {void}
    */
   function showRecorded(entry) {
-    setStatus(`loading recorded run: ${entry.label}`, "busy");
-    getJson(`${STATIC}/data/recorded/${entry.file}`)
-      .then(function (payload) {
-        Render.run(document.getElementById("stage"), payload, context());
-        setStatus(`recorded run shown: ${entry.label}`, "");
-        window.scrollTo(0, 0);
-      })
-      .catch(function (error) {
-        // Same rule as a refused live run: clear the stage. This is the path
-        // that runs when the service has died, which is exactly when nobody
-        // in the room can check what is on screen against anything else.
-        Render.refused(document.getElementById("stage"), error.message, {
-          recorded_run: entry.file,
-        });
-        setStatus(`could not load ${entry.file}: ${error.message}`, "failed");
-      });
+    const payload = state.recordedPayloads[entry.file];
+    if (!payload) {
+      // Never a silent blank and never the previous run left standing.
+      noteTransportFailure(
+        `${entry.file} was not loaded into this page's memory, and recorded ` +
+          `runs are never fetched on click. If the service is running, ` +
+          `reload the page to load it.`,
+        { recorded_run: entry.file }
+      );
+      setStatus(`recorded run not held: ${entry.file}`, "failed");
+      return;
+    }
+    Render.run(document.getElementById("stage"), payload, context());
+    setStatus(`recorded run shown: ${entry.label} (from memory)`, "");
+    window.scrollTo(0, 0);
   }
 
   /* ---------------------------------------------------------------------- *
@@ -384,6 +475,32 @@ const App = (function () {
   }
 
   /**
+   * Report that nothing answered, on the stage AND in the masthead.
+   *
+   * ONE function, called by every path that can discover the service is gone,
+   * because the previous version had the masthead repaint in exactly one of
+   * them. `startLiveRun`'s catch flipped the chip; `showRecorded`'s did not —
+   * so clicking three recorded runs against a dead process gave three
+   * `Failed to fetch` panels under a masthead still reading `LIVE API`, and
+   * the recorded path is the one a presenter falls back to. A fix that lives
+   * inside one branch of one function is a fix for one branch of one function.
+   *
+   * @param {string} message What failed, verbatim.
+   * @param {Object} request What was being asked for.
+   * @returns {void}
+   */
+  function noteTransportFailure(message, request) {
+    Render.refused(
+      document.getElementById("stage"),
+      message,
+      request,
+      "unreachable"
+    );
+    state.mode = "recorded";
+    paintMode();
+  }
+
+  /**
    * Start one live run. One at a time: a second click is refused rather than
    * queued, because two multi-second sessions racing is how a demo hangs.
    *
@@ -394,6 +511,15 @@ const App = (function () {
       return;
     }
     if (state.mode !== "live") {
+      // Clear the stage too, not only the status line. A click that started no
+      // run must not leave the previous run's verdict standing: a presenter
+      // who presses Run and sees DETECTED has been told a run happened.
+      noteTransportFailure(
+        "The API is not reachable, so no live run was started. Nothing was " +
+          "refused and nothing was scored. The recorded runs in the rail are " +
+          "held in this page's memory and still work.",
+        readControls()
+      );
       setStatus(
         "the API is not reachable, so no live run can be started. The " +
           "recorded runs below still work.",
@@ -425,21 +551,32 @@ const App = (function () {
         // Clear the stage as well as the status line. A refusal that only
         // wrote to the rail left the previous run's verdict on screen under
         // the new parameters, which is the one thing the caps exist to stop.
-        Render.refused(
-          document.getElementById("stage"),
-          error.message,
-          body
-        );
-        setStatus(`the run was refused or failed — ${error.message}`, "failed");
-        // The mode is decided once at start-up, so a service that dies DURING
-        // a demonstration left the masthead reading LIVE API while the API was
-        // gone. `getJson` throws "HTTP <status> ..." when the server answered
-        // and something else when the fetch itself failed, so the two cases
-        // are distinguishable: a 400 cap refusal or a 503 from the run gate is
-        // the service working, and only a failed fetch means it is not there.
-        if (error.message.indexOf("HTTP ") !== 0) {
-          state.mode = "recorded";
-          paintMode();
+        //
+        // The two failures stay distinguishable, which is why the repaint is
+        // guarded rather than unconditional. `getJson` throws "HTTP <status>
+        // ..." when the server ANSWERED -- a 400 from a cap or a 503 from the
+        // run gate is the service working exactly as designed -- and anything
+        // else means the fetch itself failed. Repainting on an HTTP error
+        // would announce a dead API every time somebody typed a key_length
+        // over the ceiling.
+        if (error.message.indexOf("HTTP ") === 0) {
+          Render.refused(
+            document.getElementById("stage"),
+            error.message,
+            body,
+            "refused"
+          );
+          setStatus(
+            `the run was refused or failed — ${error.message}`,
+            "failed"
+          );
+        } else {
+          noteTransportFailure(error.message, body);
+          setStatus(
+            `nothing answered — ${error.message}. The recorded runs held in ` +
+              `memory still work.`,
+            "failed"
+          );
         }
       })
       .then(function () {
@@ -455,6 +592,15 @@ const App = (function () {
   /**
    * Show which mode the page is in, in the masthead, always.
    *
+   * THREE STATES, NOT TWO. `RECORDED ONLY` is a promise that there are
+   * recorded runs to fall back to, and on a COLD load against a dead service
+   * that promise is empty: the page renders from the browser's cache, the chip
+   * said `RECORDED ONLY — API NOT REACHABLE`, and the rail held zero recorded
+   * runs, because `index.json` is served by the process that is gone. Nothing
+   * numeric was wrong on that screen — every control read "range not supplied
+   * by the API" — but the chip was, and the chip is the one thing a presenter
+   * points at to explain what the room is looking at.
+   *
    * @returns {void}
    */
   function paintMode() {
@@ -464,9 +610,70 @@ const App = (function () {
     }
     if (state.mode === "live") {
       chip.textContent = "LIVE API";
-    } else {
-      chip.textContent = "RECORDED ONLY — API NOT REACHABLE";
+      chip.title = "the service answered; runs on this page are real";
+      return;
     }
+    if (state.recordedHeld > 0) {
+      chip.textContent = `RECORDED ONLY (${state.recordedHeld}) — API NOT REACHABLE`;
+      chip.title =
+        "the service is not answering; the recorded runs held in this " +
+        "page's memory still render, and no live run can be started";
+      return;
+    }
+    chip.textContent = "NOTHING LIVE — NO API AND NO RECORDED RUNS";
+    chip.title =
+      "the service is not answering and no recorded run was loaded, so " +
+      "there is nothing on this page to show. Start the server and reload.";
+  }
+
+  /**
+   * How often the masthead re-checks that the service is really there, in ms.
+   */
+  const HEALTH_INTERVAL_MS = 5000;
+
+  /**
+   * Keep the masthead's claim true by ASKING, not by waiting to be surprised.
+   *
+   * The mode used to be decided once at start-up and revised only when
+   * something failed. Now that recorded runs render from memory, nothing on
+   * the recorded path can fail — so without this the chip would go on reading
+   * `LIVE API` after the process died until somebody pressed Run. A masthead
+   * that says the API is live is a claim, and a claim on this screen has to be
+   * checked. `/api/health` is a few bytes and is the liveness check the service
+   * publishes for exactly this.
+   *
+   * Recovery is handled too: restart the server and the chip goes back to
+   * `LIVE API` by itself, which is what an operator who has just fixed
+   * something needs to see.
+   *
+   * @returns {void}
+   */
+  function watchService() {
+    window.setInterval(function () {
+      if (state.busy) {
+        return;
+      }
+      getJson("/api/health")
+        .then(function (health) {
+          if (health && health.ok === true) {
+            if (state.mode !== "live") {
+              state.mode = "live";
+              paintMode();
+            }
+            return;
+          }
+          if (state.mode !== "recorded") {
+            state.mode = "recorded";
+            paintMode();
+          }
+        })
+        .catch(function () {
+          if (state.mode !== "recorded") {
+            state.mode = "recorded";
+            paintMode();
+          }
+        });
+    }, HEALTH_INTERVAL_MS);
   }
 
   /**
@@ -582,11 +789,11 @@ const App = (function () {
           });
       })
       .then(function () {
-        return getJson(`${STATIC}/data/recorded/index.json`).then(
-          function (index) {
+        return getJson(`${STATIC}/data/recorded/index.json`)
+          .then(function (index) {
             state.recorded = index;
-          }
-        );
+          })
+          .then(preloadRecorded);
       })
       .catch(function () {
         state.recorded = state.recorded || [];
@@ -599,8 +806,25 @@ const App = (function () {
         rail.appendChild(recordedList());
         const stage = document.getElementById("stage");
         stage.textContent = "";
+        if (state.mode !== "live" && state.recordedHeld === 0) {
+          // A cold load against a dead service. The page is here because the
+          // browser had it cached; nothing behind it is. Say that, rather than
+          // laying out a walk-through with nothing in it.
+          stage.appendChild(
+            Render.banner("alarm", "⚠", "There is nothing to show", [
+              "This page loaded from the browser's cache. The service that " +
+                "serves it is not answering, so there is no API to run " +
+                "against and no recorded run was loaded either — the " +
+                "recordings are served by that same process.",
+              "Nothing below is a result. Every control reads its range as " +
+                "not supplied, and no verdict, bound or rate on this page " +
+                "came from anywhere. Start the server and reload.",
+            ])
+          );
+        }
         stage.appendChild(opening());
         stage.appendChild(Render.headlineParams(state.defaults));
+        watchService();
       });
   }
 

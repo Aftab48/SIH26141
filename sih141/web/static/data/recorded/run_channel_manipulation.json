@@ -654,6 +654,17 @@
   },
   "summary": "Bob: rejected, r_R = 0.163265 vs threshold 0.015625, |M_R| = 49 (z = 0.18)\nCharlie: rejected, r_R = 0.066667 vs threshold 0.062500, |M_R| = 45 (z = -0.53)\npooled: pooled_matched_count: 94/288 = 0.326389 vs null Binomial(288, 1/3) mean 96.000000 (z = -0.25, P(|dev| >= this) <= 1.00e+00)\naborts: 0 refusal(s), 0 structural, 0 evidence\nreplay: 0 refusal(s), 2 spent round(s) over 1 session(s)",
   "transcript_bytes": 64821,
+  "nulls": {
+   "channel_error_rate": 0.0,
+   "tolerated_depolarising": 0.0,
+   "rate_null_field": "channel_error_rate",
+   "channel_null_field": "tolerated_depolarising",
+   "rate_null_is_default": true,
+   "channel_null_is_default": true,
+   "both_are_default": true,
+   "both_are_stated": false,
+   "note": "detect() takes TWO nulls and both default to a perfect link: channel_error_rate for the rate family and tolerated_depolarising for the channel family. They are two parameterisations of the same physics and neither is converted into the other, because that would state a null the operator did not ask for. Stating only one leaves an honest run over a noisy link DETECTED with an adversary named -- 12/12 at L = 192, strength 0.03125, over twelve seeds, against 0/12 with both stated. Neither is ever inferred from the transcript: at check_fraction = 0 the transcript carries no estimate of either, and guessing would be inventing a null."
+  },
   "transcript_summary": "QDS run on message bit 0: L=192, |B|=3, s_a=0.01562, s_v=0.06250\nCHECK ROUNDS: 48 of 192 positions were reserved for channel estimation and dealt between the links, so the key was scored at L=144; 96 observations and 96 channel samples published.\nPOOLED EVIDENCE bit 0: m_B = 49, m_C = 45, M = 94 (floors: m_min = 1, M_min = 4). Every floor met.\nBob REJECTED bit 0: 8/49 mismatches on matched positions (95 discarded), rate 0.16327 > 0.01562\nCharlie REJECTED bit 0: 3/45 mismatches on matched positions (99 discarded), rate 0.06667 > 0.06250\nEVIDENCE: M = m_B + m_C = 94 matched records, so P(repudiation | this run) <= 9.745e-01. This is the per-run bound and the only one that assumes nothing about the signer.\nREJECTED: Bob did not accept the signature."
  },
  "ground_truth": {
@@ -706,8 +717,8 @@
   }
  },
  "timings": {
-  "session_ms": 499.5788999949582,
-  "detect_ms": 5.66999998409301
+  "session_ms": 414.3189999740571,
+  "detect_ms": 4.871099954470992
  },
  "error": null
 }

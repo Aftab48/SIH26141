@@ -18,21 +18,208 @@ because nobody chose.
 Nothing here reaches a network (:ref:`sih141.web.api <nothing-is-fetched>`),
 and it prints the address rather than opening a browser, so nothing is
 launched that the operator did not ask for.
+
+.. _bind-before-you-announce:
+
+The socket is opened BEFORE the address is printed
+---------------------------------------------------
+The banner used to be printed first and the bind attempted afterwards, inside
+``uvicorn.run``. Start a second instance on a port that is already busy and the
+output read: the address, ``Started server process``, ``Application startup
+complete``, then the bind error, then ``Application shutdown complete`` -- which
+is the last line and looks like a clean stop. The exit status was ``1``, so
+scripts were fine; the human reading the top of the output was not, and the
+failure mode is specific and bad. A presenter who left an instance running an
+hour ago restarts, reads the address line, opens it, and demonstrates against
+the OLD process -- serving whatever assets it was started with.
+
+So :func:`open_listeners` binds first and hands the sockets to uvicorn. A busy
+port fails before anything is announced, with a sentence naming the port, and
+no address that was never bound is ever printed.
+
+.. _both-address-families:
+
+Both loopback families, because ``localhost`` is two addresses
+---------------------------------------------------------------
+``127.0.0.1`` and ``0.0.0.0`` are IPv4 wildcards and nothing more: a socket
+bound to either accepts nothing on ``::1``. On Windows an IPv6 socket is
+``IPV6_V6ONLY`` by default, so ``--host ::`` is the mirror image -- measured
+here, ``--host ::`` answered ``http://[::1]:PORT`` and not
+``http://127.0.0.1:PORT``. A browser resolving ``localhost`` to ``::1`` without
+falling back therefore cannot open the demo at the address an operator is most
+likely to type. Most browsers do fall back; "most" is not a thing to discover at
+a venue.
+
+So a loopback or wildcard host opens **one socket per family** and the banner
+prints every address that was actually bound. A machine with no IPv6 stack
+simply gets the one socket, and the banner says which -- it is never a silent
+half-success.
 """
 
 from __future__ import annotations
 
 import argparse
+import socket
 from typing import Sequence
 
 import uvicorn
 
 from sih141 import __version__
 from sih141.web.api import STATIC_DIR, create_app
-from sih141.web.limits import LIVE_KEY_LENGTH_MAX, MAX_CONCURRENT_RUNS
+from sih141.web.limits import (
+    LIVE_KEY_LENGTH_MAX,
+    MAX_CONCURRENT_RUNS,
+    MAX_REQUEST_BYTES,
+)
 
 
-__all__ = ["build_parser", "main"]
+__all__ = ["bind_hosts", "build_parser", "main", "open_listeners"]
+
+
+#: Hosts that mean "the local machine" and are therefore opened in both address
+#: families. Anything else is taken literally and bound exactly once: an
+#: operator who names an interface has named the one they mean.
+_LOOPBACK_PAIRS: dict[str, tuple[str, ...]] = {
+    "127.0.0.1": ("127.0.0.1", "::1"),
+    "localhost": ("127.0.0.1", "::1"),
+    "::1": ("::1", "127.0.0.1"),
+    "0.0.0.0": ("0.0.0.0", "::"),
+    "::": ("::", "0.0.0.0"),
+}
+
+
+def bind_hosts(host: str) -> tuple[str, ...]:
+    """Return every address ``host`` should be bound on, in order.
+
+    Parameters
+    ----------
+    host : str
+        The ``--host`` argument.
+
+    Returns
+    -------
+    tuple of str
+        One entry for a named interface; two -- one per address family -- for
+        loopback and for the wildcards (:ref:`both-address-families`).
+
+    Examples
+    --------
+    >>> from sih141.web.__main__ import bind_hosts
+    >>> bind_hosts("127.0.0.1")
+    ('127.0.0.1', '::1')
+    >>> bind_hosts("0.0.0.0")
+    ('0.0.0.0', '::')
+
+    A named interface is one socket, because the operator named it:
+
+    >>> bind_hosts("192.168.1.40")
+    ('192.168.1.40',)
+    """
+    return _LOOPBACK_PAIRS.get(host, (host,))
+
+
+def open_listeners(
+    host: str, port: int
+) -> tuple[list[socket.socket], list[str], list[str]]:
+    """Bind the listening sockets, before anything is printed.
+
+    Parameters
+    ----------
+    host : str
+        The ``--host`` argument.
+    port : int
+        The port.
+
+    Returns
+    -------
+    sockets : list of socket.socket
+        Bound and listening. Empty only if an exception was raised instead.
+    bound : list of str
+        The addresses that were bound, as URLs.
+    skipped : list of str
+        Addresses in the pair that could not be bound and why -- a machine with
+        no IPv6 stack, typically. Reported rather than hidden: a half-success
+        the operator does not know about is the thing this function exists to
+        prevent.
+
+    Raises
+    ------
+    OSError
+        If the FIRST address -- the one the operator actually asked for --
+        cannot be bound. That is the busy-port case, and it must fail here,
+        loudly, before any address is announced
+        (:ref:`bind-before-you-announce`).
+
+    Examples
+    --------
+    A loopback bind opens both families and reports both:
+
+    >>> import socket as _socket
+    >>> from sih141.web.__main__ import open_listeners
+    >>> probe = _socket.socket()
+    >>> probe.bind(("127.0.0.1", 0))
+    >>> free = probe.getsockname()[1]
+    >>> probe.close()
+    >>> sockets, bound, skipped = open_listeners("127.0.0.1", free)
+    >>> "http://127.0.0.1:%d" % free in bound
+    True
+    >>> for listener in sockets:
+    ...     listener.close()
+
+    A busy port raises here rather than being announced and then failing:
+
+    >>> held = _socket.socket()
+    >>> held.setsockopt(_socket.SOL_SOCKET, _socket.SO_EXCLUSIVEADDRUSE
+    ...                 if hasattr(_socket, "SO_EXCLUSIVEADDRUSE")
+    ...                 else _socket.SO_REUSEADDR, 1)
+    >>> held.bind(("127.0.0.1", 0))
+    >>> held.listen(8)
+    >>> busy = held.getsockname()[1]
+    >>> try:
+    ...     open_listeners("127.0.0.1", busy)
+    ... except OSError:
+    ...     print("refused, and nothing was printed")
+    refused, and nothing was printed
+    >>> held.close()
+    """
+    sockets: list[socket.socket] = []
+    bound: list[str] = []
+    skipped: list[str] = []
+    for index, address in enumerate(bind_hosts(host)):
+        family = (
+            socket.AF_INET6 if ":" in address else socket.AF_INET
+        )
+        listener = socket.socket(family, socket.SOCK_STREAM)
+        try:
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                # Windows lets a second process bind an address another one is
+                # already listening on when both set SO_REUSEADDR, which is how
+                # a forgotten instance goes on serving while a new one appears
+                # to have started. Refusing is the whole point of binding here.
+                listener.setsockopt(
+                    socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1
+                )
+            else:
+                listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if family is socket.AF_INET6:
+                # Keep the two sockets independent rather than letting a
+                # dual-stack v6 socket claim the v4 wildcard as well: with both
+                # in the list that is a bind conflict on Linux.
+                listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            listener.bind((address, port))
+            listener.listen(128)
+        except OSError as failure:
+            listener.close()
+            if index == 0:
+                for opened in sockets:
+                    opened.close()
+                raise
+            skipped.append(f"{address} ({failure.strerror or failure})")
+            continue
+        sockets.append(listener)
+        shown = f"[{address}]" if ":" in address else address
+        bound.append(f"http://{shown}:{port}")
+    return sockets, bound, skipped
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -63,7 +250,9 @@ def build_parser() -> argparse.ArgumentParser:
         default="127.0.0.1",
         help=(
             "Interface to bind. Defaults to loopback; pass 0.0.0.0 "
-            "deliberately to expose the demo on a venue network."
+            "deliberately to expose the demo on a venue network. Loopback and "
+            "the wildcards are bound in BOTH address families, so a browser "
+            "that resolves localhost to ::1 reaches the same server."
         ),
     )
     parser.add_argument("--port", type=int, default=8141, help="TCP port.")
@@ -79,6 +268,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     """Start the server.
 
+    Binds first, announces second (:ref:`bind-before-you-announce`), and prints
+    only the addresses that were actually bound.
+
     Parameters
     ----------
     argv : sequence of str or None, optional
@@ -87,23 +279,49 @@ def main(argv: Sequence[str] | None = None) -> int:
     Returns
     -------
     int
-        Process exit status.
+        Process exit status. ``1`` when the port could not be bound, with a
+        message naming it and **no address line at all**.
     """
     args = build_parser().parse_args(argv)
+    try:
+        sockets, bound, skipped = open_listeners(args.host, args.port)
+    except OSError as failure:
+        print(
+            f"SIH26141 {__version__} -- COULD NOT START.\n"
+            f"  port {args.port} on {args.host} is not available: "
+            f"{failure.strerror or failure}\n"
+            f"  Nothing is serving and no address is printed above, "
+            f"deliberately: an instance you started earlier may still be "
+            f"holding this port and answering on it. Stop that one, or pass "
+            f"--port with a free port.",
+            flush=True,
+        )
+        return 1
+
     frontend = "present" if (STATIC_DIR / "index.html").is_file() else "MISSING"
+    addresses = "\n".join(f"                  {url}" for url in bound)
     print(
-        f"SIH26141 {__version__} -- http://{args.host}:{args.port}\n"
-        f"  frontend        {frontend} ({STATIC_DIR})\n"
+        f"SIH26141 {__version__} -- listening, bound before this line was "
+        f"printed:\n{addresses}\n"
+        + (
+            f"  not bound       {', '.join(skipped)}\n"
+            if skipped
+            else ""
+        )
+        + f"  frontend        {frontend} ({STATIC_DIR})\n"
         f"  live key length up to L = {LIVE_KEY_LENGTH_MAX}; longer runs are "
         f"refused, never clamped\n"
         f"  concurrent runs at most {MAX_CONCURRENT_RUNS}\n"
+        f"  request body    at most {MAX_REQUEST_BYTES} bytes; larger is 413 "
+        f"before the app sees it\n"
         f"  network         nothing is fetched; /docs is off because Swagger "
         f"UI loads from a CDN",
         flush=True,
     )
-    uvicorn.run(
-        create_app(), host=args.host, port=args.port, log_level=args.log_level
+    server = uvicorn.Server(
+        uvicorn.Config(create_app(), log_level=args.log_level)
     )
+    server.run(sockets=sockets)
     return 0
 
 

@@ -43,6 +43,9 @@ from sih141.web.limits import (
     LIVE_KEY_LENGTH_MAX,
     MAX_CONCURRENT_RUNS,
     MAX_ERROR_BODY_DEPTH,
+    MAX_REQUEST_BYTES,
+    json_safe,
+    safe_text,
 )
 
 
@@ -477,7 +480,7 @@ def test_no_abuse_of_the_request_surface_produces_a_500(client):
         assert "Traceback" not in response.text
         json.dumps(response.json(), allow_nan=False)
         statuses.add(response.status_code)
-    assert statuses <= {400, 422}
+    assert statuses <= {400, 413, 422}
     for method, path in [
         ("get", "/api/run"),
         ("delete", "/api/run"),
@@ -769,3 +772,575 @@ def test_the_static_mount_serves_from_disk(tmp_path):
         assert local.get("/").text == "<h1>local</h1>"
         assert local.get("/static/app.css").text == "body{color:#111}"
         assert local.get("/static/missing.css").status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# 6. The refusal path itself, which is the thing that keeps breaking.
+# --------------------------------------------------------------------------- #
+#
+# THREE 500s IN ONE PHASE, ALL THE SAME DEFECT. A request was refused
+# CORRECTLY and the code reporting the refusal then fell over while quoting the
+# input back:
+#
+#   1. `NaN` in the error body -- JSON cannot encode it, so the 422 raised.
+#   2. a body nested 2000 deep -- every encoder between the rejection and the
+#      socket walks it one frame per level, so the 422 raised.
+#   3. `key_length` with 309 digits -- the refusal MESSAGE multiplied it by 2.2
+#      to estimate the run's cost, and `int -> float` overflowed, so the 400
+#      raised.
+#
+# Each was fixed where it was found. The tests below are written against the
+# SHAPE instead: they take every field on the request surface and push at it
+# with values that are hard to RENDER rather than values that are out of range,
+# because rendering is the step that was breaking. Every one of the three
+# instances above is inside this sweep.
+
+
+_UNRENDERABLE = {
+    "nan": "NaN",
+    "inf": "Infinity",
+    "neg-inf": "-Infinity",
+    "309-digit int": "9" * 309,
+    "4300-digit int": "9" * 4300,
+    "long string": '"' + "x" * 20_000 + '"',
+    "deep list": "[" * 400 + "]" * 400,
+    "deep object": '{"a":' * 400 + "1" + "}" * 400,
+    "object": '{"nested": {"deeper": [1, 2, 3]}}',
+}
+
+_REQUEST_FIELDS = [
+    "attack",
+    "key_length",
+    "check_fraction",
+    "noise",
+    "eps",
+    "channel_error_rate",
+    "tolerated_depolarising",
+    "count_exchange_timing",
+    "seed",
+]
+
+
+@pytest.mark.parametrize("field", _REQUEST_FIELDS)
+@pytest.mark.parametrize("label", sorted(_UNRENDERABLE))
+def test_no_field_can_be_made_to_crash_its_own_refusal(client, field, label):
+    """Every field, against every value that is hard to RENDER.
+
+    This is the test that would have caught all three of this phase's ``500``
+    responses, and it is deliberately not a list of the three: it crosses the
+    whole request surface with the whole class of value.
+
+    A row passes when the service answers with something a screen can render --
+    ``400`` naming a cap, ``422`` naming a schema violation, ``413`` naming the
+    body ceiling -- carrying a body that is valid JSON with no traceback in it.
+    """
+    raw = "{" + json.dumps(field) + ": " + _UNRENDERABLE[label] + "}"
+    response = client.post(
+        "/api/run", content=raw, headers={"Content-Type": "application/json"}
+    )
+    assert response.status_code < 500, (
+        f"{field}={label} produced {response.status_code}: "
+        f"{response.text[:300]}"
+    )
+    assert response.status_code in {400, 413, 422}
+    assert "Traceback" not in response.text
+    # The body has to survive being written, which is the half that kept
+    # failing: it must be JSON, and JSON that does not carry a bare NaN.
+    json.dumps(response.json(), allow_nan=False)
+
+
+@pytest.mark.parametrize("digits", [10, 100, 308, 309, 400, 1000, 4300])
+def test_a_key_length_no_float_can_hold_is_a_400_and_not_a_500(client, digits):
+    """The third instance, pinned at the boundary it crossed.
+
+    ``sys.float_info.max`` has 309 digits. At 308 the refusal message's
+    ``length * 2.2 / 1000.0`` produced a float; at 309 it raised
+    :exc:`OverflowError` from inside the handler and the caller got
+    ``500 Internal Server Error`` for a request the validator had already
+    rejected properly. Measured before the fix: 10 digits -> 400, 100 -> 400,
+    308 -> 400, 309 -> 500, 400 -> 500, 1000 -> 500.
+    """
+    response = client.post(
+        "/api/run",
+        content='{"key_length": ' + "9" * digits + "}",
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 400, response.text[:200]
+    body = response.json()
+    assert body["field"] == "key_length"
+    assert body["cap"] == LIVE_KEY_LENGTH_MAX
+    assert str(LIVE_KEY_LENGTH_MAX) in body["message"]
+    # And the refusal stays a readable size however many digits arrived.
+    assert len(response.content) < 2_000, len(response.content)
+
+
+def test_a_refusal_is_never_larger_than_the_request_that_caused_it(client):
+    """Refusing must not amplify.
+
+    ``RequestRefused`` names the value it refused, and the value is whatever
+    the client sent -- so a large ``attack`` field came back TWICE, once inside
+    the message and once as ``value``. Measured before the fix: a 1,000,014-byte
+    request produced a 2,000,707-byte response, a factor of 2.00, and the
+    process held it. At 256 MB the auditor measured resident memory rising to
+    2.4 GB and staying there.
+    """
+    ratios = []
+    for size in (1_000, 10_000, 60_000):
+        raw = json.dumps({"attack": "x" * size})
+        response = client.post(
+            "/api/run",
+            content=raw,
+            headers={"Content-Type": "application/json"},
+        )
+        assert response.status_code == 400
+        ratios.append(len(response.content) / len(raw))
+        # The offending value appears, bounded, and never in full.
+        body = response.json()
+        assert len(body["value"]) < 300
+        assert "more characters" in body["value"]
+        assert "x" * 300 not in body["message"]
+    # A refusal is a constant plus a bounded echo, so the ratio has to FALL as
+    # the request grows. Before the fix it was flat at 2.00.
+    assert ratios[0] > ratios[1] > ratios[2], ratios
+    assert ratios[-1] < 0.1, ratios
+
+
+def test_a_body_over_the_ceiling_is_refused_before_the_app_sees_it(
+    client, monkeypatch
+):
+    """The cap is on the BODY, and it acts before anything parses it.
+
+    ``MAX_CONCURRENT_RUNS`` protects the CPU and nothing else: the gate is
+    taken after validation, so a request refused by a cap never reaches it. A
+    256 MB body was therefore parsed, refused, echoed and held, and the gate
+    had no opinion. This asserts the request never reaches the driver at all.
+    """
+    reached = []
+    monkeypatch.setattr(
+        driver, "run_once", lambda request: reached.append(request)
+    )
+    oversized = b'{"attack": "' + b"x" * (MAX_REQUEST_BYTES + 1_000) + b'"}'
+    response = client.post(
+        "/api/run",
+        content=oversized,
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 413, response.text[:200]
+    body = response.json()
+    assert body["cap"] == MAX_REQUEST_BYTES
+    assert body["field"] == "body"
+    assert reached == []
+    # The refusal is a few hundred bytes against a request of tens of
+    # thousands: the response cannot be a function of the body's size.
+    assert len(response.content) < 600
+    # And the ceiling is published, so the screen can show it.
+    limits = client.get("/api/defaults").json()["limits"]
+    assert limits["max_request_bytes"] == MAX_REQUEST_BYTES
+
+
+def test_a_body_just_under_the_ceiling_is_still_read(client):
+    """The cap refuses what is over it and nothing else."""
+    padding = "y" * (MAX_REQUEST_BYTES - 200)
+    body = json.dumps({"attack": padding})
+    assert len(body) < MAX_REQUEST_BYTES
+    response = client.post(
+        "/api/run", content=body, headers={"Content-Type": "application/json"}
+    )
+    # Refused for being an unknown attack, which means it was READ.
+    assert response.status_code == 400
+    assert response.json()["field"] == "attack"
+
+
+def test_an_oversized_body_without_a_content_length_is_also_refused():
+    """A client that declares nothing is bounded by what it actually sends.
+
+    The declared-length check is the cheap path. A chunked body -- or one whose
+    ``Content-Length`` lies -- has to be bounded by counting, and the middleware
+    stops the moment the count passes the ceiling rather than accumulating to
+    the end.
+    """
+    import asyncio
+
+    from sih141.web.api import _BodyLimit
+
+    seen = {"chunks": 0}
+
+    async def receive():
+        seen["chunks"] += 1
+        return {
+            "type": "http.request",
+            "body": b"z" * 8192,
+            "more_body": True,
+        }
+
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    async def never(scope, receive_, send_):  # pragma: no cover - must not run
+        raise AssertionError("the application was reached")
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/run",
+        "headers": [(b"content-type", b"application/json")],
+    }
+    asyncio.run(_BodyLimit(never)(scope, receive, send))
+    assert sent[0]["status"] == 413
+    # It stopped counting rather than reading the (endless) body.
+    assert seen["chunks"] <= (MAX_REQUEST_BYTES // 8192) + 2, seen
+
+
+def test_safe_text_is_total_over_the_values_a_client_can_send():
+    """The one function every refusal quotes input through, exercised directly.
+
+    Every value below is one a client can put on the wire, and each of them
+    breaks a naive ``repr`` or a naive echo. None may raise, and none may
+    return something unbounded.
+    """
+    hostile = [
+        float("nan"),
+        float("inf"),
+        9 * 10 ** 20_000,
+        # Just past `sys.get_int_max_str_digits()`, where `repr` itself raises
+        # -- built by arithmetic, because `int("9" * 4301)` raises on the way in.
+        10 ** 4_301,
+        "x" * 1_000_000,
+        b"\xff\xfe" * 1000,
+        {"deep": [1, 2, 3]},
+        None,
+        True,
+    ]
+    for value in hostile:
+        text = safe_text(value)
+        assert isinstance(text, str)
+        assert len(text) < 300, (type(value), len(text))
+        json.dumps(text)
+
+
+def _nested(levels: int) -> list:
+    """Return a list nested ``levels`` deep, for the depth guard."""
+    root: list = []
+    tip = root
+    for _ in range(levels):
+        inner: list = []
+        tip.append(inner)
+        tip = inner
+    return root
+
+
+def test_json_safe_bounds_length_as_well_as_depth_and_encodability():
+    """The three failure modes of an echoed value, in one guard."""
+    assert json_safe(float("nan")) == "nan"
+    assert "nested beyond" in json.dumps(
+        json_safe(_nested(MAX_ERROR_BODY_DEPTH + 40))
+    )
+    echoed = json_safe({"attack": "x" * 500_000})["attack"]
+    assert len(echoed) < 300
+    assert "more characters" in echoed
+    # A huge integer has no decimal form Python will render, and the body says
+    # so rather than raising while it tries.
+    assert json_safe(9 * 10 ** 20_000) == "<integer of about 20001 digits>"
+    # Short values are returned untouched: this is a guard, not a transform.
+    assert json_safe(1024) == 1024
+    assert json_safe("honest") == "honest"
+
+
+# --------------------------------------------------------------------------- #
+# 7. The two nulls, which is what the screen tells an operator to set.
+# --------------------------------------------------------------------------- #
+
+
+def test_stating_one_null_leaves_an_honest_noisy_run_detected(client):
+    """The measurement the calibration panel's sentence has to be true of.
+
+    ``detect()`` takes TWO nulls and both default to a perfect link:
+    ``channel_error_rate`` for the rate family and ``tolerated_depolarising``
+    for the channel family. The dashboard used to tell an operator to set "the
+    link's true rate", singular, and the calibration panel asserted "0/30 at
+    every level when the link's true rate is passed to detect()".
+
+    Following that instruction on an HONEST run over a noisy link leaves the
+    run DETECTED with ``honest`` RULED OUT and an adversary NAMED -- which is
+    this project's own worst failure mode, arriving on a screen, by way of the
+    screen's own instruction. Twelve seeds at ``L = 192``,
+    ``check_fraction = 0.25``, link strength ``0.03125`` (the design noise
+    level ``2 s_a``).
+    """
+    fired = {"neither": 0, "rate only": 0, "both": 0}
+    named_with_rate_only: set[str] = set()
+    outcomes_by_seed: dict[int, set[tuple]] = {}
+    for seed in range(1, 13):
+        for label, rate_null, channel_null in (
+            ("neither", 0.0, 0.0),
+            ("rate only", 0.015625, 0.0),
+            ("both", 0.015625, 0.03125),
+        ):
+            body = client.post(
+                "/api/run",
+                json={
+                    "attack": "honest",
+                    "key_length": 192,
+                    "check_fraction": 0.25,
+                    "noise": 0.03125,
+                    "eps": 1e-9,
+                    "channel_error_rate": rate_null,
+                    "tolerated_depolarising": channel_null,
+                    "seed": seed,
+                },
+            ).json()
+            detection = body["detection"]
+            fired[label] += 1 if detection["detected"] else 0
+            if label == "rate only":
+                named_with_rate_only.update(detection["named"])
+            outcomes_by_seed.setdefault(seed, set()).add(
+                tuple(sorted(detection["outcomes"].items()))
+            )
+
+    assert fired == {"neither": 12, "rate only": 12, "both": 0}, fired
+    # And the half-corrected run does not merely fire -- it NAMES an adversary
+    # and rules the honest hypothesis out.
+    assert "channel-manipulation" in named_with_rate_only
+    assert "honest" not in named_with_rate_only
+
+    # THE VERIFIERS DO NOT MOVE WITH THE NULLS. Their outcomes belong to the
+    # protocol and the nulls belong to the detector, so the pair is identical
+    # under all three settings on every seed -- and it is NOT "both accept
+    # everywhere", which is what this note used to claim. At the design noise
+    # level Bob rejects the honest signature on 5 of the 12, which is a cost of
+    # noise on the SIGNATURE and a separate fact from anything that fired.
+    assert all(len(seen) == 1 for seen in outcomes_by_seed.values())
+    verdicts = [next(iter(seen)) for seen in outcomes_by_seed.values()]
+    accepting = [row for row in verdicts if set(dict(row).values()) == {"accepted"}]
+    rejecting = [row for row in verdicts if dict(row)["Bob"] == "rejected"]
+    assert (len(accepting), len(rejecting)) == (7, 5), (
+        len(accepting),
+        len(rejecting),
+    )
+
+
+def test_the_run_reports_which_nulls_were_stated(client):
+    """A three-state fact, computed in Python, because the screen branches on it.
+
+    ``Detection.null_is_noiseless`` is the RATE family's flag and nothing more.
+    A screen with only that flag cannot tell "both nulls default" from "one
+    null stated", and those two states need different words -- one is a
+    standing caution, the other is the state in which an honest run is reported
+    as an attack.
+    """
+    cases = {
+        (0.0, 0.0): ("both_are_default", True),
+        (0.015625, 0.0): ("both_are_default", False),
+        (0.0, 0.03125): ("both_are_default", False),
+        (0.015625, 0.03125): ("both_are_stated", True),
+    }
+    for (rate_null, channel_null), (key, expected) in cases.items():
+        run = client.post(
+            "/api/run",
+            json=_run_body(
+                channel_error_rate=rate_null,
+                tolerated_depolarising=channel_null,
+            ),
+        ).json()["run"]
+        nulls = run["nulls"]
+        assert nulls[key] is expected, (rate_null, channel_null, nulls)
+        assert nulls["rate_null_field"] == "channel_error_rate"
+        assert nulls["channel_null_field"] == "tolerated_depolarising"
+        assert nulls["channel_error_rate"] == rate_null
+        assert nulls["tolerated_depolarising"] == channel_null
+        # Exactly one of the three states is true at a time.
+        assert not (nulls["both_are_default"] and nulls["both_are_stated"])
+
+
+def test_the_calibration_sentence_is_true_when_it_is_read_alone(client):
+    """A published sentence has to survive being quoted without its neighbours.
+
+    ``with_true_rate_passed`` is the line under the calibration table, and it
+    is the line a reader takes away. Saying "the link's true rate" left it
+    describing an instruction that does not work, and the correcting sentence
+    the API also ships was rendered nowhere.
+    """
+    calibration = client.get("/api/defaults").json()["noise_null_calibration"]
+    headline = calibration["with_true_rate_passed"]
+    assert "channel_error_rate" in headline
+    assert "tolerated_depolarising" in headline
+    assert "BOTH" in headline
+    second = calibration["second_null_note"]
+    assert second
+    assert "12/12" in second and "0/12" in second
+    # And it no longer claims something that is false on 5 of those 12 seeds.
+    assert "verifiers accept in every" not in second
+    assert "Bob rejects" in second
+    # The measured table itself is unchanged: it is a Phase 4 result.
+    assert calibration["kind"] == "measured"
+    assert calibration["runs_per_level"] == 30
+
+
+def test_the_published_bound_note_names_the_pair_the_factor_belongs_to(client):
+    """``2.944`` is ``eps / false_positive_bound`` and nothing else.
+
+    The note read "...never eps and never evidence_bound, which is a post hoc
+    statement ... : at L = 384, eps = 1e-9 the two differ by a factor of
+    2.944." The nearest antecedent for "the two" is the
+    ``false_positive_bound`` / ``evidence_bound`` pair the clause has just
+    contrasted, and THAT ratio is about ``7e9``. Measured here, so the sentence
+    and the arithmetic cannot drift apart.
+    """
+    honest = client.post(
+        "/api/run",
+        json={
+            "attack": "honest",
+            "key_length": 384,
+            "check_fraction": 0.25,
+            "eps": 1e-9,
+            "seed": 7,
+        },
+    ).json()["detection"]
+    slack = honest["eps"] / honest["false_positive_bound"]
+    assert f"{slack:.3f}" == "2.944"
+    assert honest["evidence_bound"] is None
+
+    fired = client.post(
+        "/api/run",
+        json={
+            "attack": "count-starvation",
+            "key_length": 192,
+            "check_fraction": 0.25,
+            "eps": 1e-9,
+            "seed": 7,
+        },
+    ).json()["detection"]
+    ratio = fired["false_positive_bound"] / fired["evidence_bound"]
+    assert ratio > 1e9, ratio
+
+    note = client.get("/api/defaults").json()["bounds"]["note"]
+    assert "2.944" in note
+    # The factor is bound to the budget-versus-bound pair, by name, in the
+    # same clause -- and evidence_bound is described on its own scale.
+    budget_clause = note.split("2.944")[0]
+    assert "eps" in budget_clause and "false_positive_bound" in budget_clause
+    assert "7e9" in note
+
+
+# --------------------------------------------------------------------------- #
+# 8. Cold loads, stale assets, and the one command.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/",
+        "/static/js/app.js",
+        "/static/css/app.css",
+        "/static/data/recorded/index.json",
+    ],
+)
+def test_the_frontend_is_served_with_revalidation_forced(client, path):
+    """No asset may be reused without asking, so a dead service cannot hide.
+
+    With no ``Cache-Control`` at all, whether a file survived the process dying
+    was decided by the browser's HEURISTIC freshness -- roughly a tenth of the
+    file's age. A cold load against a dead service therefore had no single
+    behaviour: on this tree it rendered the whole page from cache with a
+    masthead reading ``RECORDED ONLY -- API NOT REACHABLE`` above a rail with
+    ZERO recorded runs in it, and on a tree whose files had just been edited it
+    did not render at all.
+
+    ``no-cache`` means revalidate-before-reuse, not do-not-store: a live server
+    answers ``304`` over loopback in well under a millisecond, and a dead one
+    produces the browser's own error page instead of a shell promising a
+    fallback it does not have.
+    """
+    response = client.get(path)
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-cache"
+
+
+@pytest.mark.parametrize("path", ["/api/health", "/api/attacks", "/api/defaults"])
+def test_no_api_answer_may_be_served_from_a_cache(client, path):
+    """A cached liveness check is a masthead lying about a dead process.
+
+    ``/api/health`` is polled every five seconds so the screen's ``LIVE API``
+    claim is *verified* rather than inferred from something else failing. That
+    only works if the poll reaches the process: a heuristically cached
+    ``{"ok": true}`` would restore the exact defect the poll closes, with the
+    masthead asserting a live API over a process that is gone. The other two
+    are live facts about the running build for the same reason.
+    """
+    response = client.get(path)
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_the_service_listens_on_both_loopback_families():
+    """``localhost`` is two addresses, and a browser may pick either.
+
+    ``127.0.0.1`` and ``0.0.0.0`` are IPv4 wildcards: nothing listens on
+    ``::1``. Measured before the fix, with the server started on
+    ``--host 0.0.0.0``: ``http://127.0.0.1:PORT/api/health`` answered and
+    ``http://[::1]:PORT/api/health`` returned nothing at all. On Windows
+    ``--host ::`` is the mirror image, because an IPv6 socket is ``V6ONLY`` by
+    default there.
+    """
+    from sih141.web.__main__ import bind_hosts, open_listeners
+
+    assert bind_hosts("127.0.0.1") == ("127.0.0.1", "::1")
+    assert bind_hosts("0.0.0.0") == ("0.0.0.0", "::")
+    assert bind_hosts("10.0.0.7") == ("10.0.0.7",)
+
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+
+    sockets, bound, skipped = open_listeners("127.0.0.1", port)
+    try:
+        assert f"http://127.0.0.1:{port}" in bound
+        # Every socket that was opened really accepts a connection.
+        for listener in sockets:
+            address = (
+                ("::1", port)
+                if listener.family is socket.AF_INET6
+                else ("127.0.0.1", port)
+            )
+            with socket.socket(listener.family, socket.SOCK_STREAM) as caller:
+                caller.settimeout(5)
+                caller.connect(address)
+        if not skipped:
+            assert f"http://[::1]:{port}" in bound, bound
+            assert socket.AF_INET6 in {s.family for s in sockets}
+    finally:
+        for listener in sockets:
+            listener.close()
+
+
+def test_a_busy_port_fails_before_any_address_is_announced(capsys):
+    """Bind first, announce second.
+
+    The banner used to be printed before ``uvicorn.run`` attempted the bind, so
+    a second instance on a busy port printed ``http://HOST:PORT`` -- an address
+    it never bound -- then uvicorn's own startup lines, then the bind error,
+    and ENDED on ``Application shutdown complete``, which reads like a clean
+    stop. A presenter who left an instance running an hour ago reads the
+    address line and demonstrates against the OLD process.
+    """
+    from sih141.web.__main__ import main, open_listeners
+
+    held, _bound, _skipped = open_listeners("127.0.0.1", 0)
+    try:
+        port = held[0].getsockname()[1]
+        status = main(["--port", str(port)])
+    finally:
+        for listener in held:
+            listener.close()
+
+    assert status == 1
+    printed = capsys.readouterr().out
+    assert "COULD NOT START" in printed
+    assert str(port) in printed
+    # The one thing that must NOT be there: an address that was never bound.
+    assert "http://" not in printed
+    assert "shutdown complete" not in printed
