@@ -1,4 +1,4 @@
-# Phase 1 — Quantum Core
+# Phase 1: Quantum Core
 
 Engineering note for `sih141.core`. Covers what exists, the three binding design
 decisions and why each was taken, the derived teleportation correction table, and the
@@ -6,7 +6,7 @@ seams Phase 2 attaches to.
 
 Status: complete. 517 tests over `sih141/core` and its integration suite, all passing.
 (Up from 480 at the end of Phase 1: the Phase 2 audit added tests for four unpinned
-properties of `teleport.py` and made the fidelity of a `DensityMatrix` payload exact --
+properties of `teleport.py` and made the fidelity of a `DensityMatrix` payload exact;
 see section 7.)
 
 ---
@@ -21,7 +21,7 @@ see section 7.)
 | `sih141/core/measure.py` | Born rule, true collapse, sampling, expectations, Bell measurement | `MeasurementOutcome`, `born_probabilities`, `projective_measure`, `measure_qubits`, `joint_probability`, `sample_counts`, `expectation`, `bell_measure` |
 | `sih141/core/teleport.py` | The teleportation protocol, its correction table and the channel it induces | `TeleportationResult`, `RegisterTeleportationResult`, `pauli_correction`, `correction_bits`, `teleport`, `teleport_in_register`, `teleport_channel`, `teleport_circuit` |
 
-Dependencies run strictly one way — `rng` → `paulis` → `states` → `measure` → `teleport` —
+Dependencies run strictly one way (`rng` → `paulis` → `states` → `measure` → `teleport`),
 so there are no import cycles and any layer can be tested with the ones below it intact.
 
 `sih141/core/__init__.py` re-exports every public name with an explicit `__all__` and no
@@ -43,7 +43,7 @@ behaviour is pinned by a test rather than left to be discovered.
 
 ## 2. Design decisions
 
-### D1 — The canonical state type is `DensityMatrix`
+### D1: The canonical state type is `DensityMatrix`
 
 Every function that returns a post-measurement or post-channel state returns a
 `qiskit.quantum_info.DensityMatrix`. Pure states may be *built* as `Statevector`; every
@@ -52,7 +52,7 @@ array and normalises through the one shared helper `states.as_density`.
 
 *Why.* Phase 3 introduces depolarising channels and intercept-resend attacks, both of which
 produce genuinely mixed states. Had the core been written around `Statevector`, Phase 3
-would have had to either fork every function or bolt on a parallel mixed-state path — the
+would have had to either fork every function or bolt on a parallel mixed-state path: the
 classic point at which two code paths drift and the noisy one stops being tested. Making
 mixed states first-class from the start costs nothing here: the register is at most three
 qubits, so the largest object in the project is an 8×8 matrix.
@@ -65,12 +65,12 @@ both stay correct when Phase 3 hands them a Werner state.
 `as_density` is the single validator, and it is strict on purpose: it checks `Tr ρ = 1`,
 `ρ = ρ†` and `ρ ⪰ 0`. The positivity check is the load-bearing one. A Hermitian trace-one
 matrix with a negative eigenvalue still has a well-defined trace, spectrum and overlap, so
-`fidelity`, `purity` and `concurrence` would all happily return a number for it — and
-because they clip into `[0, 1]`, that number is biased toward *"pure, maximally entangled,
+`fidelity`, `purity` and `concurrence` would all happily return a number for it; because
+they clip into `[0, 1]`, that number is biased toward *"pure, maximally entangled,
 undisturbed"*. That is exactly the direction that would hide an attack in Phases 3–5, so
 it is rejected at the boundary instead of absorbed downstream.
 
-### D2 — Qiskit little-endian qubit ordering
+### D2: Qiskit little-endian qubit ordering
 
 Qubit 0 is the **rightmost** character of a bitstring label. A single-qubit operator on
 qubit *q* of an *n*-qubit register is embedded as `1_{n-1} ⊗ … ⊗ A_q ⊗ … ⊗ 1_0`, so
@@ -78,7 +78,7 @@ amplitude indices satisfy `index = Σ_q b_q · 2^q`. Pauli strings passed to `ex
 follow the same rule: in `"ZI"`, `Z` acts on qubit 1.
 
 *Why.* Not because little-endian is better, but because a project that mixes conventions
-produces bugs that are silent — the state is still normalised, the probabilities still sum
+produces bugs that are silent: the state is still normalised, the probabilities still sum
 to 1, and only the *attribution* of an outcome to a qubit is wrong. In a detection system
 that is the worst possible failure mode: the QBER estimate stays plausible while measuring
 the wrong thing.
@@ -89,14 +89,14 @@ big-endian at index 2, so a Z measurement of qubit 0 is certainly `−1` and of 
 certainly `+1`. Symmetric states such as `(|00⟩+|11⟩)/√2` cannot distinguish the two
 conventions at all and are never used for this purpose.
 
-### D3 — Determinism through one `rng` seam
+### D3: Determinism through one `rng` seam
 
 Every function that consumes randomness takes keyword-only `rng: np.random.Generator |
 None = None` and resolves it through `sih141.core.rng.resolve_rng`. `numpy.random.*`
 module-level functions and the stdlib `random` module appear nowhere in the codebase.
 
-*Why.* Phase 5 reports ROC curves and detection rates. A number nobody can reproduce is not
-evidence. Threading one generator through a whole experiment gives one reproducible stream:
+*Why.* Phase 5 reports ROC curves and detection rates, and a number nobody can reproduce is
+not evidence. Threading one generator through a whole experiment gives one reproducible stream:
 
 ```python
 rng = np.random.default_rng(20260141)
@@ -107,11 +107,11 @@ b = projective_measure(a.post_state, 1, PauliBasis.X, rng=rng)
 `resolve_rng` rejects integer seeds and the legacy `RandomState` with an explanatory error
 rather than accepting them. Accepting a seed would look convenient and be wrong: it would
 restart the stream on every call, so a loop of "random" measurements would return the same
-value every time — a bug that produces perfectly plausible-looking, completely correlated
+value every time, a bug that produces perfectly plausible-looking, completely correlated
 data.
 
-Seeds do nevertheless arrive as bare integers — from a Phase 5 CLI flag, a JSON run
-description, a Phase 6 config field. `seed_to_generator(seed)` is the **one sanctioned
+Seeds do nevertheless arrive as bare integers (from a Phase 5 CLI flag, a JSON run
+description, a Phase 6 config field). `seed_to_generator(seed)` is the **one sanctioned
 conversion** at that boundary, and it exists precisely so that callers do not reach for
 `numpy.random.default_rng` inline at each call site, which is what D3 forbids. Convert
 once, thread the object thereafter:
@@ -126,7 +126,7 @@ It is deliberately *not* a second `resolve_rng`: it refuses generators (use `res
 booleans, floats and strings, so the two entry points cannot be confused. `None` means
 fresh entropy, as everywhere else.
 
-### D4 — No AI/ML
+### D4: No AI/ML
 
 Linear algebra and classical statistics only, per the problem statement. Nothing in Phase 1
 learns, fits or trains.
@@ -152,7 +152,7 @@ three-qubit state in the Bell basis of the pair (q0, q1) gives
 ```
 
 Each of the four branches carries a prefactor of ½, so **every outcome has probability
-exactly 1/4 for any payload** — the reason the two classical bits leak nothing.
+exactly 1/4 for any payload**, the reason the two classical bits leak nothing.
 
 The classical bits are read straight off the canonical ordering
 `BELL_ORDER = (Φ⁺, Ψ⁺, Φ⁻, Ψ⁻)` as `2·m₁ + m₀ = BELL_ORDER.index(outcome)`, and the
@@ -169,7 +169,7 @@ Two notes on the last row. The Pauli operators are Hermitian and self-inverse, s
 `Z` invert their own branches directly. For `Ψ⁻` the conditional state is `−XZ|ψ⟩`, and
 since `(XZ)² = −I` the correction `XZ` returns exactly `|ψ⟩` with no residual phase.
 Writing `ZX` instead would differ by a global phase (`ZX = −XZ`) and be equally correct
-physically — the order is a convention, fixed here so the table has one form and the tests
+physically; the order is a convention, fixed here so the table has one form and the tests
 can assert matrices rather than only fidelities.
 
 `m₀` is the X exponent and corresponds to the measured bit of qubit 1; `m₁` is the Z
@@ -180,7 +180,7 @@ missing or wrong `Z` correction, because both are `Z` eigenstates and `Z` acts o
 global phase. Adding `{|+⟩, |−⟩}` still cannot detect a swapped `X`/`Z` pair. The
 `{|+i⟩, |−i⟩}` pair is what closes the gap: the six states are the endpoints of the three
 Bloch axes, and every non-identity Pauli anticommutes with two of them, so it maps four of
-the six to the *orthogonal* state — the most visible error available. This is verified
+the six to the *orthogonal* state, the most visible error available. This is verified
 directly rather than assumed, and confirmed by mutation: replacing `X` with `−iY` in the
 correction table (a single sign flip, physically not a global phase) turns 23 tests red,
 including exactly the `X±` and `Y±` integration cases and leaving `Z±` green.
@@ -194,7 +194,7 @@ Two constants are **derived** rather than chosen, and both are pinned by tests.
 `_PROB_TOL = states._VALIDATION_TOL`. The completeness check `p₊ + p₋ = 1` must not be
 tighter than the tolerance of the project's own state validator. `as_density` admits a
 trace deviation up to `1e-8` and does *not* renormalise, so a tighter measurement tolerance
-would reject states the project declares legal — and would blame "malformed projectors" for
+would reject states the project declares legal, and would blame "malformed projectors" for
 ordinary input drift. `born_probabilities` additionally divides by the realised total, so
 admitted drift is removed rather than propagated into the reported probabilities.
 
@@ -210,14 +210,14 @@ then rejected, so the result could not be fed back into any other function in th
 
 Belt and braces: `_collapse` also projects the spectrum back onto the positive semidefinite
 cone (negatives clipped, trace renormalised) so the guarantee holds *by construction*, and
-refuses to do so when the negative mass exceeds `100 × _VALIDATION_TOL` — repair is a
+refuses to do so when the negative mass exceeds `100 × _VALIDATION_TOL`; repair is a
 round-off eraser, not a bug eraser. The cost is one 8×8 eigendecomposition per measurement.
 
 The practical effect of the guard is that an outcome of probability below ~2e-8 is never
 reported. That is a documented, quantified approximation, and it is precisely the regime in
 which the collapsed state could not have been represented faithfully anyway. Since the
 skipped weight is redistributed over the surviving branches, the realised distribution
-differs from the exact Born distribution by at most (number of branches) × 2.2e-8 — below
+differs from the exact Born distribution by at most (number of branches) × 2.2e-8, below
 4 × 2.2e-8 for a Bell measurement. The docstrings of `projective_measure`,
 `measure_qubits` and `bell_measure` all state this, because a reader who is told
 "exact Born sampling" and nothing else will eventually use them for a tail statistic.
@@ -233,39 +233,39 @@ functions are for when the post-measurement state is actually needed.
 
 The QDS protocol should need no changes to this layer. The seams it attaches to:
 
-- **Key-state generation** — `random_basis(rng=…)` and `eigenstate(basis, eigenvalue)`
+- **Key-state generation**: `random_basis(rng=…)` and `eigenstate(basis, eigenvalue)`
   produce the BB84-style signature states; `eigenstate_label` gives the human-readable form
   for logging and for the Phase 6 dashboard.
-- **Signature transmission** — `teleport(payload, resource=…, rng=…)` runs the real
+- **Signature transmission**: `teleport(payload, resource=…, rng=…)` runs the real
   protocol (a genuine Bell measurement and collapse, not a shortcut), and
   `TeleportationResult` carries everything a verifier needs: the Bell outcome, the two
   classical bits, the receiver's state and the fidelity. The payload may be **mixed**, so a
   relayed key qubit can be fed straight back in for a second hop.
-- **Relaying and entanglement swapping** — `teleport_in_register(register,
+- **Relaying and entanglement swapping**: `teleport_in_register(register,
   payload_qubit=…, resource_qubits=(sender, receiver), rng=…)` is the general primitive:
   it moves one qubit of a larger register and preserves that qubit's correlations with
   every other qubit in it. Phase 2 should call this rather than reimplementing correction
   bookkeeping directly on `bell_measure`.
-- **Verification readout** — `measure_qubits` for a full basis-by-basis readout with the
+- **Verification readout**: `measure_qubits` for a full basis-by-basis readout with the
   collapse threaded through, `sample_counts` for shot statistics with little-endian
   bitstring keys, `expectation` for the ±1 correlators that Phase 4's CHSH and QBER
   statistics are sums of.
-- **Noise and attack injection (Phase 3)** — the `resource` argument of `teleport` accepts
+- **Noise and attack injection (Phase 3)**: the `resource` argument of `teleport` accepts
   any two-qubit density matrix. A Werner state `(1−p)|Φ⁺⟩⟨Φ⁺| + p·I/4` already yields the
   analytic fidelity `1 − p/2`, which the test suite verifies across eight noise levels.
   This is the hook the whole attack suite hangs from; nothing in `teleport` needs to know an
   attack occurred. Attacks on the **forward payload line** (rather than on
   the resource) attach at the `payload` argument instead, which now accepts a mixed state.
-- **Analytic prediction (Phase 4/5)** — `teleport_channel(resource)` returns the induced
+- **Analytic prediction (Phase 4/5)**: `teleport_channel(resource)` returns the induced
   single-qubit channel as a `Kraus`, so a QBER or an average fidelity can be computed
   exactly instead of sampled with `1/√N` error. Compose hops with
   `SuperOp(a).compose(SuperOp(b))`; compare channels through `Choi`, never through the
   Kraus list, which is only defined up to an isometry.
-- **Statistics (Phase 4/5)** — the honest-case null distribution is already established and
+- **Statistics (Phase 4/5)**: the honest-case null distribution is already established and
   tested here: the four Bell outcomes are uniform at 1/4, and the two classical bits are
   marginally unbiased and mutually independent. Phase 4's hypothesis tests are tests
   *against this distribution*, so a biased sampler would invalidate every downstream number
-  without failing a single fidelity assertion — which is why `tests/test_integration.py`
+  without failing a single fidelity assertion, which is why `tests/test_integration.py`
   tests uniformity with a chi-square goodness-of-fit statistic (3 dof, closed-form p-value,
   no SciPy dependency) alongside per-outcome four-sigma bands computed from the sample size.
 
@@ -291,8 +291,8 @@ exactly as before, and `.value` still works everywhere it is used.
 
 Ordering is documented and stable, not incidental:
 
-- `PauliBasis` sorts as its one-character labels do — `X < Y < Z`.
-- `BellState` sorts by `BELL_ORDER` — `Φ⁺, Ψ⁺, Φ⁻, Ψ⁻` — via explicit `__lt__`/`__le__`/
+- `PauliBasis` sorts as its one-character labels do: `X < Y < Z`.
+- `BellState` sorts by `BELL_ORDER` (`Φ⁺, Ψ⁺, Φ⁻, Ψ⁻`) via explicit `__lt__`/`__le__`/
   `__gt__`/`__ge__`, **not** lexicographically. The string order would be
   `Phi+ < Phi- < Psi+ < Psi-` (`'+'` is 0x2B, `'-'` is 0x2D), which interleaves the phases
   and would put histogram rows out of correction-index order. `sorted(counts)` therefore
@@ -311,7 +311,7 @@ are omitted). The counts-sum-to-shots contract is preserved.
 ### `MeasurementOutcome.probability` is conditional, and `joint_probability` says so
 
 The `probability` of record *k* from `measure_qubits` is `Pr(oₖ | o₀ … oₖ₋₁)`, not a
-marginal — measurement *k* acts on the state the previous ones already collapsed. On `|Φ⁺⟩`
+marginal; measurement *k* acts on the state the previous ones already collapsed. On `|Φ⁺⟩`
 with `{0: Z, 1: Z}` the two records read `0.5` and `1.0`. A detector that averages them
 gets `0.75`, which is neither qubit's marginal (both `0.5`) nor the joint probability
 (`0.5`), and nothing about it looks wrong. The list is a chain-rule factorisation, so the
@@ -322,8 +322,8 @@ state, or from `sample_counts`.
 ### The Bell pair order is a genuine no-op
 
 `bell_measure`'s docstring claimed the `qubits[0]`/`qubits[1]` order mattered for `Ψ⁻`,
-"where swapping the pair would flip the sign". It does flip the sign of the *vector*, but
-the projector is an outer product and `(−v)(−v)† = vv†` erases it. Measured: the four
+"where swapping the pair would flip the sign". It does flip the sign of the *vector*. But
+the projector is an outer product, and `(−v)(−v)† = vv†` erases it. Measured: the four
 projectors are bit-identical under the swap (max absolute difference exactly `0.0`), on two-
 and three-qubit registers, adjacent pairs and not. Swapping changes no outcome label, no
 probability and no collapsed state; the docstrings now say that, and a test pins it.
@@ -343,7 +343,7 @@ call.
 `_payload_statevector` used to raise when `Tr(rho^2) != 1`, and the docstring advised
 "degrade the resource instead". That is an equivalent model for *some* attacks only. It
 cannot express noise or an intercept-resend acting on the **forward payload line**, and it
-cannot express relaying a key qubit over **more than one hop** — feeding the (mixed) output
+cannot express relaying a key qubit over **more than one hop**. Feeding the (mixed) output
 of one `teleport` into the next is exactly the flow a multi-hop signature relay needs. The
 teleportation algebra is linear in rho and never required purity; the restriction existed
 only because `TeleportationResult.payload` was typed `Statevector` and the fidelity was
@@ -363,15 +363,15 @@ The payload no longer has to be standalone: teleporting qubit A of an entangled 
 `(A, R)` leaves the surviving pair with **concurrence still exactly 1**, and the exact joint
 state is preserved (pinned with an asymmetric, non-maximally-entangled pair, since
 `|Φ⁺⟩` is invariant under too much to catch a wrong table). Entanglement swapping is
-therefore a three-line call. `teleport` is now a thin wrapper over this primitive — driven
-from the same seed the two agree bit for bit — so there is no second copy of the register
+therefore a three-line call. `teleport` is now a thin wrapper over this primitive (driven
+from the same seed, the two agree bit for bit), so there is no second copy of the register
 layout or the correction table to drift.
 
 Index bookkeeping: tracing out the payload and the sender's half renumbers everything above
 them. Survivors keep their relative order, so a qubit at index `q` moves to `q` minus the
 number of consumed indices below `q`. `payload_index` is that image of `resource_qubits[1]`.
 
-### `teleport_channel` — the protocol as a channel
+### `teleport_channel`: the protocol as a channel
 
 `teleport_channel(resource)` returns the effective single-qubit channel, averaged over the
 Bell outcomes with corrections applied, as a `qiskit.quantum_info.Kraus`. It is written in
@@ -380,7 +380,7 @@ each outcome/branch pair contributes `K_{B,k} = U_B M_{B,k}` with
 
     M_{B,k}[r, p] = sum_s conj(B_{2s+p}) * sqrt(lambda_k) * (v_k)_{2r+s}
 
-— the teleportation identity of section 3 with the payload left as a free index.
+That is the teleportation identity of section 3 with the payload left as a free index.
 
 Two limits fix the construction, both asserted through the **Choi matrix** rather than by
 sampling: `teleport_channel(|Φ⁺⟩)` is the identity channel and `teleport_channel(I/4)` is
@@ -394,7 +394,7 @@ only its diagonal in the Bell basis survives:
     E(rho) = sum_B q_B * U_B rho U_B^dagger,   q_B = <B|rho_res|B>
 
 Three consequences worth knowing before Phase 4 is written. A QBER is a linear function of
-four inner products read straight off the resource — no tomography, no sampling. Every
+four inner products read straight off the resource: no tomography, no sampling. Every
 teleportation channel is unital and any two of them **commute**, so a multi-hop chain
 depends only on the multiset of hops, not their order, even when the noise processes that
 produced the resources do not commute. And a non-unital resource does *not* give a
@@ -407,14 +407,14 @@ strength `p`, which is where `F = 1 − p/2` comes from and why two hops compose
 ### Two smaller audit items
 
 - `TeleportationResult.fidelity` is set from `states.fidelity`, the clipped helper, not from
-  qiskit's raw `state_fidelity` — which returns `1.000000000000001` on a large fraction of
+  qiskit's raw `state_fidelity`, which returns `1.000000000000001` on a large fraction of
   pure-vs-pure comparisons, while `__post_init__` hard-raises outside `[0, 1]`. The
   invariant is true by construction rather than by luck of the PSD-repair step, and a
   2000-run regression test pins it.
 - `teleport`'s Notes claimed the receiver's pre-correction marginal is `I/2` "regardless of
   the payload". Payload-independence is right and is the whole no-signalling argument; the
   `I/2` half holds only when the resource is *locally* maximally mixed. Every Bell and
-  Werner state is, but an amplitude-damped resource is not — for damping of strength
+  Werner state is, but an amplitude-damped resource is not: for damping of strength
   `gamma` on the receiver's half of `|Φ⁺⟩` the marginal is
   `diag((1+gamma)/2, (1−gamma)/2)`. The wording now separates the two claims.
 
@@ -425,15 +425,15 @@ Widening `teleport` to accept a mixed payload made a second path through
 the exact `⟨ψ|ρ|ψ⟩` shortcut when one argument is a `Statevector` but the `sqrtm`-based
 Uhlmann formula when both are `DensityMatrix`, and the `sqrtm` route carries about `1e-8`
 of absolute error. So a *pure* payload handed in as a 2-D array produced a byte-identical
-`received` state and a **different** reported fidelity — `0.8500000063` against the exact
-`0.85` — an order of magnitude outside the `1e-9` calibration contract the Werner tests
+`received` state and a **different** reported fidelity (`0.8500000063` against the exact
+`0.85`), an order of magnitude outside the `1e-9` calibration contract the Werner tests
 assert everywhere else.
 
 `states.fidelity` now detects a pure argument (`|Tr(ρ²) − 1| ≤ 1e-12`) and uses the exact
 closed form `F = Tr(ρσ)`, which holds whenever *either* state is pure. It is one matrix
 product: exact to machine epsilon, and cheaper than the eigendecomposition it replaces.
 Only genuinely mixed-versus-mixed comparisons, which have no closed form, still go through
-`sqrtm`, and a test pins that they still do — the commuting case
+`sqrtm`, and a test pins that they still do; the commuting case
 `F = (Σ_k √(a_k b_k))²` is not `Tr(ρσ)`, so the two branches are distinguishable.
 
 Three further properties of `teleport.py` were correct but unasserted, and each is now

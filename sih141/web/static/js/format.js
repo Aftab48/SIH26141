@@ -27,7 +27,7 @@ const Fmt = (function () {
   "use strict";
 
   /** The mark used wherever a value is genuinely absent. */
-  const ABSENT = "—";
+  const ABSENT = "n/a";
 
   /**
    * Return true when a value is a finite number the API actually supplied.

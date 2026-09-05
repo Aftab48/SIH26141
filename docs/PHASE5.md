@@ -1,4 +1,4 @@
-# Phase 5 — The evaluation harness, and what this machine actually costs
+# Phase 5: The evaluation harness, and what this machine actually costs
 
 Engineering note and results for `sih141/eval` and `tools/sweep.py`: the harness every
 experiment runs on, the seed rule that makes a parallel sweep publishable, the production sweep's
@@ -24,7 +24,7 @@ than no number at all, because it looks like evidence. Concretely: every figure 
 this document, `README.md` or a chart must be derivable by running one committed command
 against recorded seeds, and that command must be printed next to the table it produced.
 
-The corollary is the reason D3 — randomness only through an injected, keyword-only `rng` — has
+The corollary is the reason D3 (randomness only through an injected, keyword-only `rng`) has
 been enforced since Phase 1. Because randomness is injected rather than global, **a trial's
 result depends on its seed and on nothing else**: not on worker count, not on scheduling order,
 not on which core it landed. That is what makes a parallel sweep publishable, and §4 proves it
@@ -48,13 +48,13 @@ against the same files, and a table that costs two hours to regenerate is a tabl
 check.
 
 `run` is **resumable**. One file per trial, written atomically by the worker that finished it,
-named from the trial's identity — `<root>/<experiment>/<cell>/trial-000042.json`. On startup it
+named from the trial's identity: `<root>/<experiment>/<cell>/trial-000042.json`. On startup it
 skips what is already there. Re-running the identical command after a hibernation costs the
 trials that were in flight and nothing else. This is not hypothetical: a hibernation has already
 destroyed one long run in this project and baked `"<no summary line>"` into `docs/METRICS.md`.
 
 Results default to `~/.sih141/results`, **outside the repository**. Raw per-trial files are never
-committed; only reduced tables are. Committing them would be a mistake of a familiar shape — a
+committed; only reduced tables are. Committing them would be a mistake of a familiar shape: a
 reviewer seeing 200 JSON files in the tree would take them for the evidence, when the evidence is
 the seed plus the command and the files are a cache of a computation anyone can redo.
 
@@ -78,16 +78,16 @@ Three properties, each tested rather than stated.
 **Pure.** `trial_seed` reads no clock, no environment and no global state. Worker count, chunk
 size and completion order cannot reach it. It is not `hash((e, c, r, i))` precisely because
 Python's `hash` is randomised per process by `PYTHONHASHSEED`, which is the "depends on which
-process ran it" failure this rule exists to rule out — and there is a test that computes a seed
+process ran it" failure this rule exists to rule out, and there is a test that computes a seed
 in a separate interpreter with a different hash seed and compares.
 
 **Unambiguous.** `0x00` separates the fields, and legal names are `[a-z0-9][a-z0-9._-]{0,63}`,
 so no two identities can build the same material. Without the separator `("ab", "c")` and
-`("a", "bc")` would collide and two cells would silently share a stream. The same pattern keeps
+`("a", "bc")` would collide and two cells would silently share a stream; the same pattern keeps
 path separators and drive letters out of names that become directory components.
 
 **Independent across roles.** The session's generator and an adversary's come from different
-`r`, so D6 — every adversary owns its randomness and never reads the session's — is a property
+`r`, so D6 (every adversary owns its randomness and never reads the session's) is a property
 of the derivation rather than a convention a scenario author has to remember. The test compares
 *realised draws* through `sih141.attacks.isolation.same_stream`, not seeds.
 
@@ -110,7 +110,7 @@ examples.
 Phase 3 constraint 4: which link Eve touched, and which runs a selective starver targeted, live
 on the **adversary's** log, and a detector may not read them. `GroundTruth` is the harness's
 label; `Detection` is what the detector concluded from the transcript alone. They are built at
-different times — the detector has already returned before the label is attached.
+different times: the detector has already returned before the label is attached.
 
 The property that matters is not "the label is in a different field" but "the label could not
 have reached the detector", and the test is an observation that would differ if it had: score one
@@ -132,7 +132,7 @@ Two labelling rules ride on the record itself, because a table gets them wrong o
 
 `TrialRecord.fingerprint()` is a SHA-256 over the canonical JSON of everything except
 `wall_clock`. Timings depend on the machine, on thermal state and on how many workers were
-competing, so they are on the record — Phase 5 needs a performance section — and out of the
+competing, so they are on the record (Phase 5 needs a performance section) and out of the
 comparison. The excluded set is exactly one field and is pinned by a test, because an exclusion
 list is the natural hiding place for a field that genuinely moved between one worker and twenty.
 
@@ -146,7 +146,7 @@ result. Four tests, each written so that it could fail:
 | What is claimed | What is actually run |
 | --- | --- |
 | Same seeds, same results at any width | Two whole sweeps, one in-process and one across four spawned workers, compared by fingerprint. The test also asserts more than one PID appeared, so a pool that silently ran everything in one worker would not pass by accident. |
-| Results do not depend on completion order | Trial 2 produced twice — once alone in its own directory, once as the third of four — and the fingerprints compared. |
+| Results do not depend on completion order | Trial 2 produced twice, once alone in its own directory and once as the third of four, and the fingerprints compared. |
 | The *tables* match, not just the records | The rendered markdown of the outcome and detection tables compared across the two topologies. Records could match while a reduction sorted by directory order. |
 | No worker touches a global RNG (D3) | Both global states snapshotted around a sweep and compared, in the parent and inside every worker. A separate test draws from both globals and asserts the probe notices, so the probe cannot be decorative. |
 
@@ -196,7 +196,7 @@ in a worker's own environment, and an empty `global_rng_touched` list. Every cel
 the trial count its manifest asked for; the reduction checks that against the manifest rather
 than against the highest index present, so a run cut short by its last trials is caught.
 
-The whole store is **239 MiB** — 90 MiB of it the 600 ROC records, which are the only ones that
+The whole store is **239 MiB**: 90 MiB of it the 600 ROC records, which are the only ones that
 retain their transcripts, because the ROC reduction re-scores them at fifteen budgets and cannot
 work from a summary. The two 400-trial families keep reduced records only; retaining their
 transcripts would have cost tens of gigabytes for tables that need a verdict and a handful of
@@ -217,7 +217,7 @@ against a committed tree.
 
 **Every manifest now records `f94d9fe` with `dirty: false`**, and the re-run answered a question
 the first one could not. This was not a resume or a re-reduce: 12,494 trials were computed from
-scratch, in fresh worker processes, on a machine in a different state -- across the 51 cells
+scratch, in fresh worker processes, on a machine in a different state. Across the 51 cells
 both runs share, per-cell wall clock moved by a median of 6.1% and by as much as 20.5%
 (`l384`, 1041.64 s against 827.84 s). Against the committed tables, what changed:
 
@@ -229,7 +229,7 @@ both runs share, per-cell wall clock moved by a median of 6.1% and by as much as
 
 The charts are the check worth reading, because they plot the rates and the bounds and nothing
 else: a single moved result would have moved a coordinate. So the determinism argument in §4
-is no longer only an assertion about seeds and a test at four workers -- the entire production
+is no longer only an assertion about seeds and a test at four workers: the entire production
 sweep has now been computed twice, hours apart, and agrees everywhere it claims to.
 
 ### What the integration audit re-ran, and what it found
@@ -243,17 +243,17 @@ things, and it caught four.
 | All seven `reduce` commands, exactly as printed under their own tables, including the quoted `--results` path | **byte-identical**, all seven, exit 0 |
 | Both charts, re-rendered | identical coordinate for coordinate; only the embedded output path differs |
 | `perf --session-scaling` timings | within 1% on all three lengths |
-| `perf --session-scaling` **sizes** | **wrong by up to 21%** — §11.1 |
+| `perf --session-scaling` **sizes** | **wrong by up to 21%**, §11.1 |
 | `perf --memory` | within 1% on peak RSS, identical on transcript size |
-| `perf --speedup` | **7.04× → 10.27×** — §11.2 |
-| the degenerate small-end table | **had no command at all**; one exists now, and three of its cells were one draw published as a property — §12 |
-| "26.7 MB" beside "0.226 KiB/position" | **a unit mismatch inside one sentence** — 25.4 MiB — §11.1 |
+| `perf --speedup` | **7.04× → 10.27×**, §11.2 |
+| the degenerate small-end table | **had no command at all**; one exists now, and three of its cells were one draw published as a property, §12 |
+| "26.7 MB" beside "0.226 KiB/position" | **a unit mismatch inside one sentence**, 25.4 MiB, §11.1 |
 | one cell of every results table, recomputed by a different route | all agree; see the notes under each section |
 
 Nothing in §§7–10 failed. Everything that failed was in the performance sections, which is where
-the numbers are measurements of a machine rather than functions of a seed — and the one that was
-simply *wrong* rather than unstable, the transcript size, had a green doctest sitting beside it
-that read the constant back out of its own dict.
+the numbers are measurements of a machine rather than functions of a seed, and the one that
+was simply *wrong* rather than unstable, the transcript size, had a green doctest sitting beside
+it that read the constant back out of its own dict.
 
 ---
 
@@ -296,12 +296,12 @@ identical coordinate for coordinate, the embedded output path being the only dif
 They were also checked by **inverting their own geometry**, which is a different thing from
 grepping the markup for a number. `repudiation-curve.svg` puts the measured rate on a log axis with
 `1e0` at `y = 56.0` and `1e-1` at `y = 120.3`; reading each point's `cy` back through that scale
-recovers 0.2716, 0.1651, 0.0873, 0.0450, 0.0200, 0.0349, 0.0150, 0.0050 and 0.0025 — the nine
+recovers 0.2716, 0.1651, 0.0873, 0.0450, 0.0200, 0.0349, 0.0150, 0.0050 and 0.0025, the nine
 non-zero rungs of §7's table, every one within 1%. The tenth rung is `0/400`: it is drawn as an
 interval bar reaching the axis floor with its `0/400` label attached, because a zero has no place
 on a log axis and a point silently dropped would read as a rung that was never run.
 
-`roc.svg` carries 165 circles, which is eleven arms at fifteen budgets — the three cells with no
+`roc.svg` carries 165 circles, which is eleven arms at fifteen budgets; the three cells with no
 attacked runs are correctly absent, and `impersonation-full` is listed as
 `undetectable-by-construction` rather than drawn as a line along zero. Its x axis is the **proven**
 bound and its y axis the **measured** rate with the 99% interval as a bar, and both words are in
@@ -331,17 +331,17 @@ where repudiation succeeds at every key length.
 **The denominator** is `engaged`: runs whose tilt actually replaced at least one delivered state,
 read off `TiltingPreparation.flips` and never off the cell's intent. A run the tilt happened to
 leave alone is byte-identical to an honest run, is counted in its own `not engaged` column, and is
-not scored as a missed repudiation. That column is not decorative — at `L = 24`, 6 of the 400 runs
+not scored as a missed repudiation. That column is not decorative: at `L = 24`, 6 of the 400 runs
 came out untouched, so the row reads `107/394` and not `107/400`.
 
 **The numerator** is the runs where Bob accepted, Charlie rejected, the forwarding hop left the
-declaration alone and the session is coherent. It is recomputed by two routes — the transcript's
-own `repudiated` property, and a rebuild from the recorded verdict strings — and a test asserts
-they agree on every record *and* that both answers actually occur in the sample, so a route that
+declaration alone and the session is coherent. It is recomputed by two routes: the transcript's
+own `repudiated` property, and a rebuild from the recorded verdict strings. A test asserts they
+agree on every record *and* that both answers actually occur in the sample, so a route that
 always said `False` could not pass.
 
-**Aborts** are inside the denominator and are not repudiations — a verifier who reached no verdict
-did not accept, so the event did not occur — and they get their own `no verdict` column. That is
+**Aborts** are inside the denominator and are not repudiations (a verifier who reached no verdict
+did not accept, so the event did not occur), and they get their own `no verdict` column. That is
 also the denominator the proven bound is stated over, which is what lets the measured and proven
 columns be read against each other. On this sweep the column is zero on every row.
 
@@ -367,11 +367,11 @@ Two rows that are not part of the ladder and must not be read as one:
 
 **The ordering control answers its question rather than assuming it.** `l192` measures `0.0350
 [0.0179, 0.0673]` and `l192after` measures `0.0175 [0.0069, 0.0439]`; the closed form `0.02951`
-lies inside both. So the count ordering does not move *this* attack detectably at `n = 400` — which
+lies inside both. So the count ordering does not move *this* attack detectably at `n = 400`, which
 is a measurement, not the assumption it would have been if the cell did not exist. §8 is where the
 ordering does move an attack, by everything.
 
-**The closed form lands inside the measured interval on all eleven rows that carry both** — the
+**The closed form lands inside the measured interval on all eleven rows that carry both**: the
 ten ladder rungs and the ordering control. That is the check that the measurement and the model are
 describing the same experiment, and it is an independent route rather than a restatement:
 `analysis.repudiation_probability` is the exact acceptance probability for this adversary's family,
@@ -388,7 +388,7 @@ rows exist to rule out.
 
 The adversary's own log says the same thing more directly. On `l768` the tilt replaced between
 **42 and 88 states per run**, 63.5 on average, on all 400 runs; on `l600`, 29 to 71. The `0/400`
-is 400 runs of an attack that certainly happened and did not succeed — the `mean states flipped`
+is 400 runs of an attack that certainly happened and did not succeed: the `mean states flipped`
 column in the full table carries that figure on every row, so a row cannot report a zero without
 also reporting how hard it tried.
 
@@ -400,7 +400,7 @@ cannot go stale.
 At `L = 768` the measurement is `0/400`, whose 99% upper limit is **0.0163**. The exact in-model
 probability is **5.845e-04**, twenty-eight times below what a sample of 400 can resolve. The proven
 enforced bound is **9.212e-01**, fifty-six times looser than the measurement. And the region the
-security claim actually lives in — `1.4139e-09` at `L = 115200` — is unreachable by both.
+security claim actually lives in (`1.4139e-09` at `L = 115200`) is unreachable by both.
 
 So the proof is vacuous over exactly the range a measurement can reach, and the measurement is
 blind over exactly the range the proof is about. **A measured zero here is evidence that the
@@ -413,7 +413,7 @@ mechanism works. It is never confirmation of the bound.**
 
 The security claim turns on at `L = 137`, where the pooled floor `max(2·m_min, M_min)` first
 exceeds 1. The per-verifier floor does not bite until `L = 273`. Below the crossover both floors
-are 1 — "abort only on an empty matched set" — and every number in the run still computes
+are 1 ("abort only on an empty matched set"), and every number in the run still computes
 cheerfully, which is why the column exists.
 
 | `L` | `m_min` | `M_min` | floor on `M` | claim | enforced repudiation (**proven**) | recipient forgery (**proven**) | outside forgery (**proven**) |
@@ -445,13 +445,13 @@ it is corrected from the table rather than from an argument.
 > Regenerate: `python tools/sweep.py reduce forgery-curve --results ~/.sih141/results`
 > Full tables: [`docs/tables/forgery-curve.md`](tables/forgery-curve.md)
 
-**The question.** How often is a forged declaration accepted — for the outside forger who holds
-nothing and for the binding one, a recipient who holds half the target's evidence — and does the
+**The question.** How often is a forged declaration accepted (for the outside forger who holds
+nothing and for the binding one, a recipient who holds half the target's evidence), and does the
 count ordering change the answer?
 
 **The cells.** Fifteen, all at `check_fraction = 0`, 400 trials each. Four outside-forgery rungs
 at `L = 9, 15, 24, 30`, the only lengths where Eve's exact acceptance probability is above what 400
-trials can resolve — it is `4.67e-07` by `L = 96` and `1.12e-12` by `L = 192`, so a rung there
+trials can resolve: it is `4.67e-07` by `L = 96` and `1.12e-12` by `L = 192`, so a rung there
 would measure `0/400` whatever happened and say nothing. Plus `eve24after` under the other
 ordering. Then the recipient forger at `L = 96, 192, 384, 768, 1200`, each in a `before` and an
 `after` variant.
@@ -492,7 +492,7 @@ column, not the rejection column, and the acceptance rate's denominator is unaff
 
 **A proven bound of exactly zero, and why it is not an empty sum.** The `eve9` row's
 `max proven FP bound` reads `0.000e+00`. That is the real answer, not a missing one: the mismatch
-member's null on a noiseless link is a *point mass* at zero — a matched position never disagrees —
+member's null on a noiseless link is a *point mass* at zero, because a matched position never disagrees,
 so `P(e_R ≥ 1 | honest)` is zero exactly, at every budget and every key length. Phase 4 requires
 those ten members to prove exactly zero rather than something small, and the test suite enforces
 it. It is also the sharpest possible illustration of why `null_is_noiseless` is a column: a bound
@@ -536,7 +536,7 @@ a hypothesis that was ruled out and it is not a zero.
 `recipient_forgery_probability` is the probability that Charlie *accepts*, which presupposes he
 reaches a verdict. All five `after` rows have their closed form inside the measured interval. Four
 of the five `before` rows have it outside, because those runs measure `0/400` acceptances out of
-400 refusals — the model is not describing that experiment. The fifth, `L = 1200`, falls inside
+400 refusals; the model is not describing that experiment. The fifth, `L = 1200`, falls inside
 only because `1.4002e-02` has already dropped below the `0.0163` that 400 trials can resolve, so
 its agreement is a coincidence of sample size and not a validation. Across the two families, every
 row where the closed form's event can occur has it inside the interval: **21 for 21**.
@@ -558,7 +558,7 @@ see it.
 
 **The question.** As the detector's false-positive budget `eps` is swept over a committed
 fifteen-rung ladder, what detection rate does the Phase 4 detector achieve against each adversary
-— with every operating point obtained by passing that `eps` to the shipped `detect()`, and no
+, with every operating point obtained by passing that `eps` to the shipped `detect()`, and no
 threshold moved by hand?
 
 **`eps` is a reduce-time axis, not a cell dimension.** A trial's seed is a pure function of
@@ -567,10 +567,10 @@ sample and a five-percent wobble at `n = 40` would be sampling noise. Instead th
 their transcripts and the reduction hands each one to `detect()` once per budget. That is cheap
 against the session it re-scores: the production run's own timing table gives 29.4 ms per
 `detect()` against 2.14 s per session at `L = 384`, so the whole fifteen-rung ladder costs about a
-fifth of one session. And the ladder is not frozen — a reviewer who wants a point between two of
+fifth of one session. And the ladder is not frozen: a reviewer who wants a point between two of
 ours re-reduces, and nobody re-runs.
 
-**The cells.** Fifteen at `L = 384`, 40 trials each. Fourteen run at `check_fraction = 0.25` — the
+**The cells.** Fifteen at `L = 384`, 40 trials each. Fourteen run at `check_fraction = 0.25`, the
 only arrangement where the channel family is evaluable at all, and the configuration Phase 4 §5
 published, so the `eps=1e-9` column is directly comparable. The fifteenth, `honest-unchecked`, runs
 at `check_fraction = 0` precisely so the table has a row where the channel family is withheld and
@@ -578,8 +578,8 @@ reads `not evaluated`. Eleven are scored against the noiseless null; four `tol-`
 against the link's true error rate (`channel_error_rate = 0.025`,
 `tolerated_depolarising = 0.05`).
 
-**Two rates, two denominators, both printed on the row.** `detected` is over `attacked` — runs
-whose adversary engaged, counted off the adversary's own log. `false alarms` is over `clean` —
+**Two rates, two denominators, both printed on the row.** `detected` is over `attacked`: runs
+whose adversary engaged, counted off the adversary's own log. `false alarms` is over `clean`:
 runs on which no adversary acted, *including the untargeted runs of a selective cell*, because
 such a run is byte-identical to an honest one. `attacked + clean == runs`, always.
 
@@ -616,7 +616,7 @@ because the assumption is about the attack and not about the runs it left alone.
 
 **The anchor reproduces Phase 4 exactly, from a different seed set through different code.** 39 of
 40 honest checked runs prove `3.3964e-10` and one proves `3.1464e-10` with `channel:Bob/1:chsh`
-withheld — both figures, including the footnote about an empty CHSH cell, are what
+withheld; both figures, including the footnote about an empty CHSH cell, are what
 `docs/PHASE4.md` prints. The unchecked cell proves `2.7818e-10`.
 
 ### Where the curve has a shape, and where it does not
@@ -646,12 +646,12 @@ the boundary, and `eps` is simply not the binding constraint for those adversari
 log and not on the cell's intent, because Phase 4's replay arm once reported a clean `0/40` while
 having forwarded honestly throughout. Read straight off the production records: `tol-p05` touched
 27 to 50 hops per run, `tol-p20` 128 to 180 and `tol-p35` 241 to 301. Their `0/40` at `eps = 1e-9`
-is a detector that did not fire on an attack that certainly happened, which is the result. And
+is a detector that did not fire on an attack that certainly happened. That is the result. And
 `attacked + clean == runs == 40` on all fifteen cells, so no run is missing from either
 denominator.
 
 **Monotonicity is checked per run, not per rate.** Because every budget scores the same transcript,
-a run that fires at a tighter `eps` must fire at every looser one — so the check is an up-set test
+a run that fires at a tighter `eps` must fire at every looser one, so the check is an up-set test
 over each of the 600 records' own fifteen verdicts, not a comparison of rates. `up-set holds`
 reads `yes` on all fifteen arms, and a test feeds the checker a crafted non-monotone ladder to
 prove it can say `no`.
@@ -665,14 +665,14 @@ would overstate the detector's own false-alarm rate by those factors.
 `structural:evidence-abort` has no admissible cut below `eps = 4.879e-19`, bisected on a retained
 transcript from this sweep. That is *above* `2**-64` (`5.421e-20`), the smallest budget this
 project quotes, so at the tightest budget anyone would ask for the member is withheld and the
-table reads `not evaluated` — never `passed`. It bisects to the same crossover on every run, so
+table reads `not evaluated`, never `passed`. It bisects to the same crossover on every run, so
 it is a property of the parameters and not of a sample.
 
 ### Against the Phase 3 prototype
 
 | detector | attacked arms separated | false alarms (**measured**) | false-alarm bound (**proven**) | how the threshold was chosen |
 | --- | --- | --- | --- | --- |
-| Phase 3 prototype | 4 of 5 adversaries at 100% | `0/80` observed | none — there is no null to invert | tuned on the runs in front of it |
+| Phase 3 prototype | 4 of 5 adversaries at 100% | `0/80` observed | none, there is no null to invert | tuned on the runs in front of it |
 | Phase 4 at `eps=1e-9`, noiseless null | 8 of 8 attacked arms at 100%; 1 `undetectable-by-construction` | `0/98 = 0.000 [0.000, 0.063]` | `3.3964e-10` per run, under the honest null | derived (D7) |
 | Phase 4 at `eps=1e-9`, true rate as null | **0 of 3** attacked arms at 100% | `0/40 = 0.000 [0.000, 0.142]` | `7.3122e-10` per run, under the honest null | derived (D7) |
 
@@ -699,7 +699,7 @@ protocol's observability, and D7 forbids moving a threshold to improve it.
 **`honest`** is the false-alarm arm: 30 honest runs on a noiseless link at each of `L = 192, 384,
 768`, `check_fraction = 0.25`. Every one measures `0/30 = 0.000 [0.000, 0.181]` flagged, against a
 proven per-run bound of `3.865e-10`, `3.396e-10` and `4.177e-10`. The measurement is not the
-result — the sample is far too small to see `1e-10` — the *proof* is; the measurement is the check
+result, since the sample is far too small to see `1e-10`; the *proof* is, and the measurement is the check
 that nothing in the pipeline contradicts it.
 
 **`noise`** is the arm where the null is not the truth. Honest parties, a depolarising wire at four
@@ -707,7 +707,7 @@ strengths, all scored against the noiseless null:
 
 | depolarising strength | attacked | flagged (**measured**) | refusals | **proven** FP bound | null noiseless |
 | --- | --- | --- | --- | --- | --- |
-| 0.0 | 0 | *no trials* — clean column reads `0/30 = 0.000 [0.000, 0.181]` | 0 | `3.396e-10` | yes |
+| 0.0 | 0 | *no trials*, clean column reads `0/30 = 0.000 [0.000, 0.181]` | 0 | `3.396e-10` | yes |
 | 0.0025 | 30 | `14/30 = 0.467 [0.260, 0.685]` | 0 | `3.396e-10` | yes |
 | 0.005 | 30 | `23/30 = 0.767 [0.532, 0.905]` | 0 | `3.396e-10` | yes |
 | 0.010 | 30 | `28/30 = 0.933 [0.723, 0.987]` | 0 | `3.396e-10` | yes |
@@ -722,7 +722,7 @@ audit finding A3-1, and it is why that field is a column and not a paragraph.
 in this sweep.** `tol-honest` runs a noiseless link scored against `channel_error_rate = 0.025` and
 measures `0/40` false alarms; `tol-p05` runs a depolariser at exactly the tolerated level, whose
 mismatch rate *is* 0.025, and measures `0/40` detections at `eps = 1e-9`. A null at or above the
-link's truth is a null honest runs do not depart from — which is the whole point, and also why the
+link's truth is a null honest runs do not depart from, which is the whole point, and also why the
 `tol-` arms are the only place in this phase where the detector gives ground.
 
 Do not try to infer the noise level inside the detector: at `check_fraction = 0` the transcript
@@ -730,7 +730,7 @@ does not carry it, and guessing it would be inventing a null.
 
 **Dominance.** `dominance_noise_level()` is published beside every mismatch-rate detection rate. At
 `DEFAULT_PARAMS` and `eps = 1e-9` the crossover is `0.012119`, *below* the design noise level
-`2·s_a = 0.03125` — so on a link as noisy as the scheme tolerates, the mismatch detector adds
+`2·s_a = 0.03125`. So on a link as noisy as the scheme tolerates, the mismatch detector adds
 nothing over the verifier's own cut. Over the matched counts the repudiation sweep produced
 (`|M_R|` from 2 to 299) it runs `0.000000` to `0.009459` at Charlie's cut, which is lower still.
 At demo scale that detector is dominated on any link that is noisy at all. It is not dominated in
@@ -758,7 +758,7 @@ quantity is not stable enough to publish as a number.
 | 192 | 0.25 | 0.420 | 2.188 | 457 | 0.330 |
 | 768 | 0.25 | 1.650 | 2.148 | 465 | 0.325 |
 | **115200** | **0.0** | **235.09** | **2.041** | **490** | **0.226** |
-| 115200 | 0.25 | — | — | — | 0.330 |
+| 115200 | 0.25 | n/a | n/a | n/a | 0.330 |
 
 **Where each column comes from.** The three small rows are one `perf --session-scaling` run,
 which seeds length `L` at `5 + L`. The `115200` timing is a separate end-to-end run at seed
@@ -768,11 +768,11 @@ for that column and would not be for the timings.
 
 The timings **reproduce**: re-running the command during the integration pass gave 0.209, 0.419 and
 1.636 seconds, within 1% of the row above on all three, and a third reading at `L = 96` once the
-machine was quiet again gave 0.211 s — the published value to the millisecond. Which is itself the
+machine was quiet again gave 0.211 s, the published value to the millisecond. Which is itself the
 §11.2 finding in miniature: the same command on the same machine reads 2.195 ms/position when
 nothing else is running and about 3.2 when a browser is. The full-scale row confirms the 230.2 s
-already in `docs/QDS.md` to within 2.1%, so the 6.7 ms/position figure — a `tracemalloc` artefact
-that inflated every timing by very close to three times — stays dead.
+already in `docs/QDS.md` to within 2.1%, so the 6.7 ms/position figure, a `tracemalloc` artefact
+that inflated every timing by very close to three times, stays dead.
 `REFERENCE_MS_PER_POSITION = 2.041` is the one number the run plan rests on, and every total derived
 from it is a doctest over that constant.
 
@@ -784,7 +784,7 @@ built under, and not as a property of the code.
 
 **The size column was wrong for a whole release, and the doctest beside it could not have caught
 it.** The three small rows read `0.408`, `0.371` and `0.339`. Running the command above now gives
-`0.337`, `0.330` and `0.325` — 21%, 12% and 4% high. Transcript size is deterministic in the seed
+`0.337`, `0.330` and `0.325`: 21%, 12% and 4% high. Transcript size is deterministic in the seed
 (four seeds at `L = 96` spread by under 0.001 KiB/position), so this was not measurement noise:
 `0.408` is roughly what `L = 96` gives at a check fraction near **0.42**, and the figures had come
 from a different configuration. They survived because the only test on them looked the constant up
@@ -804,7 +804,7 @@ grow a digit as the indices they name get larger. The unchecked series does the 
 
 **Kibibytes and kilobytes were mixed in one sentence.** `kb_per_position` is `len(json) / 1024`, so
 a full-scale unchecked transcript is `0.226 × 115200 / 1024 = ` **25.4 MiB**, not the "26.7 MB" the
-earlier text printed — that was the same byte count in decimal megabytes, sitting next to a figure
+earlier text printed; that was the same byte count in decimal megabytes, sitting next to a figure
 derived in binary ones. The checked run is **37.2 MiB** (38,971,467 bytes). Both are now stated in
 MiB, which is what the constant divides by.
 
@@ -812,10 +812,10 @@ MiB, which is what the constant divides by.
 transcript against 2.9 ms on a 96-position one, because it is dominated by parsing the JSON, so it
 scales with `L` like everything else. Still under one percent of the session that produced it.
 Like every other timing here it is a machine measurement and moves with the machine's state: a
-contended reading during the integration pass gave 2.16 s for the same transcript. The *shape* —
-three orders of magnitude across a 1200-fold range in `L` — is what the figure is for.
+contended reading during the integration pass gave 2.16 s for the same transcript. The *shape*
+(three orders of magnitude across a 1200-fold range in `L`) is what the figure is for.
 
-### 11.2 Parallel speedup — measured twice, and it did not reproduce
+### 11.2 Parallel speedup: measured twice, and it did not reproduce
 
 > Regenerate: `python tools/sweep.py perf --speedup --speedup-cell l768 --trials 120 --workers 1,4,8,14,20`
 > 120 honest sessions at `L = 768` per point, each point into a fresh results directory so a
@@ -834,7 +834,7 @@ speedup is a ratio with that baseline in the denominator.** So `7.04×` is not a
 document can publish as a stable measurement, and neither is `10.27×`.
 
 The diagnosis, measured rather than assumed. Eight consecutive single sessions at `L = 768` on the
-re-run machine give `1.746` s for the first and about `2.48` s for every one after it — a 42% ramp
+re-run machine give `1.746` s for the first and about `2.48` s for every one after it, a 42% ramp
 within seconds, which is the all-core turbo budget collapsing as soon as anything else is awake.
 The machine during the re-run was carrying a browser, two chat applications and two game launchers
 at 10% load, which is precisely the state the phase brief anticipates when it says to leave eight
@@ -851,8 +851,8 @@ So what should be quoted:
   on that. At 7.04× two hundred trials at `DEFAULT_PARAMS` is 1.9 hours; at 10.27× it is 1.3 hours;
   at 15× it would be 52 minutes, and neither run supports that.
 
-Two things that are *not* the cause, checked rather than assumed. **Not idle workers:** occupancy —
-in-worker seconds over the sweep's own wall clock — is 17.74 of 20 on the first run and 17.61 on
+Two things that are *not* the cause, checked rather than assumed. **Not idle workers:** occupancy
+(in-worker seconds over the sweep's own wall clock) is 17.74 of 20 on the first run and 17.61 on
 the second, so the pool is busy; it is the cores that are slow. The production sweep gives the same
 answer independently: the `scaling` experiment's in-worker session seconds total 2225.21 against a
 manifest wall clock of 117.0 s, an occupancy of **19.02 of 20**. **Not BLAS oversubscription:**
@@ -870,19 +870,19 @@ make the mechanism visible:
 | 14 | 3.634 | 3.839 |
 | 20 | 4.302 | 4.366 |
 
-**On the re-run, one worker and four workers cost exactly the same per trial** — 2.538 s against
-2.533 s — where on the first run four workers already cost 14% more. A lone worker that is no
+**On the re-run, one worker and four workers cost exactly the same per trial**: 2.538 s against
+2.533 s, where on the first run four workers already cost 14% more. A lone worker that is no
 faster than four of them is a lone worker that was never getting a single-core boost. That is the
 whole diagnosis: the baseline had already collapsed to all-core clocks before the sweep started,
 and the twenty-worker column, where every core is pinned anyway, barely moved between the two runs
 (4.302 against 4.366).
 
-So the contention is real and it starts **before the E-cores are reached** — eight workers on an
-eight-P-core part cost 1.50× per trial on a quiet machine — but it is the all-core turbo budget
+So the contention is real and it starts **before the E-cores are reached**: eight workers on an
+eight-P-core part cost 1.50× per trial on a quiet machine. But it is the all-core turbo budget
 plus shared L3 and memory bandwidth, not the pool. The further growth from 14 to 20 is the twelve
 E-cores, slower per clock for scalar Python.
 
-**Use 20 workers anyway** — 29.75 s beats 36.60 s at fourteen — but the marginal return past eight
+**Use 20 workers anyway** (29.75 s beats 36.60 s at fourteen), but the marginal return past eight
 is poor, so if the laptop must stay usable during a sweep, eight workers cost about 40% more wall
 clock and leave twelve logical threads free.
 
@@ -925,7 +925,7 @@ the same species as `null_is_noiseless`: arithmetically right, misleading withou
 identical to the byte, because it is deterministic. Where the timing measurements are hostage to
 the machine's clock state, memory is not.
 
-The floor is a little under 80 MiB — numpy and qiskit imported, before any session — which both
+The floor is a little under 80 MiB (numpy and qiskit imported, before any session), which both
 runs agree on: 78.5 MiB minus a 0.9 MiB rise on the first, 79.1 minus 0.9 on the second. At full
 scale one worker peaks at 350 MiB, so twenty are about **7 GiB** against this machine's 24. That fits, but it is not
 the "20 workers is under 2 GB" the phase brief records: that figure is twenty import floors and
@@ -935,7 +935,7 @@ smaller machine.
 
 That probe shipped a real defect worth recording: ctypes defaults every argument to a 32-bit int,
 so the pseudo-handle `-1` from `GetCurrentProcess` arrived as `0xFFFFFFFF` rather than a 64-bit
-`HANDLE`, the call failed, and **every row read `0.0 MB`** — which looks exactly like a process
+`HANDLE`, the call failed, and **every row read `0.0 MB`**, which looks exactly like a process
 that used no memory. There is a test that fails if it breaks again.
 
 ### The degenerate small end
@@ -949,7 +949,7 @@ having no figures.** Its numbers came from an ad-hoc probe. `measure_small_end` 
 
 | `L` | signing length | `m_min` | `M_min` | aborts / 5 | security claim | families withheld |
 | --- | --- | --- | --- | --- | --- | --- |
-| 3 | parameter set **refused** | — | — | — | — | — |
+| 3 | parameter set **refused** | n/a | n/a | n/a | n/a | n/a |
 | 6 | 5 | 1 | 1 | 1 | no | 3 |
 | 12 | 9 | 1 | 1 | 1 | no | 5 |
 | 24 | 18 | 1 | 1 | 0 | no | 5 |
@@ -959,7 +959,7 @@ having no figures.** Its numbers came from an ad-hoc probe. `measure_small_end` 
 | 384 | 288 | 4 | 62 | 0 | yes | 0 |
 
 **The withheld column is a range now, and it should always have been one.** The earlier table
-printed `4`, `2` and `1` for those three rows — one draw each, published as a property. Below about
+printed `4`, `2` and `1` for those three rows: one draw each, published as a property. Below about
 `L = 216` whether a detector family is evaluable depends on how the check rounds happened to split
 between the QBER and CHSH cells, so a single run's answer is a sample and not a fact about the
 length. The section's own prose already said that; the table now measures it.
@@ -971,7 +971,7 @@ Three more things worth carrying forward:
   because "below 140 the floors degenerate" gets a signing length of 105 and no claim at all. Below
   the boundary runs still complete and the detector still returns a verdict; what it does not return
   is a claim.
-- **Aborts appear on honest runs at the very small end** — one in five at `L = 6` and `L = 12` —
+- **Aborts appear on honest runs at the very small end** (one in five at `L = 6` and `L = 12`)
   because a verifier's matched set falls under the floor. Those are no-verdicts, not rejections, and
   any table drawn there has a 20% denominator problem.
 - **`ProtocolParams(key_length=3, check_fraction=0.25)` refuses to exist.** `floor(0.25 × 3)` is
@@ -991,8 +991,8 @@ Each of these is worse if a judge finds it first.
 **1. Demo-scale runs cannot demonstrate non-repudiation.** §7 has the arithmetic. At `L = 768`,
 400 trials measure `0/400` with a 99% upper limit of `0.0163`; the exact in-model probability is
 `5.845e-04`, twenty-eight times finer than the sample can resolve; the proven bound is `9.212e-01`,
-fifty-six times looser than the measurement. The region the claim lives in — `1.4139e-09` at
-`L = 115200` — is unreachable by both. The proof is vacuous where a measurement can reach and the
+fifty-six times looser than the measurement. The region the claim lives in (`1.4139e-09` at
+`L = 115200`) is unreachable by both. The proof is vacuous where a measurement can reach and the
 measurement is blind where the proof bites.
 
 **2. Full impersonation is undetectable by construction.** Assumption (AUTH). It appears in every
@@ -1012,7 +1012,7 @@ about the protocol's observability, not a detector defect, and it was not tuned 
 noisy as the scheme tolerates the mismatch detector adds nothing over the verifier's own cut.
 
 **6. The whole channel family is unevaluable without check rounds.** Every `check_fraction = 0`
-run in §§7–8 has it withheld, and the tables read `not evaluated` — never `passed`. An unmonitored
+run in §§7–8 has it withheld, and the tables read `not evaluated`, never `passed`. An unmonitored
 link is not a clean one.
 
 **7. Two performance figures are machine-state measurements and one of them does not reproduce.**
@@ -1029,8 +1029,8 @@ produced them until the human commits and re-runs.
 statement about what a sample of that size could see, and the interval beside it says how little
 that is.
 
-**10. "Flat at 1.0" is a 40-trial statement, and it cuts both ways.** §9's headline — every attacked
-arm at 100% across thirty decades of budget — has a 99% Wilson interval of `[0.858, 1.000]`. The
+**10. "Flat at 1.0" is a 40-trial statement, and it cuts both ways.** §9's headline (every attacked
+arm at 100% across thirty decades of budget) has a 99% Wilson interval of `[0.858, 1.000]`. The
 measurement is equally consistent with a true detection rate of 90%, and 40 trials cannot tell the
 two apart. What the flat curve does establish, and it is the useful part, is that the *budget* is
 not what limits those arms: moving `eps` by thirty orders of magnitude does not move a single run's
@@ -1040,7 +1040,7 @@ verdict. A larger `n` would narrow the rate; it would not change that conclusion
 
 ## 14. What the reduction refuses to do
 
-These come out of the Phase 3 and Phase 4 audits and are constraints on the **table**, not just
+These come out of the Phase 3 and Phase 4 audits and are constraints on the **table**, not only
 on the code that fills it. Each is enforced in a type or a test rather than documented and hoped
 for.
 
@@ -1054,12 +1054,12 @@ That was the enforcement, and the integration pass found it insufficient in the 
 mattered most. `outcome_table` converts the tally's no-verdict counts to plain `int`s to print
 them, and once they are `int`s nothing stops one being added to another. Adding `refused` into
 `rejected` and printing a zero left **328 tests and doctests green**, because every fixture that
-reached the shared tables was an honest cell with no refusals to fold — the check existed and
+reached the shared tables was an honest cell with no refusals to fold: the check existed and
 could not fail. The two experiment families' own tables were protected; the two *shared* tables,
 which appear in all seven experiment files, were not.
 
-What closes it is a fixture that actually refuses — a recipient forger at `L = 96` under the
-shipped ordering, Bob accepted and Charlie refused, in a fifth of a second — with the four verdict
+What closes it is a fixture that actually refuses (a recipient forger at `L = 96` under the
+shipped ordering, Bob accepted and Charlie refused, in a fifth of a second), with the four verdict
 columns recomputed from the record's own verdicts and compared against the table's. Re-applying
 the fold now fails. `detection_table` also grew a `refusals (any party)` column, because it was
 printing `flagged on attacked 400/400 = 1.000` on rows where all 400 runs were a Charlie
@@ -1073,7 +1073,7 @@ disagree on it.
 interval, and the column header says `measured`. A false-positive bound is proven under the
 honest null and its header says `proven`. There is no false-negative bound and there cannot be
 one from a transcript, so nothing here prints one. An empty denominator reads `no trials`, never
-`0.000` — a zero reads as a measurement that found nothing, which is a different claim from an
+`0.000`; a zero reads as a measurement that found nothing, which is a different claim from an
 absent measurement.
 
 **An unevaluated family is not a passed one.** `Detection.withheld` names families that could not
@@ -1081,11 +1081,11 @@ be scored, and those cells read `not evaluated`.
 
 **A null that was not the truth is a column.** `null_is_noiseless` rides on every detection row.
 A mismatch-rate detection under a noiseless null on a genuinely noisy link is arithmetically
-correct and still a false claim once the null goes unstated — Phase 4 audit finding A3-1.
+correct and still a false claim once the null goes unstated. That is Phase 4 audit finding A3-1.
 
 **Every table carries the command that regenerates it.** It is a field of the `Table` type rather
 than something a writer is trusted to remember, and a table built without one prints
-"**no command recorded — this table is not reproducible and must not be published (D9)**", which
+"**no command recorded -- this table is not reproducible and must not be published (D9)**", which
 is louder than silence.
 
 **Provenance is printed above the tables**: the commit, whether the tree was dirty, the worker
@@ -1117,7 +1117,7 @@ trials its manifest asked for". Both cannot be true of one store, and a reader h
 which.
 
 Every registry write goes through `sih141.eval.experiments.claim`, which refuses to displace a key
-another family owns — in both directions, because yielding leaves a family registered nowhere,
+another family owns (in both directions), because yielding leaves a family registered nowhere,
 which from outside looks exactly like a family nobody wrote.
 
 Seven experiments ship:

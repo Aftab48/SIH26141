@@ -95,14 +95,14 @@ def security_rows() -> list[str]:
     raw = run([sys.executable, "-c", PROBE], timeout=600)
     line = next((l for l in raw.splitlines() if l.startswith("@@METRICS@@")), None)
     if not line:
-        return ["| _package not importable at generation time_ | — |"]
+        return ["| _package not importable at generation time_ | n/a |"]
     data = json.loads(line[len("@@METRICS@@"):])
     rows = []
     for key, value in data.items():
         if isinstance(value, float):
             value = f"{value:.6g}"
         rows.append(f"| `{key}` | {value} |")
-    return rows or ["| _no parameters found_ | — |"]
+    return rows or ["| _no parameters found_ | n/a |"]
 
 
 def main() -> int:
@@ -116,10 +116,10 @@ def main() -> int:
 
     add("# Project Metrics")
     add("")
-    add("**SIH26141** — Quantum-Inspired Cyber Threat Detection for Digital Signature Security")
+    add("**SIH26141**: Quantum-Inspired Cyber Threat Detection for Digital Signature Security")
     add("")
     add(f"Generated `{stamp}` by `tools/metrics.py`. Every figure is computed from the")
-    add("repository — do not edit by hand, re-run the script.")
+    add("repository, so do not edit by hand, re-run the script.")
     add("")
 
     # ------------------------------------------------------------------ tests
@@ -189,7 +189,7 @@ def main() -> int:
     add("## Live security parameters")
     add("")
     add("Read out of `sih141.protocol` at generation time, so these are whatever the code")
-    add("actually computes today — not what a document once claimed.")
+    add("actually computes today, not what a document once claimed.")
     add("")
     add("| Quantity | Value |")
     add("| --- | --- |")

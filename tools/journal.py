@@ -122,10 +122,10 @@ def render() -> Path:
     out: list[str] = []
     out.append("# Working Journal")
     out.append("")
-    out.append("**SIH26141** — decisions, issues, dead ends and findings, phase to phase.")
+    out.append("**SIH26141**: decisions, issues, dead ends and findings, phase to phase.")
     out.append("")
     out.append("> **Temporary file.** Append-only: entries are never edited or removed, only")
-    out.append("> added. Rendered from `journal/entries/` by `tools/journal.py render` — edit")
+    out.append("> added. Rendered from `journal/entries/` by `tools/journal.py render`, so edit")
     out.append("> the entries, not this file. Scheduled for deletion at the end of Phase 7,")
     out.append("> on the maintainer's explicit instruction. The permanent record is")
     out.append("> `docs/METRICS.md` and the `docs/PHASE*.md` notes.")
@@ -136,7 +136,7 @@ def render() -> Path:
         counts[m["kind"]] = counts.get(m["kind"], 0) + 1
     if parsed:
         tally = " · ".join(f"{n} {k}" for k, n in sorted(counts.items(), key=lambda kv: -kv[1]))
-        out.append(f"**{len(parsed)} entries** — {tally}")
+        out.append(f"**{len(parsed)} entries**: {tally}")
         out.append("")
 
     current = None
@@ -145,7 +145,7 @@ def render() -> Path:
         if phase != current:
             current = phase
             out.append("")
-            out.append(f"## Phase {phase} — {PHASE_TITLES.get(phase, '')}")
+            out.append(f"## Phase {phase}: {PHASE_TITLES.get(phase, '')}")
             out.append("")
         mark = KIND_MARK.get(m["kind"], "-")
         out.append(f"### `[{mark}]` {m['title']}")

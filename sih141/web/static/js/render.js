@@ -440,13 +440,13 @@ const Render = (function () {
     return banner(
       "abort",
       STATE.noverdict.glyph,
-      `No verdict — ${notScored.join(", ")}`,
+      `No verdict: ${notScored.join(", ")}`,
       [
         "This is a THIRD STATE. It is not an acceptance and it is not a " +
           "rejection: the verifier was asked, was denied the evidence a " +
           "verdict needs, and learned nothing at all about the signature.",
         named.length > 0
-          ? `reason on the transcript — ${named.join("; ")}`
+          ? `reason on the transcript: ${named.join("; ")}`
           : null,
         "It must not be counted as a detection, must not be counted as a " +
           "miss, and must not appear in the denominator of any rate.",
@@ -482,7 +482,7 @@ const Render = (function () {
    * This is the dashboard's worst failure mode: an honest run over a noisy
    * link departs from a null nobody meant to state and is correctly reported
    * as detected, so the baseline lights up red in front of an audience. The
-   * banner is what turns that from a lie into a lesson — and it only works if
+   * banner is what turns that from a lie into a lesson, and it only works if
    * the instruction it gives is one that actually clears the run.
    *
    * `detect()` takes TWO nulls, `channel_error_rate` for the rate family and
@@ -556,13 +556,13 @@ const Render = (function () {
           ? `${field.rate} = ${Fmt.rate(nulls.channel_error_rate)} was ` +
             `supplied. ${field.channel} is still ` +
             `${Fmt.rate(nulls.tolerated_depolarising)}, which claims an ideal ` +
-            "entanglement resource — so the channel family is still scoring " +
+            "entanglement resource, so the channel family is still scoring " +
             "this run against a link nobody has."
           : `${field.channel} = ` +
             `${Fmt.rate(nulls.tolerated_depolarising)} was supplied. ` +
             `${field.rate} is still ` +
             `${Fmt.rate(nulls.channel_error_rate)}, which claims a matched ` +
-            "position never disagrees — so the rate family is still scoring " +
+            "position never disagrees, so the rate family is still scoring " +
             "this run against a link nobody has.",
         "They are two parameterisations of the same physics and neither is " +
           "converted into the other: doing that silently would state a null " +
@@ -597,8 +597,8 @@ const Render = (function () {
         "An honest run over a noisy link departs from both and is reported as " +
           "detected. The arithmetic is right; the row is still a false claim " +
           "if nobody says which nulls it was scored against. Set BOTH " +
-          `controls — ${field.rate} to the link's true matched-position error ` +
-          `rate and ${field.channel} to its Werner strength — to score it ` +
+          `controls: ${field.rate} to the link's true matched-position error ` +
+          `rate and ${field.channel} to its Werner strength, to score it ` +
           "against the link instead. Setting only one does not clear the run. " +
           "Neither is ever inferred from the transcript, because at " +
           "check_fraction = 0 the transcript carries no estimate of either " +
@@ -653,7 +653,7 @@ const Render = (function () {
             "come back quiet, and it is not sufficient: these are the laws " +
             "the run was SCORED against, and whether they are the laws the " +
             "wire obeyed is a separate question that only the harness can " +
-            "answer. Stating either one alone does not reach even this far — " +
+            "answer. Stating either one alone does not reach even this far, " +
             "the family whose null is still the default goes on scoring the " +
             "run against a link nobody has.",
           harness,
@@ -693,7 +693,7 @@ const Render = (function () {
    * stated; `second_null_note` says that there are TWO of them and what
    * happens when only one is. Rendering the first alone put "0/30 at every
    * level when the link's true rate is passed to detect()" on the screen as
-   * the whole story, under an instruction to set one control — and an operator
+   * the whole story, under an instruction to set one control, and an operator
    * who followed it got an honest run reported as detected with an adversary
    * named. A sentence the API ships and the screen drops is worse than one that
    * was never written: it reads as though the question was answered.
@@ -704,7 +704,7 @@ const Render = (function () {
   function noiseCalibration(calibration) {
     const table = h("table", {}, [
       h("caption", {
-        text: `${calibration.what} — ${calibration.source}`,
+        text: `${calibration.what}: ${calibration.source}`,
       }),
       h("thead", {}, [
         h("tr", {}, [
@@ -732,7 +732,7 @@ const Render = (function () {
     table.appendChild(body);
     return panel(
       "What the noiseless null costs, measured",
-      "not a Phase 5 result — a Phase 4 calibration",
+      "not a Phase 5 result, a Phase 4 calibration",
       [
         h("p", {
           class: "note",
@@ -783,7 +783,7 @@ const Render = (function () {
             Fmt.flag(
               truth.acted,
               "yes",
-              "no — it was mounted and did nothing on this run"
+              "no: it was mounted and did nothing on this run"
             ),
           ]
         : null,
@@ -805,7 +805,7 @@ const Render = (function () {
     ];
     const link = truth.link;
     if (link) {
-      rows.push(["link model", `${link.model} — ${link.description}`]);
+      rows.push(["link model", `${link.model}: ${link.description}`]);
       rows.push([
         "true error rate",
         Object.keys(link.true_error_rate_by_party || {})
@@ -828,12 +828,12 @@ const Render = (function () {
         Fmt.flag(
           link.nulls_match_link,
           "yes",
-          "NO — the wire departs from the law the detector was given"
+          "NO: the wire departs from the law the detector was given"
         ),
       ]);
     }
     const box = h("div", { class: "truth" }, [
-      h("h3", { text: "Harness ground truth — not visible to the detector" }),
+      h("h3", { text: "Harness ground truth: not visible to the detector" }),
       kv(rows),
     ]);
     if (link && link.nulls_match_link === false) {
@@ -893,7 +893,7 @@ const Render = (function () {
         class: "warn",
         text:
           "None of the above reached detect(). It reads a JSON transcript and " +
-          "nothing else — no session object, no adversary log, no harness " +
+          "nothing else, no session object, no adversary log, no harness " +
           "state.",
       })
     );
@@ -951,7 +951,7 @@ const Render = (function () {
       const reasons = withheld.filter(function (item) {
         return String(item).indexOf("channel") === 0;
       });
-      return panel("Channel — QBER and CHSH per link", "not evaluated", [
+      return panel("Channel: QBER and CHSH per link", "not evaluated", [
         h("div", { class: "verdict is-withheld" }, [
           h("div", { class: "headline" }, [
             h("span", {
@@ -1036,10 +1036,10 @@ const Render = (function () {
           value: null,
           valueLabel: Fmt.ABSENT,
           className: cls,
-          unavailable: "NOT EVALUATED — see below",
+          unavailable: "NOT EVALUATED: see below",
         });
         chshReasons.push(
-          `${label} — ${link.chsh_unavailable || "no CHSH statistic here"}`
+          `${label}: ${link.chsh_unavailable || "no CHSH statistic here"}`
         );
       }
     });
@@ -1104,7 +1104,7 @@ const Render = (function () {
     });
 
     return panel(
-      "Channel — QBER and CHSH per link",
+      "Channel: QBER and CHSH per link",
       "per link and per message bit, never pooled",
       [
         h("p", {
@@ -1113,7 +1113,7 @@ const Render = (function () {
             "Symmetrisation smears the records but never the check logs, so a " +
             "per-link reading is the only one that both detects a " +
             "party-targeted attack and attributes it. Pooling two links would " +
-            "report the average of two channels and detect neither — which is " +
+            "report the average of two channels and detect neither, which is " +
             "the exact shape of a one-sided attack.",
         }),
         qberChart,
@@ -1147,7 +1147,7 @@ const Render = (function () {
               h("p", {
                 class: "note",
                 text:
-                  "Why a link has no CHSH statistic — the API's own sentence, " +
+                  "Why a link has no CHSH statistic, the API's own sentence, " +
                   "in full. NOT EVALUATED is not a zero and is not a pass:",
               }),
               h(
@@ -1169,7 +1169,7 @@ const Render = (function () {
           class: "note",
           text:
             "On a dozen rounds a single link's S can sit below 2 on a " +
-            "perfectly honest run — read the interval, and read Signals for " +
+            "perfectly honest run, read the interval, and read Signals for " +
             "whether anything actually fired.",
         }),
       ]
@@ -1203,7 +1203,7 @@ const Render = (function () {
           label: verifier.party,
           value: null,
           valueLabel: "no verdict",
-          unavailable: "denied the evidence — nothing to plot",
+          unavailable: "denied the evidence, nothing to plot",
         };
       }
       return {
@@ -1222,8 +1222,8 @@ const Render = (function () {
         class: "note",
         text:
           "Both floors are enforced by the protocol, not by this screen. " +
-          "Whether one bit is a matter of record on the transcript — the " +
-          "Signals and Verifiers panels — and never of a bar being shorter " +
+          "Whether one bit is a matter of record on the transcript: the " +
+          "Signals and Verifiers panels, and never of a bar being shorter " +
           "than a line here.",
       }),
     ];
@@ -1327,13 +1327,13 @@ const Render = (function () {
         ],
         [
           "every floor met?",
-          Fmt.flag(floors.meets_every_floor, "yes", "NO — see Signals"),
+          Fmt.flag(floors.meets_every_floor, "yes", "NO: see Signals"),
         ],
         [
           "floors degenerate?",
           Fmt.flag(
             floors.degenerate,
-            "YES — at this key length the floors carry no claim",
+            "YES: at this key length the floors carry no claim",
             "no"
           ),
         ],
@@ -1520,7 +1520,7 @@ const Render = (function () {
           })
         );
       } else if (row.status === "undetectable-by-construction") {
-        surety.appendChild(token("withheld", "OUT OF MODEL — (AUTH)"));
+        surety.appendChild(token("withheld", "OUT OF MODEL (AUTH)"));
       } else {
         surety.appendChild(
           h("span", { class: "claim", text: "no evidence to bound" })
@@ -1549,7 +1549,7 @@ const Render = (function () {
             text:
               `evaluated and did not fire: ${row.missing_requirements.join(
                 ", "
-              )} — withheld, never refuted.`,
+              )}: withheld, never refuted.`,
           })
         );
       }
@@ -1562,7 +1562,7 @@ const Render = (function () {
       h("div", { class: "table-wrap" }, [table]),
       banner("info", "⚿", "Full impersonation is out of model", [
         authText ||
-          "(AUTH) — the classical channel Alice authenticates over is assumed " +
+          "(AUTH): the classical channel Alice authenticates over is assumed " +
             "authentic. An adversary holding BOTH of Alice's seams runs the " +
             "protocol correctly with a key of her own, so every statistic on " +
             "the transcript is drawn from the honest law.",
@@ -1585,7 +1585,7 @@ const Render = (function () {
     }
     return panel(
       "Attribution",
-      "every hypothesis, every run — a missing row reads as one ruled out",
+      "every hypothesis, every run, a missing row reads as one ruled out",
       children
     );
   }
@@ -1613,7 +1613,7 @@ const Render = (function () {
             "false_positive_bound",
             proven(
               Fmt.exp(detection.false_positive_bound),
-              "P(any signal | honest) — THE NUMBER TO QUOTE"
+              "P(any signal | honest): THE NUMBER TO QUOTE"
             ),
           ],
           [
@@ -1639,7 +1639,7 @@ const Render = (function () {
                   h("div", {
                     class: "claim",
                     text:
-                      "the smallest bound among the signals that DID fire — a " +
+                      "the smallest bound among the signals that DID fire, a " +
                       "set chosen by the data. It is a different statement " +
                       "from the line above and is never the detector's error " +
                       "rate.",
@@ -1770,7 +1770,7 @@ const Render = (function () {
           run.repudiation_guarantee === null
             ? h("span", {
                 class: "claim",
-                text: "none — this run is not a repudiation experiment",
+                text: "none: this run is not a repudiation experiment",
               })
             : proven(Fmt.exp(run.repudiation_guarantee), "per-run bound"),
         ],
@@ -1792,7 +1792,7 @@ const Render = (function () {
           plain(
             Fmt.flag(
               floors.degenerate,
-              "NO — both collapse at this length",
+              "NO: both collapse at this length",
               "yes"
             )
           ),
@@ -1811,7 +1811,7 @@ const Render = (function () {
         "What a demo-scale run cannot demonstrate",
         [
           "Compare the two bounds above. The enforced bound at this run's " +
-            "parameters is a number close to one — which is not a bound on " +
+            "parameters is a number close to one, which is not a bound on " +
             "anything. The row above it says the length below which the " +
             "floors collapse; that figure comes from the API, like every " +
             "other number here.",
@@ -1860,7 +1860,7 @@ const Render = (function () {
       h("p", {
         class: "note",
         text:
-          "The two count-exchange orderings answer different questions — one " +
+          "The two count-exchange orderings answer different questions, one " +
           "is a forgery, the other a denial of service. Timing is a control " +
           "the operator sets and a label on the result. It is never a thing " +
           "summed over, and no total on this page crosses it.",
@@ -1890,7 +1890,7 @@ const Render = (function () {
     });
     return panel(
       "Withheld",
-      "not evaluated — which is not the same as passed",
+      "not evaluated, which is not the same as passed",
       [
         h("p", {
           class: "note",
@@ -1977,7 +1977,7 @@ const Render = (function () {
    * next. A `Failed to fetch` was not refused by anybody: the process is not
    * there. Rendering the second under the first's words told a presenter, in
    * front of a room, that a cap had rejected their parameters when the truth
-   * was that the demo server had died — and the same copy appeared for a
+   * was that the demo server had died, and the same copy appeared for a
    * recorded run, which is a static JSON file that no cap has an opinion about.
    * The state is the same fourth state either way; the attribution is not.
    *
@@ -2030,7 +2030,7 @@ const Render = (function () {
         h("p", {
           class: "note",
           text: unreachable
-            ? "No cap was hit and no parameter was rejected — there was " +
+            ? "No cap was hit and no parameter was rejected, there was " +
               "nobody there to reject one. Check that the server is still " +
               "running; the recorded runs held in this page's memory keep " +
               "working without it."
@@ -2179,7 +2179,7 @@ const Render = (function () {
                   Fmt.flag(
                     headline.runnable,
                     "YES",
-                    "NO — about four minutes per session"
+                    "NO: about four minutes per session"
                   )
                 ),
           ],

@@ -30,14 +30,14 @@
  * That is the difference between a fallback and a hope. The previous version
  * re-fetched `data/recorded/<file>.json` on every click, and the service sends
  * no `Cache-Control`, so whether a click worked after the process died came
- * down to Chrome's heuristic freshness — roughly a tenth of the file's age,
+ * down to Chrome's heuristic freshness, roughly a tenth of the file's age,
  * which on a tree cloned that morning is a couple of minutes. Measured on a
  * fresh clone: the page loaded, the process was killed, and three recorded runs
  * in a row failed with `Failed to fetch`. The masthead said RECORDED ONLY and
  * the rail's recorded list was the only thing that could have honoured it.
  *
  * The whole set is 365 KB, fetched in parallel behind the first paint, and the
- * rail says how many are actually held — so a partial preload is visible rather
+ * rail says how many are actually held, so a partial preload is visible rather
  * than a promise that fails on the click that needs it.
  *
  * The headline parameters are never faked into a run. `/api/defaults` returns
@@ -170,7 +170,7 @@ const App = (function () {
     const range =
       caps.minimum === undefined
         ? "range not supplied by the API"
-        : `${caps.minimum} to ${caps.maximum}, refused outside — never clamped`;
+        : `${caps.minimum} to ${caps.maximum}, refused outside, never clamped`;
     return h("div", { class: "field" }, [
       h("label", { text: label, attrs: { for: id } }),
       input,
@@ -198,7 +198,7 @@ const App = (function () {
         h("span", { class: "attack-name", text: entry.label }),
       ]);
       if (entry.detectable === "undetectable-by-construction") {
-        label.appendChild(Render.token("withheld", "UNDETECTABLE — (AUTH)"));
+        label.appendChild(Render.token("withheld", "UNDETECTABLE (AUTH)"));
       } else if (entry.detectable === "not-an-attack") {
         label.appendChild(Render.token("clean", "BASELINE"));
       } else {
@@ -255,11 +255,11 @@ const App = (function () {
         ]),
         numberField("key_length", "key_length", "1"),
         numberField("check_fraction", "check_fraction", "0.05"),
-        numberField("noise", "noise — the LINK", "0.005"),
+        numberField("noise", "noise: the LINK", "0.005"),
         // The two nulls are ONE instruction and are labelled as one. Setting
         // only the first leaves an honest run over a noisy link detected, with
-        // 'honest' ruled out and an adversary named — 12/12 at L = 192 over
-        // twelve seeds — so a heading that reads as a single "the null" is not
+        // 'honest' ruled out and an adversary named, 12/12 at L = 192 over
+        // twelve seeds, so a heading that reads as a single "the null" is not
         // a cosmetic problem.
         h("p", {
           class: "warn-note",
@@ -274,15 +274,15 @@ const App = (function () {
         }),
         numberField(
           "channel_error_rate",
-          "NULL 1 of 2 — channel_error_rate (rate family)",
+          "NULL 1 of 2: channel_error_rate (rate family)",
           "0.005"
         ),
         numberField(
           "tolerated_depolarising",
-          "NULL 2 of 2 — tolerated_depolarising (channel family)",
+          "NULL 2 of 2: tolerated_depolarising (channel family)",
           "0.005"
         ),
-        numberField("eps", "eps — the budget", "any"),
+        numberField("eps", "eps: the budget", "any"),
         h("div", { class: "field" }, [
           h("label", {
             text: "count_exchange_timing",
@@ -293,7 +293,7 @@ const App = (function () {
             class: "cap",
             text:
               "a control and a label, never a thing to average over. The two " +
-              "orderings answer different questions — one is a forgery, the " +
+              "orderings answer different questions, one is a forgery, the " +
               "other a denial of service.",
           }),
         ]),
@@ -347,7 +347,7 @@ const App = (function () {
    * a fallback that fetches is not a fallback. Each entry is fetched once here,
    * while the service is up, and every later click reads `recordedPayloads`.
    * A run that failed to preload simply is not held, and the rail says how many
-   * are — `13 of 13 held in memory` is a promise the page can keep.
+   * are, `13 of 13 held in memory` is a promise the page can keep.
    *
    * @returns {Promise<void>}
    */
@@ -479,7 +479,7 @@ const App = (function () {
    *
    * ONE function, called by every path that can discover the service is gone,
    * because the previous version had the masthead repaint in exactly one of
-   * them. `startLiveRun`'s catch flipped the chip; `showRecorded`'s did not —
+   * them. `startLiveRun`'s catch flipped the chip; `showRecorded`'s did not,
    * so clicking three recorded runs against a dead process gave three
    * `Failed to fetch` panels under a masthead still reading `LIVE API`, and
    * the recorded path is the one a presenter falls back to. A fix that lives
@@ -567,13 +567,13 @@ const App = (function () {
             "refused"
           );
           setStatus(
-            `the run was refused or failed — ${error.message}`,
+            `the run was refused or failed, ${error.message}`,
             "failed"
           );
         } else {
           noteTransportFailure(error.message, body);
           setStatus(
-            `nothing answered — ${error.message}. The recorded runs held in ` +
+            `nothing answered, ${error.message}. The recorded runs held in ` +
               `memory still work.`,
             "failed"
           );
@@ -595,10 +595,10 @@ const App = (function () {
    * THREE STATES, NOT TWO. `RECORDED ONLY` is a promise that there are
    * recorded runs to fall back to, and on a COLD load against a dead service
    * that promise is empty: the page renders from the browser's cache, the chip
-   * said `RECORDED ONLY — API NOT REACHABLE`, and the rail held zero recorded
+   * said `RECORDED ONLY: API NOT REACHABLE`, and the rail held zero recorded
    * runs, because `index.json` is served by the process that is gone. Nothing
-   * numeric was wrong on that screen — every control read "range not supplied
-   * by the API" — but the chip was, and the chip is the one thing a presenter
+   * numeric was wrong on that screen, every control read "range not supplied
+   * by the API", but the chip was, and the chip is the one thing a presenter
    * points at to explain what the room is looking at.
    *
    * @returns {void}
@@ -614,13 +614,13 @@ const App = (function () {
       return;
     }
     if (state.recordedHeld > 0) {
-      chip.textContent = `RECORDED ONLY (${state.recordedHeld}) — API NOT REACHABLE`;
+      chip.textContent = `RECORDED ONLY (${state.recordedHeld}): API NOT REACHABLE`;
       chip.title =
         "the service is not answering; the recorded runs held in this " +
         "page's memory still render, and no live run can be started";
       return;
     }
-    chip.textContent = "NOTHING LIVE — NO API AND NO RECORDED RUNS";
+    chip.textContent = "NOTHING LIVE: NO API AND NO RECORDED RUNS";
     chip.title =
       "the service is not answering and no recorded run was loaded, so " +
       "there is nothing on this page to show. Start the server and reload.";
@@ -636,7 +636,7 @@ const App = (function () {
    *
    * The mode used to be decided once at start-up and revised only when
    * something failed. Now that recorded runs render from memory, nothing on
-   * the recorded path can fail — so without this the chip would go on reading
+   * the recorded path can fail, so without this the chip would go on reading
    * `LIVE API` after the process died until somebody pressed Run. A masthead
    * that says the API is live is a claim, and a claim on this screen has to be
    * checked. `/api/health` is a few bytes and is the liveness check the service
@@ -705,13 +705,13 @@ const App = (function () {
   function opening() {
     return Render.panel(
       "Pick a run",
-      "left rail — a live session, or one recorded ahead of time",
+      "left rail: a live session, or one recorded ahead of time",
       [
         h("p", {
           class: "note",
           text:
             "Start with the honest baseline. Then the same honest run over a " +
-            "noisy link, scored against detect()'s default noiseless null — " +
+            "noisy link, scored against detect()'s default noiseless null: " +
             "which FIRES, correctly, and is this dashboard's worst failure " +
             "mode. Then the adversaries: watch QBER and CHSH move on the " +
             "targeted link only, watch the floors, and watch a denial land as " +
@@ -814,7 +814,7 @@ const App = (function () {
             Render.banner("alarm", "⚠", "There is nothing to show", [
               "This page loaded from the browser's cache. The service that " +
                 "serves it is not answering, so there is no API to run " +
-                "against and no recorded run was loaded either — the " +
+                "against and no recorded run was loaded either, the " +
                 "recordings are served by that same process.",
               "Nothing below is a result. Every control reads its range as " +
                 "not supplied, and no verdict, bound or rate on this page " +

@@ -1,4 +1,4 @@
-# SIH26141 — Project Track
+# SIH26141: Project Track
 
 **Quantum-Inspired Cyber Threat Detection for Digital Signature Security**
 Egreen Quanta · Software · Blockchain & Cybersecurity · Idea 
@@ -11,10 +11,10 @@ Egreen Quanta · Software · Blockchain & Cybersecurity · Idea
 2. [Why this problem exists](#2-why-this-problem-exists)
 3. [Why quantum signatures instead of post-quantum crypto](#3-why-quantum-signatures-instead-of-post-quantum-crypto)
 4. [How our protocol works](#4-how-our-protocol-works)
-5. [The threat model — what we assume and what we defend](#5-the-threat-model)
+5. [The threat model: what we assume and what we defend](#5-the-threat-model)
 6. [What we detect](#6-what-we-detect)
 7. [Why we are banned from using AI, and why that is correct](#7-why-we-are-banned-from-using-ai)
-8. [Architecture — what the code actually contains](#8-architecture)
+8. [Architecture: what the code actually contains](#8-architecture)
 9. [What is built: Phases 0–2](#9-what-is-built-phases-02)
 10. [Attacking ourselves: the security findings](#10-attacking-ourselves)
 11. [The numbers, in one table](#11-the-numbers-in-one-table)
@@ -27,13 +27,14 @@ Egreen Quanta · Software · Blockchain & Cybersecurity · Idea
 
 ## 1. The one-paragraph version
 
-We are building software that detects attacks on digital signatures — forgery, impersonation,
-replay, and channel tampering — for a signature scheme whose security comes from **the laws of
-physics rather than from a hard maths problem**. That matters because quantum computers will
-break the maths every current signature depends on. Our detection layer uses statistical
-hypothesis testing with **provable** bounds, not machine learning, because a provable bound is
-the entire reason to use this kind of signature in the first place. Everything runs as a
-classical simulation on an ordinary laptop — **no quantum hardware is required.**
+We are building software that detects attacks on digital signatures: forgery, impersonation,
+replay, and channel tampering. It sits on a signature scheme whose security comes from **the
+laws of physics rather than from a hard maths problem**, and that matters because quantum
+computers will break the maths every current signature depends on. Our detection layer uses
+statistical hypothesis testing with **provable** bounds, not machine learning, because a
+provable bound is the entire reason to use this kind of signature in the first place.
+Everything runs as a classical simulation on an ordinary laptop: **no quantum hardware is
+required.**
 
 ---
 
@@ -64,16 +65,16 @@ There are two families of answer, and the difference is the heart of our pitch.
 
 | Approach | Security rests on | Failure mode |
 | --- | --- | --- |
-| **RSA / ECC** (deployed today) | Factoring / discrete log being hard | Shor's algorithm. Not hypothetical — the attack is known and published. |
+| **RSA / ECC** (deployed today) | Factoring / discrete log being hard | Shor's algorithm. Not hypothetical; the attack is known and published. |
 | **Post-quantum cryptography** (ML-DSA, SLH-DSA) | *Different* maths believed hard even for quantum computers | A future cryptanalytic break. Nobody can prove the assumption holds. |
-| **Quantum Digital Signatures** — what we build | **No-cloning and measurement disturbance** | **Nothing.** Information-theoretically secure: safe against an adversary with unlimited computing power. |
+| **Quantum Digital Signatures**, what we build | **No-cloning and measurement disturbance** | **Nothing.** Information-theoretically secure: safe against an adversary with unlimited computing power. |
 
 Post-quantum cryptography is a reasonable engineering answer and is being standardised. But it
 replaces one *computational assumption* with another. QDS replaces the assumption with physics:
 
-- **No-cloning** — an unknown quantum state cannot be copied. Not "cannot be copied efficiently."
+- **No-cloning:** an unknown quantum state cannot be copied. Not "cannot be copied efficiently."
   Cannot be copied at all.
-- **Measurement disturbance** — measuring an unknown state in the wrong basis irreversibly
+- **Measurement disturbance:** measuring an unknown state in the wrong basis irreversibly
   randomises it, and leaves evidence.
 
 These are not conjectures awaiting a proof. They are consequences of quantum mechanics, and an
@@ -89,7 +90,7 @@ attacker with infinite computing power is no better off than one with a laptop.
 | --- | --- |
 | **Alice** | The signer |
 | **Bob** | First recipient and verifier |
-| **Charlie** | Second verifier — **required**, because transferability is meaningless without someone to transfer *to* |
+| **Charlie** | Second verifier: **required**, because transferability is meaningless without someone to transfer *to* |
 
 ### 4.2 Why our design differs from the textbook one
 
@@ -100,14 +101,14 @@ some of the practical deployment complexities associated with earlier QDS scheme
 
 So we combine two ideas:
 
-- **Teleportation-based distribution** — the key states never travel down the channel. Only
+- **Teleportation-based distribution.** The key states never travel down the channel. Only
   pre-shared entanglement plus two ordinary classical bits per qubit.
-- **Measurement-based recipients** — Bob and Charlie measure each state the moment it arrives
+- **Measurement-based recipients.** Bob and Charlie measure each state the moment it arrives
   and keep only a *classical* record. **No quantum memory anywhere in the system.**
 
 ### 4.3 The phases
 
-#### Phase A — Distribution
+#### Phase A: Distribution
 
 For each possible message bit `b ∈ {0, 1}`:
 
@@ -121,32 +122,32 @@ For each possible message bit `b ∈ {0, 1}`:
 > **The no-cloning objection, and its answer.** People will ask how Alice can send two copies of
 > a quantum state when copying is forbidden. She is not copying anything. She holds the
 > *classical description* and prepares each state twice from scratch. No-cloning forbids
-> duplicating an *unknown* state. This objection comes up every time — have the answer ready.
+> duplicating an *unknown* state. This objection comes up every time, so have the answer ready.
 
 4. On receipt, each recipient **immediately** measures qubit `i` in a uniformly random basis and
    records `(i, chosen_basis, outcome)`. The quantum state is then gone.
 
-#### Phase A′ — The recipients' symmetrisation exchange
+#### Phase A′: The recipients' symmetrisation exchange
 
 Bob and Charlie flip a fair coin per position and **swap that fraction of their records with
 each other**, privately.
 
 This step is not decoration. Without it, Alice can send Bob one thing and Charlie another,
-making Bob accept while Charlie rejects — which lets her deny her own signature. We discovered
+making Bob accept while Charlie rejects, which lets her deny her own signature. We discovered
 this the hard way; see §10.
 
-#### Phase B — Signing
+#### Phase B: Signing
 
 Alice sends `(message, k_b)` to Bob over an authenticated classical channel. The revealed key
 *is* the signature.
 
-#### Phase C′ — The matched-count exchange
+#### Phase C′: The matched-count exchange
 
 Bob and Charlie exchange **one number each**: how much usable evidence they hold. If either is
 holding suspiciously little, both refuse to judge rather than guessing. This closes an attack
 described in §10, and it costs one extra classical message.
 
-#### Phase C — Verification
+#### Phase C: Verification
 
 Each recipient `R` compares their record against the declared key:
 
@@ -157,14 +158,14 @@ RATE       r_R = e_R / |M_R|
 ```
 
 A recipient chose the same basis as Alice about **one third** of the time (three bases), so
-`E[|M_R|] = L/3 = 38,400` per verifier. **Unmatched positions carry no information** — the
-outcome there is uniformly random — and must be discarded, never counted as mismatches. This is
+`E[|M_R|] = L/3 = 38,400` per verifier. **Unmatched positions carry no information** (the
+outcome there is uniformly random) and must be discarded, never counted as mismatches. This is
 the classic implementation bug in QDS, and we have an explicit test that fails if it reappears.
 
 The verifier then applies four checks in order:
 
 ```
-abort   if  |M_R| < m_min                  own floor — no verdict, NOT a rejection
+abort   if  |M_R| < m_min                  own floor: no verdict, NOT a rejection
 abort   if  counts came from two different declarations
 abort   if  |M_R| + m_counterpart < M_min  the pooled floor
 abort   if  m_counterpart < m_min          his counterpart cannot score either
@@ -200,7 +201,7 @@ Honest-abort budget:  ε = 2⁻⁶⁴
 ```
 
 The pooled floor `M_min = 74,190` is derived the same way from `M = m_B + m_C ~ Binomial(2L, 1/3)`.
-Total honest-abort probability is **8.0 × 10⁻³¹** — ten orders of magnitude below the security
+Total honest-abort probability is **8.0 × 10⁻³¹**, ten orders of magnitude below the security
 bounds, so the abort rule can never become the dominant reason an honest run fails.
 
 ---
@@ -213,7 +214,7 @@ bounds, so the abort rule can never become the dominant reason an honest run fai
 **What we assume, and must say openly:**
 
 - **The classical and quantum channels from Alice are authenticated.** If an attacker can fully
-  impersonate Alice from the very start — distributing her own key states *and* signing them —
+  impersonate Alice from the very start (distributing her own key states *and* signing them),
   she is accepted, because nothing in the protocol binds an identity. Measured: **60/60 accepted
   by both verifiers at QBER exactly 0.** This is inherent to every scheme in this family, not a
   defect of ours, but it is load-bearing and we state it rather than hoping nobody asks.
@@ -222,7 +223,7 @@ bounds, so the abort rule can never become the dominant reason an honest run fai
   on Alice not knowing them. We found and fixed a bug where an attack harness could read them
   (§10).
 - **Recipients follow the protocol during the exchange phases.** A recipient who lies about his
-  matched count can force aborts — a denial-of-service, not a forgery. Phase 3 measured it:
+  matched count can force aborts, which is a denial-of-service, not a forgery. Phase 3 measured it:
   free, deterministic, and detectable at `z <= -11.54` ([PHASE3](PHASE3.md) §6).
 
 ---
@@ -260,7 +261,7 @@ observation about data already seen. It carries no guarantee about tomorrow's at
 bound you can put in a proof.
 
 The entire reason to choose QDS over post-quantum cryptography is that QDS gives
-**information-theoretic** security — a guarantee that holds against unlimited computing power.
+**information-theoretic** security: a guarantee that holds against unlimited computing power.
 Bolting an ML detector on top would silently discard exactly that guarantee, because the
 system's overall security would then be capped by the weakest, unprovable component.
 
@@ -281,14 +282,14 @@ makes obvious.
 ```
 sih141/
   core/            the physics engine (Phase 1)
-    rng.py         seeded generator discipline — all randomness is reproducible
+    rng.py         seeded generator discipline; all randomness is reproducible
     paulis.py      Pauli operators, the six eigenstates, basis-change circuits
     states.py      Bell states, density matrices, fidelity, concurrence
     measure.py     Born-rule probabilities, projective measurement, Bell measurement
     teleport.py    teleportation, the correction table, and the induced channel
 
   protocol/        the signature scheme (Phase 2)
-    params.py      ProtocolParams — L, s_a, s_v, and their validation
+    params.py      ProtocolParams: L, s_a, s_v, and their validation
     keys.py        private key generation, public key states
     records.py     the recipients' immutable classical logs
     distribute.py  teleportation-based distribution (Phase A)
@@ -297,7 +298,7 @@ sih141/
     tally.py       the matched-count exchange (Phase C′)
     verify.py      verification, the floors, and the abort rule (Phase C)
     session.py     orchestration and the attack seams
-    analysis.py    analytic closed forms — no simulation lives here
+    analysis.py    analytic closed forms; no simulation lives here
 
   tests/           1,418 automated tests
   docs/            per-phase engineering notes, metrics, this document
@@ -308,14 +309,14 @@ sih141/
 
 These are enforced across the codebase and worth knowing before you touch anything:
 
-- **D1 — density matrices are canonical.** Noisy channels arrive in Phase 3; pure-state-only
+- **D1: density matrices are canonical.** Noisy channels arrive in Phase 3; pure-state-only
   code would have needed rewriting at the worst moment. At 1–3 qubits the cost is nil.
-- **D2 — little-endian qubit ordering**, pinned by tests using *asymmetric* states. Symmetric
+- **D2: little-endian qubit ordering**, pinned by tests using *asymmetric* states. Symmetric
   states like `|00⟩+|11⟩` look identical under either convention and cannot catch the bug.
-- **D3 — all randomness through injected generators.** No global `numpy.random`, no stdlib
+- **D3: all randomness through injected generators.** No global `numpy.random`, no stdlib
   `random`, anywhere. Reproducibility is what makes the Phase 5 evaluation credible.
-- **D4 — no AI/ML anywhere.** See §7.
-- **D5 — documented numbers are executable.** `pytest` runs with `--doctest-modules`, so a
+- **D4: no AI/ML anywhere.** See §7.
+- **D5: documented numbers are executable.** `pytest` runs with `--doctest-modules`, so a
   number written as a doctest is checked on every run. Documentation that goes stale fails the
   build.
 
@@ -323,20 +324,20 @@ These are enforced across the codebase and worth knowing before you touch anythi
 
 ## 9. What is built: Phases 0–2
 
-### Phase 0 — Scaffold ✅
+### Phase 0: Scaffold ✅
 
 Python 3.14 + Qiskit 2.5.2, pinned. One command runs everything. Chosen over a browser-based
 TypeScript simulator (loses Qiskit's credibility and noise models) and over a CLI-only tool
 (no demo).
 
-### Phase 1 — The physics engine ✅
+### Phase 1: The physics engine ✅
 
 Five modules implementing Pauli algebra, Bell states, projective measurement and teleportation.
 The correction table was **derived from first principles**, not copied.
 
-Verification was unusually strong: an independent reviewer rebuilt the entire 3-qubit
-teleportation register from scratch in raw NumPy — its own index arithmetic, its own Bell
-projectors, its own partial trace, reusing no project code — and compared across 13 resource
+Verification was unusually strong. An independent reviewer rebuilt the entire 3-qubit
+teleportation register from scratch in raw NumPy, reusing no project code: its own index
+arithmetic, its own Bell projectors, its own partial trace. The comparison covered 13 resource
 families × 12 payloads × 40 seeds.
 
 > Maximum deviation **5.55 × 10⁻¹⁶**. Werner-resource fidelity matched the closed form
@@ -345,9 +346,9 @@ families × 12 payloads × 40 seeds.
 
 A pleasing detail that shows the physics is right rather than merely consistent: teleporting
 through a `|Ψ⁺⟩` resource gives fidelity `0.9216` for payload `[0.6, 0.8]`, which is exactly
-`|⟨ψ|X|ψ⟩|²` — the correct consequence of `|Ψ⁺⟩ = (I ⊗ X)|Φ⁺⟩`. Nobody told the code that.
+`|⟨ψ|X|ψ⟩|²`, the correct consequence of `|Ψ⁺⟩ = (I ⊗ X)|Φ⁺⟩`. Nobody told the code that.
 
-### Phase 2 — The protocol ✅
+### Phase 2: The protocol ✅
 
 Ten modules implementing all phases above, plus `analysis.py` containing the closed-form
 security expressions. Every analytic formula was cross-checked against an **independently
@@ -364,7 +365,7 @@ They agreed, including on the micro-parameters rather than just the headline:
 | Outside forgery | 0.012520 | 0.0090 and 0.0140 |
 
 With symmetrisation switched off, the measured recipient-forgery rate moves to 0.0313 against a
-prediction of 0.029393 — directly exhibiting the `ρ: 1/12 → 1/3` collapse that symmetrisation
+prediction of 0.029393, which directly exhibits the `ρ: 1/12 → 1/3` collapse that symmetrisation
 is there to prevent.
 
 ---
@@ -378,7 +379,7 @@ This is a selling point, not an embarrassment. A judge asking *"how do you know 
 gets a far stronger answer from three measured breaks with before/after numbers than from a
 clean specification nobody ever attacked.
 
-### Break 1 — Alice could deny her signature every single time
+### Break 1: Alice could deny her signature every single time
 
 **What happened.** Our first design had Alice distribute to Bob and Charlie independently. She
 simply sent Bob states matching the key she would declare and sent Charlie states that did not.
@@ -389,7 +390,7 @@ Charlie: r_C = 0.4032  → REJECT
 Result:  40 / 40 successful repudiations
 ```
 
-Non-repudiation — one of the three properties a signature exists to provide — was **absent
+Non-repudiation, one of the three properties a signature exists to provide, was **absent
 entirely**.
 
 **Fix.** The recipients' symmetrisation exchange (Phase A′). After: **20/20 unsymmetrised,
@@ -399,32 +400,32 @@ entirely**.
 which quartered the forger floor from 1/3 to 1/12 and forced the key length from 6,912 to
 **115,200** to hold the same guarantee.
 
-### Break 2 — we were advertising a guarantee we did not have
+### Break 2: we were advertising a guarantee we did not have
 
 **What happened.** `repudiation_bound()` was documented as valid for *every* Alice strategy.
 It was not: it silently assumed Alice's declared bases are independent of the recipients' logged
-bases — and Alice controls exactly that.
+bases. Alice controls exactly that.
 
 ```
 Published bound at production parameters:  6.9173 × 10⁻¹⁰
 Measured repudiation rate:                 0.46 – 0.58
 ```
 
-Nine orders of magnitude of overclaim. The *mathematics* was correct — the conditional form
+Nine orders of magnitude of overclaim. The *mathematics* was correct: the conditional form
 returns 0.9964, correctly predicting the attack works. The error was **publishing the averaged
 number as unconditional**.
 
 **Fix.** Split into an assumption-free per-run bound and a gated averaged form, plus the
 Chernoff-derived matched-count floor.
 
-**A result fell out of it.** Worst-casing over the matched count gives 0.99973 — useless. And
+**A result fell out of it.** Worst-casing over the matched count gives 0.99973, which is useless. And
 that is not slack: an explicit strategy achieves exactly 1/2 at every `L`. So:
 
 > **No unconditional repudiation bound below 1/2 exists without an abort rule.**
 
 That is a theorem about the protocol, now stated in `PHASE2.md`. The bug produced a real result.
 
-### Break 3 — a subtler version of the same trick
+### Break 3: a subtler version of the same trick
 
 **What happened.** With only per-verifier floors, Alice aims the *total* matched count at
 `2 × m_min = 73,110` and splits it evenly, so neither verifier trips its own floor and no
@@ -435,13 +436,13 @@ Before:  78/200 (0.390) at L=360,  85/200 (0.425) at L=600
 After:   0/200 at both
 ```
 
-The attack gets **stronger** with `L` — predicted 0.4985 at production parameters — so the
+The attack gets **stronger** with `L` (predicted 0.4985 at production parameters), so the
 small-scale demonstration carries upward rather than being a convenient special case.
 
 **Fix.** The pooled floor plus a joint consequence, both riding on one extra classical message
 (Phase C′).
 
-### Break 4 — the harness, not the protocol
+### Break 4: the harness, not the protocol
 
 Our own attack harness leaked the symmetrisation coins: `QDSSession` passed one generator to the
 adversary-controlled distribution seam and then drew the coins from *the same object*. An
@@ -452,7 +453,7 @@ Repudiated 5/5 at production parameters, with every floor met,
 while the transcript printed "P(repudiation) ≤ 1.414e-09"
 ```
 
-**This was not a flaw in the bound** — the proof assumes the coins are private and a real Alice
+**This was not a flaw in the bound.** The proof assumes the coins are private, and a real Alice
 has no such access. But every attack number this project publishes comes from that harness, and
 those numbers were correct only because our attack code *happened* not to peek.
 
@@ -476,14 +477,14 @@ walk of all six seams, 0/4001 generator-rewind steps, 0/19 seed-reconstruction r
 | Repudiation bound | 1.4139 × 10⁻⁹ | Unconditional, with the abort rule |
 | Recipient forgery | 2.17 × 10⁻¹⁰⁵ | The binding forgery adversary |
 | Honest-abort probability | 8.0 × 10⁻³¹ | Cost of the abort rule, against a 2⁻⁶⁴ budget |
-| Session runtime | 2.04 ms/position | 235 s — 3.9 minutes — for one full-scale session |
+| Session runtime | 2.04 ms/position | 235 s, or 3.9 minutes, for one full-scale session |
 | Test suite | 3,750 tests | ~25 minutes to run |
 
 ---
 
 ## 12. The plan: Phases 3–7
 
-### Phase 3 — The attack suite *(complete — see [PHASE3.md](PHASE3.md))*
+### Phase 3: The attack suite *(complete, see [PHASE3.md](PHASE3.md))*
 
 > The plan as written below is kept as a record of what was planned. All three items landed,
 > and two things the plan did not anticipate turned up: the shipped Phase C' ordering made the
@@ -495,34 +496,34 @@ walk of all six seams, 0/4001 generator-rewind steps, 0/19 seed-reconstruction r
 Working, measured implementations of every attack, so the numbers are evidence rather than
 assertion. Three things are real work rather than plumbing:
 
-- **Build the replay defence.** Nothing currently stops a captured signature being re-sent —
+- **Build the replay defence.** Nothing currently stops a captured signature being re-sent:
   measured, the same signature was accepted 3/3 times at rate 0.0. This needs a nonce or
   session binding inside `Signature` and a check inside `verify()`, both of which are changes to
   protocol code.
 - **Add a channel-monitor seam.** `distribute_to_recipient` currently builds a full
-  `TeleportationResult` per qubit — Bell outcome, correction bits, fidelity — and throws it
+  `TeleportationResult` per qubit (Bell outcome, correction bits, fidelity) and throws it
   away, so Phase 4 cannot see the entanglement statistics at all.
 - **Restrict the signer seam** to the real threat model, keeping the over-powered version as a
   loud opt-in for attack simulation only.
 
 Plus a `payload_map` seam, a widened forwarder, and measuring the count-starvation attack.
 
-### Phase 4 — The detection engine
+### Phase 4: The detection engine
 
 The centrepiece and our strongest differentiator. Turns raw statistics into decisions, with every
 threshold **derived** rather than tuned: QBER, CHSH, mismatch counts, replay ledger, and a
 discriminator that separates recipient forgery from channel noise (Charlie's matched count does
 this at 240σ at production parameters).
 
-### Phase 5 — Evaluation *(complete — see [PHASE5.md](PHASE5.md))*
+### Phase 5: Evaluation *(complete, see [PHASE5.md](PHASE5.md))*
 
 Forgery probability against key length, ROC curves, false-accept and false-reject rates,
 performance benchmarks. Full-scale statistical runs live here, and they are embarrassingly
-parallel — every trial takes its own injected seed (D3), so a trial's result depends on its
+parallel: every trial takes its own injected seed (D3), so a trial's result depends on its
 seed and on nothing else.
 
 > **The cost, measured rather than estimated.** One honest session at `DEFAULT_PARAMS`
-> (`L = 115200`, `check_fraction = 0`) takes **230.2 s — 3.84 min, or 1.999 ms per position**,
+> (`L = 115200`, `check_fraction = 0`) takes **230.2 s (3.84 min, or 1.999 ms per position)**,
 > timed end to end on the target machine with nothing else running. So 200 trials is **12.8
 > hours** single-threaded. Scaling is linear: 2.0–2.4 ms/position holds across `L = 192` to
 > `L = 115200`, a 600× range.
@@ -532,7 +533,7 @@ seed and on nothing else.
 > ms/position and a 42.9-hour total, and that figure was wrong: the profiler
 > (`tracemalloc`) was left attached, inflating every timing by very close to 3×. The error is
 > written down rather than quietly corrected because it is this project's own named failure
-> mode — a number true of the measurement rather than of the thing measured — and because a
+> mode (a number true of the measurement rather than of the thing measured) and because a
 > brief had already been written that handed it to an agent as established fact.
 >
 > **Confirmed independently at the start of Phase 5** by a second end-to-end run at the same
@@ -551,17 +552,17 @@ seed and on nothing else.
 > the **single-worker baseline moved by 49%**, and the speedup is a ratio with that baseline
 > underneath it. So 200 trials at `DEFAULT_PARAMS` is between **1.3 and 1.9 hours** on this
 > machine depending on what else it is doing, and no single speedup number should be quoted from
-> this project. The pool is not idling — 17.6 of 20 workers busy on average, and the production
-> sweep independently shows 19.02 of 20 — the cores are simply slower when they are all awake,
+> this project. The pool is not idling (17.6 of 20 workers busy on average, and the production
+> sweep independently shows 19.02 of 20); the cores are simply slower when they are all awake,
 > and it starts at eight workers, before any E-core is reached. Both curves, and the causes ruled
 > out, are in [PHASE5.md](PHASE5.md) §11.2. Regenerate with
 > `python tools/sweep.py perf --speedup --speedup-cell l768 --trials 120 --workers 1,4,8,14,20`.
 >
 > **Transcript size depends on the check fraction as much as on `L`.** At `check_fraction = 0`,
-> which is what `DEFAULT_PARAMS` uses, a full-scale transcript is **0.226 KiB per position —
+> which is what `DEFAULT_PARAMS` uses, a full-scale transcript is **0.226 KiB per position,
 > 25.4 MiB**. At `check_fraction = 0.25` the same length is **0.330 KiB per position, 37.2 MiB**,
 > because every check round publishes a channel sample. Both are measured; quoting either
-> without its check fraction is how a correct number becomes a wrong one — and mixing kibibytes
+> without its check fraction is how a correct number becomes a wrong one. Mixing kibibytes
 > with decimal megabytes in the same sentence is how the second figure once read 26.7. The
 > smaller lengths are 0.337, 0.330 and 0.325 KiB per position at `L = 96, 192, 768` with a
 > quarter of positions checked; the curve dips around `L = 768` and comes back, so it is not the
@@ -580,16 +581,16 @@ seed and on nothing else.
 > that regenerates it; the reduced tables are in [`tables/`](tables) and the charts in
 > [`figures/`](figures).
 
-### Phase 6 — The dashboard
+### Phase 6: The dashboard
 
-FastAPI serving both the API and a static frontend — one process, one command, no Node build
+FastAPI serving both the API and a static frontend: one process, one command, no Node build
 step. Charts via ECharts or Plotly, **vendored locally, never from a CDN**, because venue wifi
 fails and a demo that dies on an unreachable CDN is the worst possible failure.
 
 Pick an attack → watch QBER and CHSH move → watch the floors fire → see the abort recorded as a
 no-verdict, with the proven bound sitting beside the measured rate.
 
-### Phase 7 — Submission documents
+### Phase 7: Submission documents
 
 The mathematical modelling write-up, the security analysis, and the full record of every attack
 we ran against ourselves.
@@ -614,7 +615,7 @@ We state these rather than hoping nobody looks. Each one is worse if a judge fin
   authenticated. Inherent to this family of schemes; stated as a precondition.
 - **A recipient can force aborts** by under-reporting his matched count. Denial of service, not
   forgery, but it is a real fifth attack surface and Phase 3 measured it ([PHASE3](PHASE3.md) §6).
-- **The problem statement's deliverables table was left blank** by the organisation — the
+- **The problem statement's deliverables table was left blank** by the organisation; the
   published brief ends with an unfilled placeholder. Our scope is therefore our own documented
   reading of the stated objectives, recorded deliberately rather than left implicit.
 
@@ -636,7 +637,7 @@ python -m pytest
 python tools/metrics.py
 ```
 
-`docs/METRICS.md` is generated, never hand-edited — every figure in it is computed from the
+`docs/METRICS.md` is generated, never hand-edited; every figure in it is computed from the
 codebase, including the live security parameters read straight out of the package.
 
 ---
@@ -651,7 +652,7 @@ codebase, including the live security parameters read straight out of the packag
 | **Bell pair / entanglement** | Two particles whose measurement results are correlated no matter how far apart they are. |
 | **Teleportation** | Moving a quantum state from A to B using shared entanglement and two classical bits. The state itself never crosses the channel. |
 | **No-cloning** | An unknown quantum state cannot be copied. A law, not a difficulty. |
-| **QBER** | Quantum Bit Error Rate — the fraction of results that disagree when they should match. Rises under attack. |
+| **QBER** | Quantum Bit Error Rate: the fraction of results that disagree when they should match. Rises under attack. |
 | **CHSH** | A test of how genuinely entangled a pair is. Maxes at 2√2 ≈ 2.83; anything ≤ 2 could be faked classically. |
 | **Information-theoretic security** | Secure against unlimited computing power, forever. Stronger than "computationally secure". |
 | **Hoeffding / Chernoff bound** | Maths tools that convert "this sample looks odd" into a provable probability of being wrong. |

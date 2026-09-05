@@ -1,6 +1,6 @@
 # Quantum-Inspired Cyber Threat Detection for Digital Signature Security
 
-**Smart India Hackathon 2026 — Problem Statement `SIH26141`**
+**Smart India Hackathon 2026 · Problem Statement `SIH26141`**
 Organization: Egreen Quanta · Category: Software · Theme: Blockchain & Cybersecurity
 
 ---
@@ -8,12 +8,12 @@ Organization: Egreen Quanta · Category: Software · Theme: Blockchain & Cyberse
 ## What this is
 
 A software framework that detects attacks against **teleportation-based Quantum Digital
-Signature (QDS)** protocols — forgery, impersonation, replay, and quantum channel
-manipulation — using **quantum measurement statistics and classical hypothesis testing**,
+Signature (QDS)** protocols (forgery, impersonation, replay, and quantum channel
+manipulation) using **quantum measurement statistics and classical hypothesis testing**,
 with **no AI/ML anywhere in the detection path**.
 
-Everything runs as a *classical simulation* of quantum mechanics. **No quantum hardware is
-required.** That is what "quantum-inspired" means in the problem statement title.
+Everything runs as a *classical simulation* of quantum mechanics, so **no quantum hardware is
+required**. That is what "quantum-inspired" means in the problem statement title.
 
 ## Why not just use RSA, or an ML-based intrusion detector?
 
@@ -21,7 +21,7 @@ required.** That is what "quantum-inspired" means in the problem statement title
 | --- | --- | --- |
 | RSA / ECC signatures | Computational hardness (factoring, discrete log) | Shor's algorithm on a fault-tolerant quantum computer |
 | Post-quantum signatures (ML-DSA, SLH-DSA) | Computational hardness, quantum-resistant *by assumption* | A future cryptanalytic break of the assumption |
-| **Quantum Digital Signatures (this project)** | **Physics — no-cloning and measurement disturbance** | **No computational advance. The bounds are information-theoretic — but they are bounds *under stated conditions*, not magic; see [Security claims](#security-claims-stated-honestly).** |
+| **Quantum Digital Signatures (this project)** | **Physics: no-cloning and measurement disturbance** | **No computational advance. The bounds are information-theoretic, but they are bounds *under stated conditions*, not magic; see [Security claims](#security-claims-stated-honestly).** |
 
 "Information-theoretically secure" is a claim about what an adversary's *computer* cannot
 do. It is not a claim that the protocol has no assumptions, and this project states its
@@ -40,10 +40,10 @@ inequalities. That yields a *provable* false-acceptance bound rather than an obs
 | --- | --- | --- | --- | --- |
 | **Forgery**, outside | Produces a signature without the signer's private key | Basis-mismatch count exceeds threshold; success decays exponentially in key length | mismatch `0.4956`/`0.5018` on a predicted `1/2`; acceptance `5/800` vs `0.0042` | `40/40` detected, named as the substitution group |
 | **Forgery**, forging recipient | Forwards his own measured log as the signature | Mismatch hits the `1/12` symmetrisation floor, *and* the matched count doubles to `2L/3` | acceptance `96/300 = 0.320` vs a predicted `0.3456` | `40/40` both orderings; named **alone** after-forwarding, on Charlie's matched count |
-| **Impersonation** | Poses as the signer during key distribution or signing | Mismatch rate — and *only* the mismatch rate; the matched counts do not move at all | `0/40` accepted at QBER ≈ `1/2` for either seam alone; `200/200` accepted for **both** seams, which assumption (AUTH) excludes and nothing detects | `40/40` for either seam alone; **`0/40` for both**, reported as `undetectable-by-construction` under (AUTH) |
-| **Replay** | Re-sends a previously valid (message, signature) pair | Consumed-records ledger; round identifier on every declaration | `100/100` → `0/100` with the defence; cross-session `0.115` → `0/100` | `40/40` both orderings, named with recipient forgery — both hold the forwarding hop |
-| **Channel manipulation** | Tampers with entanglement distribution (intercept-resend, kept share, injected noise) | Per-link QBER rises; CHSH falls from 2√2 — and the *per-link* form is what names the compromised party | QBER `0.0994`/`0.3306`/`0.3335` on predictions `p/2`, `1/3`, `1/3` | `40/40` on all four attacks, at `check_fraction` `0.0` **and** `0.25` |
-| **Count starvation** | A recipient understates his own matched count and denies the other a verdict | The declared count as a z-score: any successful starvation sits below `−11.54` honest standard deviations, at every key length | denial `20/20`, deterministic and free — one integer | `40/40` both orderings, named **alone** |
+| **Impersonation** | Poses as the signer during key distribution or signing | Mismatch rate, and *only* the mismatch rate; the matched counts do not move at all | `0/40` accepted at QBER ≈ `1/2` for either seam alone; `200/200` accepted for **both** seams, which assumption (AUTH) excludes and nothing detects | `40/40` for either seam alone; **`0/40` for both**, reported as `undetectable-by-construction` under (AUTH) |
+| **Replay** | Re-sends a previously valid (message, signature) pair | Consumed-records ledger; round identifier on every declaration | `100/100` → `0/100` with the defence; cross-session `0.115` → `0/100` | `40/40` both orderings, named with recipient forgery; both hold the forwarding hop |
+| **Channel manipulation** | Tampers with entanglement distribution (intercept-resend, kept share, injected noise) | Per-link QBER rises; CHSH falls from 2√2, and the *per-link* form is what names the compromised party | QBER `0.0994`/`0.3306`/`0.3335` on predictions `p/2`, `1/3`, `1/3` | `40/40` on all four attacks, at `check_fraction` `0.0` **and** `0.25` |
+| **Count starvation** | A recipient understates his own matched count and denies the other a verdict | The declared count as a z-score: any successful starvation sits below `−11.54` honest standard deviations, at every key length | denial `20/20`, deterministic and free, one integer | `40/40` both orderings, named **alone** |
 
 ## Security claims, stated honestly
 
@@ -58,9 +58,9 @@ bound quoted without its hypothesis is not a bound. Numbers are at `DEFAULT_PARA
 | **Unforgeability**, recipient forger (the case that binds) | `1.1e−103` | The symmetrisation exchange reveals only the swapped entries. |
 | **Non-repudiation**, a-priori | **`1.4e−09`** | **Nothing.** The three matched-count floors `verify.py` enforces, not an assumption about the signer. |
 | **Non-repudiation**, per completed run | `6.9e−10` on a healthy run | **Nothing.** Conditions on the run's own evidence, `M = m_B + m_C`. |
-| Robustness — honest run aborts | `< 1e−9` on a 1% depolarising channel | Standard channel model. The matched-count floors add `8.0e−31`. |
+| Robustness: honest run aborts | `< 1e−9` on a 1% depolarising channel | Standard channel model. The matched-count floors add `8.0e−31`. |
 
-Phase 4 adds a fourth, of a different kind — a bound on the *detector*, not on the protocol:
+Phase 4 adds a fourth of a different kind. It bounds the *detector*, not the protocol:
 
 | Property | Bound | Rests on |
 | --- | --- | --- |
@@ -71,8 +71,8 @@ Phase 4 adds a fourth, of a different kind — a bound on the *detector*, not on
 An earlier version of this project published `6.9e−10` as a non-repudiation guarantee
 holding "for every Alice strategy, with no model of Alice". **It does not.** That figure
 averages over the matched count `M ~ Binomial(2L, 1/|B|)`, which is the law of `M` only
-while the signer cannot see which bases the recipients logged — and the `Signer` seam handed
-her both raw logs. A signer who reads them pins `M = 13` at *any* key length and repudiates
+while the signer cannot see which bases the recipients logged. The `Signer` seam handed her
+both raw logs. A signer who reads them pins `M = 13` at *any* key length and repudiates
 with probability `1/2`. Key length does not help, because the failure is not statistical.
 (Phase 3 restricted the seam: the logs are now withheld by default and shown only to a
 session built with `signer_sees_recipient_logs=True`, which the transcript records. That
@@ -87,23 +87,23 @@ The mathematics was never wrong; the advertising was. Three things replaced it:
    naming its hypothesis.
 2. **Matched-count floors make an unconditional number possible.** A verifier refuses to
    score a matched set below `minimum_matched_count` (`36555` here, derived from a Chernoff
-   lower tail at a `2⁻⁶⁴` honest-abort budget — no tuning, no fitting, D4-clean). Measured:
+   lower tail at a `2⁻⁶⁴` honest-abort budget; no tuning, no fitting, D4-clean). Measured:
    the `M = 13` attack above now produces **0 repudiations in 40 runs**, and **0 spurious
    aborts in 460 honest runs**.
 3. **What was still open was written down, and has since been closed.** The per-verifier
    floor left one route: a signer aiming the *pooled* count `M` at `2 × m_min` and letting
    the symmetrisation coins split it leaves the first verifier accepting a signature the
-   second cannot score — no rate deviating anywhere, so no exponent applies. Measured at
+   second cannot score, with no rate deviating anywhere, so no exponent applies. Measured at
    **78/200** (`L = 360`) and **85/200** (`L = 600`), tending to `1/2`.
 
 ### Closing it: one extra classical message
 
-`tally.py` is Phase C′. Bob and Charlie each send the other a single integer — how many
-positions they can score — over the channel they already share for the symmetrisation
+`tally.py` is Phase C′. Bob and Charlie each send the other a single integer (how many
+positions they can score) over the channel they already share for the symmetrisation
 coins. A count, never a log. That buys two rules:
 
 * a **pooled floor** `m_B + m_C ≥ M_min` with `M_min = 74190`, derived from the same
-  `2⁻⁶⁴` budget applied to `M ~ Binomial(2L, 1/3)` — exact by *conservation*, not by
+  `2⁻⁶⁴` budget applied to `M ~ Binomial(2L, 1/3)` and exact by *conservation*, not by
   independence, since after the exchange the two counts are perfectly dependent. It exceeds
   `2 × m_min = 73110` by `1080` records, and the margin grows like `√L`, so the aimed-at
   declaration is refused rather than priced; and
@@ -112,12 +112,12 @@ coins. A count, never a log. That buys two rules:
   *independent of key length*; this removes the asymmetric outcome from the outcome space
   entirely, so "Bob accepted" implies "Charlie reached a verdict".
 
-Result: **`1.4e−09`, unconditional, with nothing left to quote beside it** — and the attack
+Result: **`1.4e−09`, unconditional, with nothing left to quote beside it**; the attack
 measures **0/200** at both key lengths after the change. The price is one message each way,
 an honest-abort cost of `8.0e−31` per run against a `5.4e−20` budget, and one ordering
 change: Bob's verdict is no longer local, since he must forward the declaration and hear
-Charlie's count before he can accept. What remains outside the number is denial of service —
-a signer who starves the evidence base aborts the run jointly, transferring nothing, which
+Charlie's count before he can accept. What remains outside the number is denial of service.
+A signer who starves the evidence base aborts the run jointly, transferring nothing, which
 no threshold defends against and which Alice could equally achieve by not signing.
 
 Full derivations, the reproduction of both attacks, and every measurement are in
@@ -133,14 +133,14 @@ and *measuring* it are not the same thing, though, and the first result below is
 turned up between them. Full account in [`docs/PHASE3.md`](docs/PHASE3.md); three results are
 worth stating here.
 
-**A guarantee that could not be measured, now can be — and it holds.** The shipped session
+**A guarantee that could not be measured now can be, and it holds.** The shipped session
 ran the Phase C′ count exchange *before* the Bob-to-Charlie hop, so a forging recipient's
 declaration was refused on provenance and the second verifier never scored it. That is a
 denial of transfer, not a detection, and it made the recipient-forgery rate of the shipped
 scheme unmeasurable: every published figure came from the pre-pooled variant. Which
 declaration each recipient counts is now a named parameter, `count_exchange_timing`. Under
 the deployment ordering the forger is scored and accepted `96/300 = 0.320` against
-`recipient_forgery_probability(L=60) = 0.345566` — agreement at `z = −0.93`, and the first
+`recipient_forgery_probability(L=60) = 0.345566`: agreement at `z = −0.93`, and the first
 measurement of the real thing.
 
 **Symmetrisation is worth a factor of four, measured rather than argued.** Same adversary,
@@ -150,18 +150,18 @@ same code path, one seam swapped: mismatch rate `0.0863` on the `1/12` floor wit
 
 **A denial-of-service surface priced at zero is not zero.** `verify.py` reasoned that since
 a round is spent only on a verdict, the only party who can burn one on a declaration that
-will be rejected is the signer herself — who could equally decline to sign. The inference is
+will be rejected is the signer herself, who could equally decline to sign. The inference is
 false: Phase B publishes the round's opening *on the declaration*, so anyone downstream can
 mint a different declaration naming the same round, and the Bob-to-Charlie hop is exactly
 where the threat model puts an adversary. Measured `300/300` at `L = 24`. What closes it is
-the *ordering* of Phase C′ — not the ledger and not the round binding — and the honest price
+the *ordering* of Phase C′ (not the ledger and not the round binding), and the honest price
 is now written down. Both obvious repairs are worse: spending only on acceptance would give
 an adaptive adversary unlimited tries at one round.
 
 ## What Phase 4 found
 
 The detection engine. Every threshold comes from a **stated null and a named inequality**,
-inverted at a false-positive budget passed in as an argument — never from a number that
+inverted at a false-positive budget passed in as an argument, never from a number that
 separated the attack data. Full account in [`docs/PHASE4.md`](docs/PHASE4.md).
 
 **The distinction that whole phase exists to defend.** A fitted detector reports "97%
@@ -169,14 +169,14 @@ accurate on our data". This one reports *"the probability of a false alarm is at
 `3.3964e-10`, and here is the derivation"*. That is not a stylistic preference: a threshold
 chosen because it separates the attack runs you happen to have silently caps the scheme's
 information-theoretic security at whatever your test set contained. Convention **D7** forbids
-it, and the test suite enforces it mechanically rather than by review — every threshold is
+it, and the test suite enforces it mechanically rather than by review: every threshold is
 required to be a *function of its budget*, swept across ten decades, unless its null is a
 point mass, in which case its proven false-positive probability must be **exactly zero**.
 
 **All five adversary families detected, `0/120` false alarms.** At `L = 384` and a budget of
 `1e-9`, 40 runs per arm: 18 of the 19 attack arms are at `40/40` with 99% Wilson intervals of
 `[0.8577, 1.0000]`. The nineteenth is *full* impersonation at `0/40`, which is assumption
-**(AUTH)** and is reported as `undetectable-by-construction` rather than left blank — a
+**(AUTH)** and is reported as `undetectable-by-construction` rather than left blank, because a
 hypothesis silently missing from a table reads as one that was ruled out. Detection is carried
 by the verifier's own mismatch rate: every channel attack is caught at `check_fraction = 0.0`,
 where the whole channel family is unevaluable and contributes nothing.
@@ -184,20 +184,20 @@ where the whole channel family is unevaluable and contributes nothing.
 **Ten of the twenty-two thresholds cost exactly nothing.** Their nulls are point masses: on a
 noiseless honest run the event is outside the outcome space, not merely improbable, so a
 detector firing on it has a false-positive probability of exactly `0` at every budget and
-every key length. The cost is stated with the claim — it is a claim about a *noiseless* link,
+every key length. The cost is stated with the claim: it is a claim about a *noiseless* link,
 and on a genuinely noisy honest channel those same members fire, correctly, because the null
 was the wrong one for that deployment.
 
 **Publish `Detection.false_positive_bound`, never `eps`.** The composite rule is a union bound
 over three families whose budgets are split by a written-down allocation. At `L = 384`,
-`check_fraction = 0.25` and `eps = 1e-9` the three families *prove* `3.3964e-10` together —
+`check_fraction = 0.25` and `eps = 1e-9` the three families *prove* `3.3964e-10` together;
 quoting the budget instead would overstate the detector's own false-alarm rate by a factor of
 `2.944`. The uncorrected OR of the same members proves `1.3442e-09` against the same budget:
 it overspends by a third while every component still looks correct on its own.
 
 **Route H is closed, and it was seven times wider than reported.** Phase 3 left one
 check-round side channel open with a proposed one-line shape check. Reproducing it first
-showed the asymmetry was never about shape — validation happened on one branch only, so
+showed the asymmetry was never about shape: validation happened on one branch only, so
 *every* malformation `teleport` refuses named the branch at precision `1.0000`. The shipped
 fix validates the seam's answer above the branch against the precondition both branches share.
 The test written to close it then found a **ninth** route on its first run, and the general
@@ -209,20 +209,20 @@ channel, so the trace must take exactly one value over the positions of a link.*
 
 Convention **D6**: every adversary takes its own `numpy.random.Generator` and never derives
 randomness from the seed the harness gives the session. This is not fastidiousness. An
-attack written the natural way — one seed, so the experiment reproduces — rebuilds the whole
+attack written the natural way (one seed, so the experiment reproduces) rebuilds the whole
 run from that integer and predicts **every private symmetrisation coin**, `120/120` on both
 message bits, in about ten lines of public API. The mathematics is untouched; the
 *experiment* becomes fiction, and it looks entirely legitimate: same seams, same transcript,
 same printed bound.
 
-`sih141/attacks/isolation.py` makes that a behavioural check — hold the attack's generator
+`sih141/attacks/isolation.py` makes that a behavioural check: hold the attack's generator
 fixed and vary the session seed, and its decisions must not move; hold the seed fixed and
 vary its generator, and they must. All **14** adversary-and-seam pairs pass it in
 `tests/test_phase3_isolation_suite.py`, every deliberately-defective control is still caught,
 and adding a sixth adversary is one row in a table.
 
-The first half of that check was **inert for most of Phase 3** — every probe deleted the
-session seed, so all fourteen rows passed a check none of them could fail — and the audit that
+The first half of that check was **inert for most of Phase 3** (every probe deleted the
+session seed, so all fourteen rows passed a check none of them could fail), and the audit that
 found it is why the pass is now evidenced per row rather than asserted: each shipped adversary
 is re-run with the session's own seed folded into its generator, through its own probe, and
 check (a) has to catch it. Thirteen of the fourteen are covered directly; the fourteenth moves
@@ -231,7 +231,7 @@ with nothing at all, which is the same fact its check-(b) waiver rests on.
 **A published statistic that could be steered, and now cannot be.** Besides the entanglement
 line, a channel-side adversary holds two seams, and both gave the check set away for free:
 `payload_map` was called on key rounds only, so the *gaps* in its call sequence were the check
-set — 24 of 24 recovered at `L = 96`, precision `1.0000` against a base rate of `0.2500` — and
+set (24 of 24 recovered at `L = 96`, precision `1.0000` against a base rate of `0.2500`), and
 `channel_monitor` was called on check rounds only, so *being called* was the whole signal, 120
 of 120 at `L = 480`. An adversary who read it could wreck the key and spare exactly the watched
 positions, publishing a clean QBER over a corrupted link. Both seams are now called at every
@@ -243,7 +243,7 @@ The price is written down rather than absorbed: each link publishes half of `che
 rounds, per-link intervals are `√2` wider, and the claim that a one-link attack can be
 *attributed* needed twice the key length to keep.
 
-Nine mutation checks confirm the defences are actually tested — the replay ledger, the
+Nine mutation checks confirm the defences are actually tested: the replay ledger, the
 declaration binding, check (a) of the isolation check, the route by which check (a) reaches a
 candidate, the payload seam's every-position call, the channel monitor's, the per-link deal,
 the last two together, and the session a channel isolation probe runs. Each turns the relevant
@@ -255,25 +255,25 @@ replaced by a constant, the family-wise correction removed in both directions (o
 under-reporting), **an abort folded into the rejection column**, the two route closures reverted,
 and the float dust put back in the protocol's Wilson interval. All seven go red. The third is
 Phase 3 constraint 4 and it is caught by a *type* rather than by a number that happens to come
-out right — `NoVerdictCount` refuses `+` with anything but another `NoVerdictCount`, so
+out right: `NoVerdictCount` refuses `+` with anything but another `NoVerdictCount`, so
 `rejected + refused` and `sum(...)` both raise.
 
 Phase 5 adds five, and **one of them was green**, which is the finding rather than the check.
 Making a worker read numpy's global RNG turns the suite red and the runner exits `2` with a
 `D3 VIOLATION` naming the trials. Making the seed depend on completion order fails five tests and
 two doctests. But **folding an abort into the rejection column of the Phase 5 results table left
-328 tests and doctests passing** — the type-level guard above is defeated by the one `int()` call
+328 tests and doctests passing**: the type-level guard above is defeated by the one `int()` call
 that prints the count, and every fixture that reached that table was an honest cell with no
 refusals to fold. The check existed and could not fail, which is the same shape as the four
 dashboard defects Phase 6 shipped behind green tests. It is closed now, against a fixture that
 actually refuses, and the fold fails.
 
-Full suite: **3800 passed, 0 failed, 0 skipped** — up from `3750` with the Phase 5 experiment
+Full suite: **3800 passed, 0 failed, 0 skipped**, up from `3750` with the Phase 5 experiment
 families, `3588` with the harness alone, `3460` at the end of Phase 6, `3036` at the end of Phase 4,
 `2174` at the end of Phase 3 and `1421` at the end of Phase 2. The load-bearing figure is
-`3800 / 3800`; the wall clock is not, and Phase 5 is the reason. Three runs of the identical suite
-on this machine took `1512 s` (25:12), `2290 s` (38:10) and `1634 s` (27:14) — a spread of 51%
-with the pass count identical every time. The variable is what else the machine was doing,
+`3800 / 3800`; the wall clock is not, and Phase 5 is the reason. Four runs of the identical suite
+on this machine took `1512 s` (25:12), `2290 s` (38:10), `1634 s` (27:14) and `1991 s` (33:10),
+a spread of 51% with the pass count identical every time. The variable is what else the machine was doing,
 measured in [`docs/PHASE5.md`](docs/PHASE5.md) §11.2 as a 49% move in single-threaded throughput
 between two runs of one command. Quote the count, never the clock.
 
@@ -285,13 +285,14 @@ regenerates it from seeds on disk, which is convention **D9**.
 
 **The count ordering answers a different question, and the numbers are far apart.** At `L = 96`,
 400 runs of the identical recipient forgery: before forwarding, `0 accepted / 0 rejected / 400 no
-verdict` — the substituted declaration leaves Charlie's pooled matched count undefined, so Bob accepts and
-Charlie alone reaches no verdict, and the attack is a *denial of transfer*. After forwarding, `120 accepted / 280 rejected / 0
-refused` — an acceptance rate of `0.3000` against a closed form of `0.29663`, which is a *forgery
+verdict`, because the substituted declaration leaves Charlie's pooled matched count undefined,
+so Bob accepts and Charlie alone reaches no verdict, and the attack is a *denial of transfer*.
+After forwarding, `120 accepted / 280 rejected / 0
+refused`, an acceptance rate of `0.3000` against a closed form of `0.29663`, which is a *forgery
 rate*. Pooling the two publishes `120/800 = 15%`, describing neither. Any sentence saying "the
 recipient forgery rate is X" without naming the ordering is wrong.
 
-**The measurement and the closed form agree on every row where the closed form applies — 21 for
+**The measurement and the closed form agree on every row where the closed form applies: 21 for
 21.** Eleven on the repudiation side and ten on the forgery side, the exact in-model probability
 inside the 99% Wilson interval every time. Two independent routes to the same number, one a
 simulation of 400 runs and one a closed form over the parameters.
@@ -300,17 +301,17 @@ The rows where it does *not* apply are the ordering result again, and they are w
 than quietly excluding. The five before-forwarding recipient-forgery rows measure `0/400`
 acceptances because Charlie reached no verdict at all; the closed form is an acceptance probability
 for a run that reaches one, so four of those five sit outside the measured interval. That is the
-model not describing the experiment, not the model being wrong — and the fifth falls inside only
+model not describing the experiment, not the model being wrong; the fifth falls inside only
 because at `L = 1200` the closed form has dropped below what 400 trials can resolve.
 
 **Demo-scale runs cannot demonstrate non-repudiation, and this is the limitation to read first.**
 At `L = 768` a signer genuinely trying to repudiate measures `0/400`, upper limit `0.0163`. The
-exact probability is `5.845e-04` — twenty-eight times finer than 400 trials can resolve. The proven
-a-priori bound is `9.212e-01` — fifty-six times looser than the measurement. The claim itself
-lives at `1.4e-09` and `L = 115200`, unreachable by both. The mechanism is demonstrated; the
-guarantee is not.
+exact probability is `5.845e-04`, twenty-eight times finer than 400 trials can resolve, while
+the proven a-priori bound of `9.212e-01` is fifty-six times looser than the measurement. The
+claim itself lives at `1.4e-09` and `L = 115200`, unreachable by both. The mechanism is
+demonstrated; the guarantee is not.
 
-**Under a noiseless null the detector's ROC is flat at 1.0 across thirty decades of budget** — all
+**Under a noiseless null the detector's ROC is flat at 1.0 across thirty decades of budget**: all
 eight attacked arms at 100% from `eps = 5e-1` to `1e-30` (`40/40` on seven of them and `22/22` on
 the selective starver, whose other 18 runs are honest and score as such), with full impersonation
 reported as `undetectable-by-construction`. That is a separation so large that `eps` is not the binding
@@ -320,7 +321,7 @@ result about the protocol's observability, and D7 forbids moving a threshold to 
 
 **Two published numbers did not survive being re-run, and both are corrected in place.** Three
 transcript-size figures were up to 21% wrong and had come from a check fraction of 0.42 rather than
-0.25 — they survived because the doctest beside them looked the constant up in its own dict rather
+0.25. They survived because the doctest beside them looked the constant up in its own dict rather
 than measuring anything. And the parallel speedup moved from `7.04×` to `10.27×` between two runs
 of the same command, because the single-worker baseline moved by 49% while the twenty-worker wall
 clock held to 2.2%. The wall clock is reproducible; the ratio is not, and it is now published with
@@ -331,23 +332,23 @@ both measurements.
 | Phase | Scope | Status |
 | --- | --- | --- |
 | 0 | Project scaffold, dependencies | ✅ Complete |
-| 1 | Quantum core — Pauli algebra, Bell states, projective measurement, teleportation | ✅ Complete |
-| 2 | QDS protocol — key distribution, signing, verification, transferability | ✅ Complete |
-| 3 | Attack suite — the four adversaries above, plus count starvation and realistic channel noise | ✅ Complete |
-| 4 | Detection engine — QBER, CHSH, mismatch statistics, **derived** thresholds and a family-wise bound | ✅ Complete |
-| 5 | Evaluation — forgery probability vs. key length, ROC, FAR/FRR, benchmarks | ✅ Complete |
-| 6 | Web dashboard — live attack/detection demo | ✅ Complete |
-| 7 | Submission docs — mathematical modelling and security analysis | ⬜ |
+| 1 | Quantum core: Pauli algebra, Bell states, projective measurement, teleportation | ✅ Complete |
+| 2 | QDS protocol: key distribution, signing, verification, transferability | ✅ Complete |
+| 3 | Attack suite: the four adversaries above, plus count starvation and realistic channel noise | ✅ Complete |
+| 4 | Detection engine: QBER, CHSH, mismatch statistics, **derived** thresholds and a family-wise bound | ✅ Complete |
+| 5 | Evaluation: forgery probability vs. key length, ROC, FAR/FRR, benchmarks | ✅ Complete |
+| 6 | Web dashboard: live attack/detection demo | ✅ Complete |
+| 7 | Submission docs: mathematical modelling and security analysis | ⬜ |
 
 > **Phase 6 was built before Phase 5 ran.** The numbers are the phase order; the work order was
 > 4 → 6 → 5 → 7. Phase 6 depends only on `Detection.to_dict()`, which Phase 4 froze, so it was
-> not waiting on anything — while Phase 5's production sweep is a long unattended run whose
+> not waiting on anything, while Phase 5's production sweep is a long unattended run whose
 > results only Phase 7 consumes. Phase 7 is last either way, because it publishes Phase 5's
 > numbers.
 >
 > **The dashboard reports no evaluation results, and says so on the screen.** It demonstrates a
 > live run; it does not present a study. The one table of measured rates on the page is labelled
-> *"not a Phase 5 result — a Phase 4 calibration"*.
+> *"not a Phase 5 result, a Phase 4 calibration"*.
 >
 > **Phase 5 is complete.** The production sweep ran **12,494 trials across seven experiments in
 > 23.3 minutes** at twenty workers, zero failures, and every table in
@@ -359,7 +360,7 @@ both measurements.
 > of a signer genuinely trying to repudiate measure `0/400` with a 99% upper limit of `0.0163`; the
 > exact in-model probability is `5.845e-04`, twenty-eight times finer than the sample can resolve;
 > the proven bound is `9.212e-01`, fifty-six times looser than the measurement. The region the
-> claim lives in — `1.4e-09` at `L = 115200` — is unreachable by both. **Demo-scale runs cannot
+> claim lives in (`1.4e-09` at `L = 115200`) is unreachable by both. **Demo-scale runs cannot
 > demonstrate non-repudiation**, and the table says so from its own rows.
 >
 > The strongest positive result is that **the count ordering is a column, never an average**. At
@@ -389,7 +390,7 @@ One process serves the JSON API and the frontend. No Node, no bundler, no build 
 python -m sih141.web
 ```
 
-Then open one of the addresses it prints — `http://127.0.0.1:8141` and `http://[::1]:8141`,
+Then open one of the addresses it prints: `http://127.0.0.1:8141` and `http://[::1]:8141`,
 because `localhost` is two addresses and a browser may pick either. `--host` and `--port` change
 them; the default is loopback rather than `0.0.0.0` because this server runs unauthenticated
 quantum simulation on request, so exposing it on a venue network should be a deliberate act.
@@ -397,21 +398,21 @@ The sockets are bound *before* the address is printed, so a busy port fails with
 naming it rather than advertising an address it never got.
 
 **Nothing is fetched from a network, ever.** Every asset is vendored: 26 files, 520 KB, only
-`.html`, `.css`, `.js` and `.json`. No chart library, no web font, no CDN — the charts are
+`.html`, `.css`, `.js` and `.json`. No chart library, no web font, no CDN; the charts are
 hand-rolled SVG. There is exactly one `fetch()` call site in the frontend and every path it is
 given is root-relative, so no request can leave the origin; the test suite scans the *contents*
 of every served file to keep it that way. A demo that dies on unreachable venue wifi is the
 worst possible failure, and this one cannot.
 
-Live runs are capped at `key_length = 1024`, and a longer request is **refused, never clamped**
-— a screen reporting a clamped run under the label of the one that was asked for is the easiest
-way for a dashboard to lie. At the default `L = 192` a click returns a verdict in about
+Live runs are capped at `key_length = 1024`, and a longer request is **refused, never clamped**,
+because a screen reporting a clamped run under the label of the one that was asked for is the
+easiest way for a dashboard to lie. At the default `L = 192` a click returns a verdict in about
 **0.43 s**; at the ceiling, about **2.3 s**. The security-grade set `L = 115200` is roughly four
 minutes a session and is published as closed forms rather than run.
 
 Every parameter a click can send is bounded and **refused by name** rather than clamped, request
 bodies are capped at 64 KiB and answered `413` before the application reads them, and the one
-command binds its sockets — both loopback address families — before it prints an address, so it
+command binds its sockets (both loopback address families) before it prints an address, so it
 can never advertise a port it did not get.
 
 Full details, the eight things the screen must not misstate and how each is rendered, the
@@ -444,7 +445,7 @@ nothing. `python tools/sweep.py perf` measures the machine rather than the proto
 
 ```
 sih141/core/       quantum primitives (Phase 1)
-  rng.py           seeded Generator threading — all randomness is reproducible
+  rng.py           seeded Generator threading; all randomness is reproducible
   paulis.py        Pauli operators, eigenstates, basis-change circuits
   states.py        Bell states, density-matrix helpers, fidelity, concurrence
   measure.py       Born-rule probabilities, projective measurement, Bell measurement
@@ -454,37 +455,37 @@ sih141/protocol/   the QDS protocol (Phase 2)
                    an insecure set
   keys.py          Alice's private keys and the quantum public key
   records.py       the recipients' immutable classical logs
-  distribute.py    Phase A — teleportation and immediate measurement on receipt
-  symmetrise.py    Phase A′ — the recipients' private exchange, and the reason
+  distribute.py    Phase A: teleportation and immediate measurement on receipt
+  symmetrise.py    Phase A′: the recipients' private exchange, and the reason
                    non-repudiation holds at all
-  signature.py     Phase B — the declaration
-  tally.py         Phase C′ — the recipients' matched-count exchange, one integer
+  signature.py     Phase B: the declaration
+  tally.py         Phase C′: the recipients' matched-count exchange, one integer
                    each way, and the pooled floor it makes checkable
-  verify.py        Phase C — the matched/unmatched split, the accept rule, and the
+  verify.py        Phase C: the matched/unmatched split, the accept rule, and the
                    three matched-count floors that make an unconditional bound possible
-  checkrounds.py   sampled channel estimation — QBER and CHSH on positions spent
+  checkrounds.py   sampled channel estimation: QBER and CHSH on positions spent
                    on measurement instead of on key
   session.py       orchestration, and the seams Phase 3 attacks attach to
   analysis.py      closed forms only, no simulation: forgery, repudiation, robustness
 sih141/attacks/    the adversaries (Phase 3)
-  isolation.py     convention D6 as a behavioural check — the one every published
+  isolation.py     convention D6 as a behavioural check; the one every published
                    attack rate depends on
   statistics.py    one Wilson interval and one agreement test for the whole suite,
                    with the band computed from the sampling standard error
   forgery.py       the outside forger and the forging recipient
   impersonation.py Mallory on either of Alice's two seams, and on both
   replay.py        four replay flavours against the binding and the ledger
-  channel.py       depolarising twirl, intercept-resend, kept share — on both the
+  channel.py       depolarising twirl, intercept-resend, kept share; on both the
                    entanglement line and the payload line, targetable per party
   starvation.py    a recipient who understates his own matched count
 sih141/detect/     the detection engine (Phase 4)
   statistics.py    everything a detector may legitimately read, extracted from a
-                   JSON round-tripped transcript and nothing else — each statistic
+                   JSON round-tripped transcript and nothing else; each statistic
                    carrying the honest-run null it is read against
   thresholds_rate.py        the rate and count family: mismatch rate, the two
                    matched counts, the Phase C′ wire counts, the pooled count
   thresholds_channel.py     the channel family: check-round QBER, CHSH, and the
-                   three resource diagnostics — per link, per bit, never pooled
+                   three resource diagnostics: per link, per bit, never pooled
   thresholds_structural.py  the structural family: aborts, replay refusals and run
                    shape, three of them at a false-positive probability of exactly
                    zero
@@ -501,13 +502,13 @@ sih141/eval/       the evaluation harness (Phase 5)
   store.py         one file per trial, written atomically, so a sweep resumes
   runner.py        the process pool, BLAS pinned in the parent before it exists
   manifest.py      commit, dirty flag, exact command line, seed rule, machine
-  reduce.py        records to tables — and every way a table can quietly lie,
+  reduce.py        records to tables, and every way a table can quietly lie,
                    closed off in a type or a test
   security.py      the repudiation and forgery curves
   roc.py           the ROC family: eps swept at reduce time over retained transcripts
-  perf.py          this machine, measured — throughput, speedup, memory, the edges
+  perf.py          this machine, measured: throughput, speedup, memory, the edges
 
-sih141/web/        the dashboard (Phase 6) — one FastAPI process, both halves
+sih141/web/        the dashboard (Phase 6): one FastAPI process, both halves
   __main__.py      the one command: python -m sih141.web
   api.py           create_app(), six endpoints, the concurrency gate
   limits.py        every cap the UI can send, and the refusals that name them
@@ -515,7 +516,7 @@ sih141/web/        the dashboard (Phase 6) — one FastAPI process, both halves
                    ground truth in its own object where the detector cannot read it
   catalogue.py     the attack roster, each row stating its detectability explicitly
   payload.py       the transcript facts the screen needs
-  static/          the frontend — 26 vendored files, nothing fetched from a network
+  static/          the frontend: 26 vendored files, nothing fetched from a network
 
 tools/             sweep.py (run / reduce / perf), metrics.py, journal.py
 tests/             pytest suite
@@ -536,10 +537,10 @@ docs/              engineering notes per phase
    *draws* from global `numpy.random` or stdlib `random`. Reproducible seeding is a
    prerequisite for the Phase 5 evaluation to be credible. The one place those globals are
    touched at all is the D6 isolation check, which *writes* them for the duration of a probe
-   call — and restores them exactly — so that an adversary breaking this rule is caught by a
+   call, and restores them exactly, so that an adversary breaking this rule is caught by a
    test rather than trusted not to.
 4. **No AI/ML anywhere in the detection path.** Every threshold in the codebase is a closed
-   form in the protocol parameters, derived from a concentration inequality — including the
+   form in the protocol parameters, derived from a concentration inequality, including the
    matched-count floor, which is a Chernoff tail at a fixed budget and not a learned or
    tuned cut. Nothing is fitted to data, so every detection number has a proof rather than
    an observed rate.
@@ -562,7 +563,7 @@ docs/              engineering notes per phase
    honest-run data to *check* that a derived threshold behaves as derived; you may not look
    at attack data to *choose* one. The rule is enforced mechanically rather than by review:
    each threshold is swept across ten decades of budget and required to move with it, unless
-   its null is a point mass — in which case its proven false-positive probability must be
+   its null is a point mass, in which case its proven false-positive probability must be
    exactly zero, which is a stronger claim and is asserted as one.
 9. **The detector reads a JSON round-tripped transcript and nothing else** (Phase 4). Not the
    session object, not the adversary, not any harness state. A detection rate measured by

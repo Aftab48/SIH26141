@@ -1,14 +1,14 @@
 # Project Metrics
 
-**SIH26141** — Quantum-Inspired Cyber Threat Detection for Digital Signature Security
+**SIH26141**: Quantum-Inspired Cyber Threat Detection for Digital Signature Security
 
-Generated `2026-09-05 14:10 UTC` by `tools/metrics.py`. Every figure is computed from the
-repository — do not edit by hand, re-run the script.
+Generated `2026-09-05 16:45 UTC` by `tools/metrics.py`. Every figure is computed from the
+repository, so do not edit by hand, re-run the script.
 
 ## Test suite
 
 ```
-3800 passed in 1634.06s (0:27:14)
+3800 passed in 1990.62s (0:33:10)
 ```
 
 - Doctests collected from package modules: **481**
@@ -78,7 +78,7 @@ Test-lines to code-lines ratio: **2.39 : 1**
 ## Live security parameters
 
 Read out of `sih141.protocol` at generation time, so these are whatever the code
-actually computes today — not what a document once claimed.
+actually computes today, not what a document once claimed.
 
 | Quantity | Value |
 | --- | --- |
@@ -99,26 +99,28 @@ actually computes today — not what a document once claimed.
 
 | File | Words |
 | --- | ---: |
-| `README.md` | 6289 |
+| `README.md` | 6224 |
 | `JOURNAL.md` | 92394 |
-| `docs/METRICS.md` | 1440 |
-| `docs/PHASE1.md` | 4078 |
-| `docs/PHASE2.md` | 10056 |
-| `docs/PHASE3.md` | 15026 |
-| `docs/PHASE4.md` | 9654 |
-| `docs/PHASE5.md` | 12636 |
-| `docs/PHASE6.md` | 12333 |
-| `docs/QDS.md` | 5356 |
-| **total** | **169262** |
+| `docs/METRICS.md` | 1446 |
+| `docs/PHASE1.md` | 4038 |
+| `docs/PHASE2.md` | 9968 |
+| `docs/PHASE3.md` | 14827 |
+| `docs/PHASE4.md` | 9547 |
+| `docs/PHASE5.md` | 12552 |
+| `docs/PHASE6.md` | 12185 |
+| `docs/QDS.md` | 5285 |
+| **total** | **168466** |
 
 Working-journal entries: **239** (temporary; deleted at the end of Phase 7).
 
 ## Repository
 
-- Commits: **28**
+- Commits: **30**
 
 | Commit | Subject |
 | --- | --- |
+| `4ad12d0` | Rewrite the documentation prose: 673 em dashes down to 75, substance untouched |
+| `98d55cb` | Re-run the Phase 5 sweep from a clean tree: same results, provable provenance |
 | `f94d9fe` | Close the Phase 5 audit: nine defects fixed, the sweep run end to end |
 | `6cb0f57` | Add the Phase 5 experiment families: security curves and ROC |
 | `98db568` | Add the Phase 5 evaluation harness: a resumable parallel sweep, determinism proven |
@@ -142,5 +144,3 @@ Working-journal entries: **239** (temporary; deleted at the end of Phase 7).
 | `ea5ba71` | Add replay defence: session binding and consumed-records ledger |
 | `5983c00` | Enforce declaration binding and add attack randomness isolation |
 | `cf35087` | Close Phase 2: fix stale claims and verify at full scale |
-| `8182fc4` | runway doc update |
-| `cf32fc0` | Harden checkpoint against concurrent-agent races |
