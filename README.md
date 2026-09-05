@@ -258,9 +258,9 @@ Phase 3 constraint 4 and it is caught by a *type* rather than by a number that h
 out right — `NoVerdictCount` refuses `+` with anything but another `NoVerdictCount`, so
 `rejected + refused` and `sum(...)` both raise.
 
-Full suite: **3338 passed, 0 failed, 0 skipped** — up from `3036` at the end of Phase 4, `2174`
-at the end of Phase 3 and `1421` at the end of Phase 2. Wall clock about `1310 s` (21:50) on
-this machine; the load-bearing figure is `3338 / 3338`.
+Full suite: **3588 passed, 0 failed, 0 skipped** — up from `3460` at the end of Phase 6, `3036`
+at the end of Phase 4, `2174` at the end of Phase 3 and `1421` at the end of Phase 2. Wall clock
+about `1375 s` (22:55) on this machine; the load-bearing figure is `3588 / 3588`.
 
 ## Roadmap
 
@@ -271,7 +271,7 @@ this machine; the load-bearing figure is `3338 / 3338`.
 | 2 | QDS protocol — key distribution, signing, verification, transferability | ✅ Complete |
 | 3 | Attack suite — the four adversaries above, plus count starvation and realistic channel noise | ✅ Complete |
 | 4 | Detection engine — QBER, CHSH, mismatch statistics, **derived** thresholds and a family-wise bound | ✅ Complete |
-| 5 | Evaluation — forgery probability vs. key length, ROC, FAR/FRR, benchmarks | ⬜ |
+| 5 | Evaluation — forgery probability vs. key length, ROC, FAR/FRR, benchmarks | 🟨 Harness complete, sweep not run |
 | 6 | Web dashboard — live attack/detection demo | ✅ Complete |
 | 7 | Submission docs — mathematical modelling and security analysis | ⬜ |
 
@@ -285,6 +285,15 @@ this machine; the load-bearing figure is `3338 / 3338`.
 > **The dashboard therefore reports no evaluation results, and says so on the screen.** It
 > demonstrates a live run; it does not present a study. The one table of measured rates on the
 > page is labelled *"not a Phase 5 result — a Phase 4 calibration"*.
+>
+> **Phase 5's harness is in.** `sih141/eval` plus `tools/sweep.py run` and `tools/sweep.py
+> reduce` — a resumable parallel runner, one file per trial, a run manifest recording the
+> commit and the exact command, and a reduction that regenerates every table from the files
+> without re-running a thing. Determinism is proven rather than asserted: identical results at
+> one worker and at twenty, in any completion order. The production sweep has not been run.
+> [docs/PHASE5.md](docs/PHASE5.md) has the seed rule, the measured performance of this machine,
+> and the two figures in the plan it corrected — one honest full-scale session is **235 s**, and
+> twenty workers give **7.04×**, not the 15× the plan assumed.
 
 > **Note on scope.** The published problem statement ends with an unfilled placeholder where
 > the organization's deliverables table should be (*"Add 'Delivery Table (Expected

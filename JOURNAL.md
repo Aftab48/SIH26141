@@ -8,7 +8,7 @@
 > on the maintainer's explicit instruction. The permanent record is
 > `docs/METRICS.md` and the `docs/PHASE*.md` notes.
 
-**177 entries** — 44 finding · 40 decision · 31 fix · 31 note · 28 issue · 3 deadend
+**186 entries** — 46 finding · 41 decision · 36 note · 32 fix · 28 issue · 3 deadend
 
 
 ## Phase 0 — Scaffold
@@ -6304,6 +6304,276 @@ it. The four fixes touched code three auditors had just certified, which is wort
 plainly: the audit covers 2e75d91, not this tree. What it certified -- that no threshold is
 fitted, that the union bound is over the tests actually run, that no operating point is
 special-cased -- is untouched by all four, none of which moves a threshold, a null or a budget.
+
+
+## Phase 5 — Evaluation
+
+### `[-]` progress: step 1 of 6 done
+
+*note · eval-harness · 2026-09-05T00:50:55Z*
+
+Step 1 of 6 done: the throughput question is settled by an independent end-to-end run.
+One honest session at DEFAULT_PARAMS (L=115200, check_fraction=0, seed 20260905, no profiler
+attached, OMP/MKL/OPENBLAS_NUM_THREADS=1) took 235.09 s -- 2.041 ms/position, 490 positions/s.
+That is within 2.1% of the 230.2 s already recorded in docs/QDS.md section 12, so that figure
+stands and the 6.7 ms/position ghost stays dead. Two side measurements disagree with the brief
+and need following up in step 6: transcript JSON came out at 0.226 KB/position (26.7 MB, not
+the 38 MB the 0.33 KB/position figure predicts), and detector latency at full scale was 1.54 s,
+not the 2.9-9.7 ms quoted -- that range must have been measured at small L.
+
+Next: build sih141/eval/ (seeds and records are written), then the parallel runner.
+
+### `[-]` progress: steps 2, 4, 5 of 6 done
+
+*note · eval-harness · 2026-09-05T01:06:52Z*
+
+Steps 2, 4 and 5 of 6 done: sih141/eval/ exists and tools/sweep.py drives it. Eight modules --
+seeds, records, store, manifest, experiments, runner, reduce, perf -- with 43 doctests green.
+A pool of four spawned workers ran the smoke experiment (four distinct pids), a second identical
+command skipped all four as already on disk, and 'reduce' regenerated three tables from the files
+without re-running anything. The seed rule is blake2b(domain || 0x00 || experiment || cell || role
+|| index), 8-byte digest, pure in the trial's identity; BLAS thread limits are set in the parent
+before the pool exists so spawned children inherit them at interpreter start.
+
+Next: the determinism test suite (step 3), then the speedup curve and the edges (step 6).
+
+### `[*]` 20 workers give 7.04x, not 15x: the cores slow down, the pool does not idle
+
+*finding · eval-harness · 2026-09-05T01:30:17Z*
+
+Twenty workers give 7.04x, not 15x. The pool is fully occupied; each worker is 2.5x slower.
+
+Measured with `python tools/sweep.py perf --speedup --speedup-cell l768 --trials 120
+--workers 1,4,8,14,20`, 120 honest sessions at L=768 per point, each point into a fresh
+results directory so a resumed sweep could not time an empty run:
+
+  workers   wall s   speedup   efficiency   sum of in-worker trial s   mean s/trial
+        1   204.81      1.00         1.00                     203.98          1.700
+        4    59.86      3.42         0.86                     233.17          1.943
+        8    40.37      5.07         0.63                     305.56          2.546
+       14    34.44      5.95         0.42                     436.13          3.634
+       20    29.10      7.04         0.35                     516.26          4.302
+
+docs/QDS.md said "about 51 minutes at 20 workers on this CPU's realistic 15x effective
+speedup". That is now corrected: at 7.04x, 200 trials at DEFAULT_PARAMS is 1.86 hours, not
+51 minutes.
+
+WHAT IS NOT THE CAUSE, checked rather than assumed.
+
+Not idle workers. The aggregate speedup -- sum of in-worker trial seconds over wall clock --
+is 17.74 at 20 workers, so on average 17.7 of the 20 were busy for the whole run including
+pool startup. The pool is working. What is not working is the cores.
+
+Not BLAS oversubscription. Every worker was asked what it sees, in its own process, and all
+five thread-limit variables read "1" (`tools/sweep.py perf --probe`). Setting them in the
+parent before the pool exists works, because Windows spawn copies the environment at
+interpreter start, before numpy is imported.
+
+Not thermal drift in the baseline. The single-worker point was re-measured immediately after
+the 20-worker run, on a hot machine: 1.702 s/trial against 1.700 s cold, a 0.1% difference.
+So the ratio is a real measurement and not an artefact of a cold baseline.
+
+WHAT IT IS. Per-trial time rises monotonically with worker count, and it starts rising well
+before the E-cores are reached: eight workers on an eight-P-core machine already cost 1.50x
+per trial. That is the all-core turbo budget -- one active core boosts far higher than eight
+-- plus shared L3 and memory bandwidth. From 14 to 20 workers the remaining growth is the
+twelve E-cores, which are slower per clock than a P-core for scalar Python.
+
+CONSEQUENCE FOR THE RUN PLAN. Twenty workers is still the fastest wall clock (29.10 s against
+34.44 s at fourteen), so use twenty. But the marginal return past eight is poor: eight workers
+buy 5.07x for 40% of the machine, and the last six workers buy 18%. If the human wants the
+laptop usable during a sweep, eight is the sweet spot and costs 39% more wall clock.
+
+CAVEAT ON EXTRAPOLATING THIS. Measured at L=768, where a trial is 1.7 s. At L=115200 a trial
+is 235 s, so pool startup vanishes entirely -- but each worker also holds a much larger
+transcript, so memory bandwidth pressure could be worse rather than better. The 7.04x should
+be treated as measured at L=768 and as a plausible upper estimate at L=115200, not as
+established there.
+
+### `[-]` progress: steps 3 and most of 6 done
+
+*note · eval-harness · 2026-09-05T01:32:40Z*
+
+Step 3 of 6 done and step 6 nearly: tests/test_eval_harness.py has 78 tests, all green, and
+the machine has been measured. Determinism is proven rather than asserted -- two whole sweeps,
+one in-process and one across four spawned workers, compared by SHA-256 fingerprint over
+everything but the timings, plus a trial run alone against the same trial run third of four,
+plus the rendered tables compared as text. D3 is measured by snapshotting both global RNG
+states around a sweep, and the probe itself is tested for being able to fail.
+
+The headline measurement: 20 workers give 7.04x wall clock, NOT 15x. Occupancy is 17.7/20, so
+the pool is busy and each worker is 2.5x slower; slowdown starts at 8 workers, before any
+E-core. 200 full-scale trials is therefore 1.9 h, not 51 min. docs/QDS.md corrected. Also
+found and fixed a real defect in my own memory probe: ctypes defaulted the Windows HANDLE to
+32 bits, the call failed, and every row read 0.0 MB -- which looks exactly like a process
+using no memory. There is now a test that would catch it again.
+
+Next: full-scale memory point (running), docs/PHASE5.md harness+performance sections, then
+the whole 3000-test suite.
+
+### `[+]` My correction to the 0.33 KB/position figure was itself wrong
+
+*fix · eval-harness · 2026-09-05T01:36:55Z*
+
+I published a correction that was itself wrong: 0.33 KB/position was right all along.
+
+The first version of docs/PHASE5.md and of sih141.eval.perf.MEASURED_TRANSCRIPT_KB said the
+Phase 5 brief's "transcript JSON about 0.33 KB per position" was an error, because my
+end-to-end run at DEFAULT_PARAMS produced 26.7 MB at L=115200, which is 0.226 KB/position.
+
+The brief was right. Its figure is a CHECKED run. Measuring the same length at
+check_fraction=0.25 gives 37.166 MB, which is 0.3304 KB/position -- the brief's number to three
+figures. Check rounds publish a channel sample per round (fidelity, purity, concurrence, both
+wing purities), and that is 46% more transcript per position at the same key length.
+
+Both numbers were correct measurements. The mistake was reporting one of them without its
+second coordinate, and then asserting the other was wrong on that basis. Same species as the
+tracemalloc timing: a number true of one configuration presented as a number about the thing.
+The tell was available and I did not look for it -- my own measured KB/position at
+check_fraction=0.25 was 0.408, 0.371, 0.339 at L=96, 192, 768, falling towards 0.33, and I put
+0.226 at the end of that sequence and called the trend "the header being amortised".
+
+FIXED. MEASURED_TRANSCRIPT_KB is now keyed by (key_length, check_fraction) rather than by
+key_length alone, so the second coordinate cannot be dropped again, and both entries are
+doctested. docs/QDS.md and docs/PHASE5.md now state both, with the check fraction attached.
+The correction is recorded in the constant's own docstring rather than quietly applied.
+
+Turned up while measuring peak RSS at full scale, which reported 348.7 MB and a 37.17 MB
+transcript. That memory figure is also worth carrying: twenty workers at full scale with check
+rounds is about 7 GB, not the "under 2 GB" the brief records -- that estimate is twenty import
+floors and does not count the transcripts.
+
+### `[-]` progress: step 6 of 6 done
+
+*note · eval-harness · 2026-09-05T01:50:28Z*
+
+Step 6 of 6 done. The machine is measured and docs/PHASE5.md is written -- harness sections 1-4,
+performance 5-7, what the reduction refuses to do in 8, how to add an experiment in 9.
+
+What is now true. Throughput: 235.09 s and 2.041 ms/position at DEFAULT_PARAMS, linear over a
+1200-fold range in L. Speedup: 7.04x at 20 workers with occupancy 17.7/20, so the pool is busy
+and the cores are slow; slowdown begins at 8 workers, before any E-core. Memory: 349 MB peak per
+worker at L=115200 with check rounds, so 20 workers is about 7 GB rather than the 2 GB the brief
+estimated. Edges: the security-claim boundary is L=183 at check_fraction=0.25 (signing length
+138), honest runs abort 1-in-5 below about L=24, and ProtocolParams(3, 0.25) refuses to exist.
+Every one of those is a doctested constant in sih141.eval.perf with the command that regenerates
+it printed beside it.
+
+Also corrected a claim I had made an hour earlier: the brief's 0.33 KB/position was right, it is
+just a CHECKED run; unchecked is 0.226. MEASURED_TRANSCRIPT_KB is now keyed by
+(key_length, check_fraction) so the second coordinate cannot be dropped again.
+
+Next and last: the full 3000-test suite, running now.
+
+### `[D]` The evaluation harness: seeds, pool, store, and what was left out
+
+*decision · eval-harness · 2026-09-05T01:55:10Z*
+
+The harness: what was decided and what it rules out.
+
+SHAPE. sih141/eval/ is eight modules -- seeds, records, store, manifest, experiments, runner,
+reduce, perf -- and tools/sweep.py has run, reduce and perf. run and reduce never call each
+other. The runner knows nothing about what an experiment measures; it is handed a cell name and
+a trial index and stores what comes back, so adding an adversary is one function registered in
+SCENARIOS and touches nothing else.
+
+SEEDS. blake2b(domain || 0x00 || experiment || 0x00 || cell || 0x00 || role || 0x00 || index),
+8-byte digest, personalised. Pure in the trial's identity. NOT hash((e,c,r,i)): PYTHONHASHSEED
+randomises Python's hash per process, which is precisely the "depends on which process ran it"
+failure the rule exists to rule out, and there is a test that computes a seed in a separate
+interpreter with a different hash seed. The 0x00 separator matters: without it ("ab","c") and
+("a","bc") collide and two cells silently share a stream. Roles session/adversary give D6 for
+free -- the two streams are compared through same_stream(), on realised draws, not seeds.
+
+ONE WORKER IS STILL A POOL. run_experiment(workers=1) spawns a pool of one rather than running
+in-parent, because the one-worker point of a speedup curve has to run the same code in the same
+kind of process as the twenty-worker point. Comparing an in-parent serial run against pooled
+workers compares two environments and calls the difference a speedup. in_process=True exists for
+tests and is documented as never for a published timing.
+
+CHUNKSIZE 1. Not the same question as "a process per trial" -- the pool is persistent either
+way and a chunk is only how many tasks go over in one message. One keeps the load balanced when
+cells have different key lengths; a static split leaves nineteen workers idle while one finishes
+the long cell. IPC is well under a millisecond against a trial of at least 0.2 s.
+
+BLAS PINNING IN THE PARENT. Setting OMP_NUM_THREADS after numpy is imported is a no-op that
+looks identical from the outside. Windows spawn copies the parent's environment at interpreter
+start, before any import, so setting it before the pool exists puts it in place by construction
+rather than by an initializer racing numpy. Then measured: worker_probe() asks a real worker
+what its own environment says.
+
+THE FINGERPRINT EXCLUDES EXACTLY ONE FIELD. wall_clock, and the set is pinned by a test, because
+an exclusion list is the natural hiding place for a field that genuinely moved between one
+worker and twenty. Every other field is proved to be inside the fingerprint by mutating it.
+
+WHAT I DID NOT BUILD, deliberately. No result database -- one JSON file per trial is resumable,
+inspectable with cat, and cannot corrupt. No progress bar library. No retry loop on a failed
+trial: it is counted, named and left absent from disk so the next pass retries it, which is the
+same mechanism as resume rather than a second one. No automatic chart generation; reduce emits
+markdown and JSON and a later pass can draw from the JSON.
+
+FOUR EXPERIMENTS SHIP AND THAT IS ON PURPOSE. honest, noise, scaling, smoke. The harness is this
+pass's deliverable and these are what prove it works end to end -- an honest arm, an arm whose
+null is knowingly wrong (Phase 4 A3-1, reproduced: honest-but-noisy runs flag 2/2 under a
+noiseless null), a throughput arm, and a four-trial cell for the tests. The results tables are a
+later pass's job.
+
+### `[*]` 0xC0000142: the harness's subprocess tests fail under process-creation pressure
+
+*finding · eval-harness · 2026-09-05T02:58:23Z*
+
+Nine harness tests fail if anything else on the machine is spawning processes. Windows, 0xC0000142.
+
+The first full-suite run after the harness landed reported 9 failed, 3576 passed. Every failure
+was one of the tests that starts a process -- the four CLI tests that run tools/sweep.py, the
+three that build a ProcessPoolExecutor, the one that runs `python -c` in a fresh interpreter,
+and the byte-identity test that compares one worker against four. Every one failed the same way:
+returncode 3221225794, which is 0xC0000142, STATUS_DLL_INIT_FAILED. Not an assertion about a
+wrong number -- the child process could not start at all.
+
+RULED OUT, in this order.
+
+Not a defect in the tests: tests/test_eval_harness.py alone is 78 passed.
+
+Not an interaction with what runs before them: the thirteen test files that precede
+test_eval_harness.py alphabetically -- all six test_attack_* and all seven test_detect_* --
+followed by test_eval_harness.py is 1013 passed, no failures.
+
+Not test ordering: the only pytest plugin installed is anyio. There is no pytest-randomly, so
+collection order is deterministic and the reproduction above is the real order.
+
+WHAT IT WAS. I was polling the running suite from three concurrent background shell loops, each
+doing `grep` plus `sleep` every 15 to 45 seconds for twenty-six minutes -- several hundred short
+lived processes interleaved with pytest's own pool spawning. Re-running the identical suite with
+nothing else spawning processes: 3588 passed in 1375.20s, zero failures.
+
+WHAT TO CARRY FORWARD. This suite's subprocess and pool tests are sensitive to process-creation
+pressure on Windows in a way the rest of it is not, and the symptom is a bare hex returncode
+that looks like a logic failure. If you see 3221225794 from any of them, check what else is
+running before you go looking for a bug in sih141/eval. The lesson is narrower than "don't run
+things concurrently": it is that a monitoring loop is not free, which is the same shape as the
+tracemalloc timing -- the instrument changed the measurement.
+
+### `[-]` progress: all 6 steps done, suite green
+
+*note · eval-harness · 2026-09-05T02:58:34Z*
+
+All six steps done. Full suite green: 3588 passed in 1375.20s (0:22:55), zero failures.
+
+Shipped: sih141/eval/ (eight modules), tools/sweep.py (run, reduce, perf),
+tests/test_eval_harness.py (82 tests), docs/PHASE5.md, corrections to docs/QDS.md and README.md.
+The harness is resumable, the seed rule is pure in the trial's identity, determinism is proven by
+comparing two whole sweeps at one worker and at four, and every table carries the command that
+regenerates it.
+
+Numbers established: 235.09 s and 2.041 ms/position at DEFAULT_PARAMS; 7.04x at 20 workers with
+occupancy 17.7/20; 349 MB peak per worker at full scale with check rounds; security-claim
+boundary at L=183 (signing length 138) for check_fraction=0.25.
+
+Nothing is left half-finished. The next pass writes experiments: add a scenario function to
+SCENARIOS and cells to EXPERIMENTS, run tools/sweep.py run, reduce, and paste the tables into
+docs/PHASE5.md under a new section. The production sweep has NOT been run -- at 7.04x, 200
+trials at DEFAULT_PARAMS is about 1.9 hours at 20 workers.
 
 
 ## Phase 6 — Dashboard

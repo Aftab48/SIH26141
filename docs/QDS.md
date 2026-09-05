@@ -476,8 +476,8 @@ walk of all six seams, 0/4001 generator-rewind steps, 0/19 seed-reconstruction r
 | Repudiation bound | 1.4139 × 10⁻⁹ | Unconditional, with the abort rule |
 | Recipient forgery | 2.17 × 10⁻¹⁰⁵ | The binding forgery adversary |
 | Honest-abort probability | 8.0 × 10⁻³¹ | Cost of the abort rule, against a 2⁻⁶⁴ budget |
-| Session runtime | 2.3 ms/position | ≈ 4.5 minutes for one full-scale session |
-| Test suite | 1,418 tests | ~5 minutes to run |
+| Session runtime | 2.04 ms/position | 235 s — 3.9 minutes — for one full-scale session |
+| Test suite | 3,588 tests | ~23 minutes to run |
 
 ---
 
@@ -524,9 +524,8 @@ seed and on nothing else.
 > **The cost, measured rather than estimated.** One honest session at `DEFAULT_PARAMS`
 > (`L = 115200`, `check_fraction = 0`) takes **230.2 s — 3.84 min, or 1.999 ms per position**,
 > timed end to end on the target machine with nothing else running. So 200 trials is **12.8
-> hours** single-threaded, and about **51 minutes** at 20 workers on this CPU's realistic 15×
-> effective speedup. Scaling is linear: 2.0–2.4 ms/position holds across `L = 192` to
-> `L = 3072`, a 16× range.
+> hours** single-threaded. Scaling is linear: 2.0–2.4 ms/position holds across `L = 192` to
+> `L = 115200`, a 600× range.
 >
 > The original estimate in this section was "~15 hours single-threaded", which is correct and
 > mildly conservative. It is recorded here that an intermediate measurement claimed 6.7
@@ -535,6 +534,34 @@ seed and on nothing else.
 > written down rather than quietly corrected because it is this project's own named failure
 > mode — a number true of the measurement rather than of the thing measured — and because a
 > brief had already been written that handed it to an agent as established fact.
+>
+> **Confirmed independently at the start of Phase 5** by a second end-to-end run at the same
+> parameters under a different seed: **235.1 s, or 2.041 ms per position**, 2.1% above the
+> figure above. It is `sih141.eval.perf.MEASURED_SESSIONS`, and every total derived from it is
+> a doctest over that constant rather than prose, so the totals cannot drift away from the rate
+> they came from. Regenerate with
+> `python tools/sweep.py perf --session-scaling --key-lengths 115200`.
+>
+> **The parallel figure in this section was wrong and is now measured.** It read "about **51
+> minutes** at 20 workers on this CPU's realistic 15× effective speedup". The 15× was an
+> estimate. Measured on 120 sessions per point at `L = 768`, the achieved wall-clock speedup at
+> 20 workers is **7.04×**, so 200 trials is about **1.9 hours**, not 51 minutes. The pool is not
+> idling — 17.7 of the 20 workers are busy on average — but each worker runs 2.5× slower than a
+> lone one, and the slowdown starts at eight workers, before any E-core is reached. The full
+> curve, the three causes ruled out and the one that remains are in
+> [PHASE5.md](PHASE5.md) §6. Regenerate with
+> `python tools/sweep.py perf --speedup --speedup-cell l768 --trials 120 --workers 1,4,8,14,20`.
+>
+> **Transcript size depends on the check fraction as much as on `L`.** At `check_fraction = 0`,
+> which is what `DEFAULT_PARAMS` uses, a full-scale transcript is **0.226 KB per position —
+> 26.7 MB**. At `check_fraction = 0.25` the same length is **0.330 KB per position, 37.2 MB**,
+> because every check round publishes a channel sample. Both are measured; quoting either
+> without its check fraction is how a correct number becomes a wrong one.
+>
+> **Detector latency is not a constant few milliseconds.** It is 1.54 s on a full-scale
+> transcript against 2.9 ms on a 96-position one, because it is dominated by parsing the JSON,
+> so it scales with `L` like everything else. Still under one percent of the session that
+> produced the transcript.
 
 **Phase 6 is built first.** The work order is 4 → 6 → 5 → 7; see the roadmap note in
 `README.md` for why. Nothing in Phase 6 depends on the numbers this phase produces.

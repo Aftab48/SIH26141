@@ -4,7 +4,13 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
+# Sweep output. `tools/sweep.py` defaults to ~/.sih141/results, OUTSIDE the
+# repository, because raw per-trial files are never committed -- only the
+# reduced tables are. These cover the case of someone pointing --results at
+# the working copy.
 results/
+sweep-results/
+.sih141/
 
 # Working-journal entry files: the rendered JOURNAL.md is tracked instead.
 # Both are temporary and get dropped at the end of Phase 7.

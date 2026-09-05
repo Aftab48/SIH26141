@@ -23,7 +23,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGE_DIRS = ("sih141/core", "sih141/protocol", "sih141/attacks",
-                "sih141/detect", "sih141/evaluate", "sih141/web")
+                "sih141/detect", "sih141/eval", "sih141/web")
 
 
 def run(cmd: list[str], timeout: int = 1800) -> str:
