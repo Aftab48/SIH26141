@@ -41,9 +41,15 @@ and three obligations, each of which is a constraint the results table inherits:
 
 Examples
 --------
+The registry is open: a Phase 5 experiment family registers from its own module
+at import, so this asserts that the four the harness itself ships are still
+there rather than that nothing else is. Pinning the literal list would make
+every family that registers one edit this line, which is a merge conflict
+standing in for a check nobody wants.
+
 >>> from sih141.eval.experiments import EXPERIMENTS, experiment
->>> sorted(EXPERIMENTS)
-['honest', 'noise', 'scaling', 'smoke']
+>>> set(EXPERIMENTS) >= {'honest', 'noise', 'scaling', 'smoke'}
+True
 >>> honest = experiment("honest")
 >>> [cell.name for cell in honest.cells]
 ['l192', 'l384', 'l768']
@@ -93,6 +99,7 @@ __all__ = [
     "EXPERIMENTS",
     "Experiment",
     "SCENARIOS",
+    "SCENARIO_PROBE_OPTIONS",
     "Scenario",
     "all_cells",
     "experiment",
@@ -486,6 +493,31 @@ SCENARIOS: Final[dict[str, Scenario]] = {
 Adding an adversary to Phase 5 means writing one function to the contract in
 :ref:`scenario-contract` and adding it here. Nothing in the runner, the store,
 the manifest or the reduction needs to change.
+"""
+
+SCENARIO_PROBE_OPTIONS: Final[dict[str, dict[str, Any]]] = {
+    "depolarising": {"strength": 0.25},
+}
+"""dict: The smallest ``scenario_options`` that make each scenario run at all.
+
+A scenario is entitled to refuse a missing option rather than default it --
+``depolarising`` does, and so does every adversary a Phase 5 family has added,
+because a defaulted typo is how an inert arm comes to report a clean zero. The
+cost is that a scenario cannot then be exercised generically, and
+``tests/test_eval_harness.py`` has a contract test that runs *every* registered
+scenario twice and compares. This is what that test reads.
+
+**A family that registers a scenario registers its probe options here too**,
+from its own module, beside the scenario. A scenario that needs options and
+appears in neither place raises in that test rather than being skipped, which
+is the intended failure: a scenario nobody can construct is a scenario nobody
+has checked.
+
+Examples
+--------
+>>> from sih141.eval.experiments import SCENARIO_PROBE_OPTIONS
+>>> SCENARIO_PROBE_OPTIONS["depolarising"]
+{'strength': 0.25}
 """
 
 

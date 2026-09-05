@@ -258,9 +258,10 @@ Phase 3 constraint 4 and it is caught by a *type* rather than by a number that h
 out right — `NoVerdictCount` refuses `+` with anything but another `NoVerdictCount`, so
 `rejected + refused` and `sum(...)` both raise.
 
-Full suite: **3588 passed, 0 failed, 0 skipped** — up from `3460` at the end of Phase 6, `3036`
-at the end of Phase 4, `2174` at the end of Phase 3 and `1421` at the end of Phase 2. Wall clock
-about `1375 s` (22:55) on this machine; the load-bearing figure is `3588 / 3588`.
+Full suite: **3750 passed, 0 failed, 0 skipped** — up from `3588` with the Phase 5 harness alone,
+`3460` at the end of Phase 6, `3036` at the end of Phase 4, `2174` at the end of Phase 3 and `1421`
+at the end of Phase 2. Wall clock about `1512 s` (25:12) on this machine; the load-bearing figure
+is `3750 / 3750`.
 
 ## Roadmap
 
@@ -271,7 +272,7 @@ about `1375 s` (22:55) on this machine; the load-bearing figure is `3588 / 3588`
 | 2 | QDS protocol — key distribution, signing, verification, transferability | ✅ Complete |
 | 3 | Attack suite — the four adversaries above, plus count starvation and realistic channel noise | ✅ Complete |
 | 4 | Detection engine — QBER, CHSH, mismatch statistics, **derived** thresholds and a family-wise bound | ✅ Complete |
-| 5 | Evaluation — forgery probability vs. key length, ROC, FAR/FRR, benchmarks | 🟨 Harness complete, sweep not run |
+| 5 | Evaluation — forgery probability vs. key length, ROC, FAR/FRR, benchmarks | 🟨 Harness and experiments complete, sweep not run |
 | 6 | Web dashboard — live attack/detection demo | ✅ Complete |
 | 7 | Submission docs — mathematical modelling and security analysis | ⬜ |
 

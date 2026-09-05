@@ -93,6 +93,8 @@ from .store import ResultStore
 
 __all__ = [
     "CONFIDENCE",
+    "EXTRA_CHARTS",
+    "EXTRA_REDUCTIONS",
     "NOT_EVALUATED",
     "Table",
     "detection_table",
@@ -102,6 +104,28 @@ __all__ = [
     "tally_from_record",
     "timing_table",
 ]
+
+EXTRA_REDUCTIONS: Final[dict[str, Any]] = {}
+"""dict: Per-experiment reductions, appended after the three standard tables.
+
+An experiment family that needs a table of its own registers here, keyed by
+experiment name, with a callable taking ``(records, *, command, cell_order)``
+and returning a list of :class:`Table`. :func:`reduce_experiment` consults it,
+so ``python tools/sweep.py reduce <name>`` picks the extra tables up with no
+change to the command line and no second reduction path for a reviewer to miss.
+
+Empty here on purpose: the three standard tables are what every experiment
+supports, and a family that needs more says so from its own module.
+"""
+
+EXTRA_CHARTS: Final[dict[str, Any]] = {}
+"""dict: Per-experiment chart renderers, keyed by experiment name.
+
+Same shape as :data:`EXTRA_REDUCTIONS` but returning a mapping of filename to
+document text, which ``tools/sweep.py reduce --charts DIR`` writes. A chart is
+a published figure and D9 applies to it exactly as it does to a table, so a
+renderer is handed the same ``command`` string and is expected to print it.
+"""
 
 CONFIDENCE: Final[float] = 0.99
 """float: Confidence level for every measured rate's interval.
@@ -745,7 +769,8 @@ def reduce_experiment(
     Returns
     -------
     list of Table
-        Outcomes, detection, timing -- in that order.
+        Outcomes, detection, timing -- in that order -- followed by whatever
+        this experiment registered in :data:`EXTRA_REDUCTIONS`.
 
     Raises
     ------
@@ -782,8 +807,12 @@ def reduce_experiment(
     registered = EXPERIMENTS.get(experiment_name)
     if registered is not None:
         order = registered.cell_names
-    return [
+    tables = [
         outcome_table(records, command=command, cell_order=order),
         detection_table(records, command=command, cell_order=order),
         timing_table(records, command=command, cell_order=order),
     ]
+    extra = EXTRA_REDUCTIONS.get(experiment_name)
+    if extra is not None:
+        tables.extend(extra(records, command=command, cell_order=order))
+    return tables

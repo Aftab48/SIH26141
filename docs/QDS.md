@@ -477,7 +477,7 @@ walk of all six seams, 0/4001 generator-rewind steps, 0/19 seed-reconstruction r
 | Recipient forgery | 2.17 × 10⁻¹⁰⁵ | The binding forgery adversary |
 | Honest-abort probability | 8.0 × 10⁻³¹ | Cost of the abort rule, against a 2⁻⁶⁴ budget |
 | Session runtime | 2.04 ms/position | 235 s — 3.9 minutes — for one full-scale session |
-| Test suite | 3,588 tests | ~23 minutes to run |
+| Test suite | 3,750 tests | ~25 minutes to run |
 
 ---
 

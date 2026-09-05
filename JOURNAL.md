@@ -8,7 +8,7 @@
 > on the maintainer's explicit instruction. The permanent record is
 > `docs/METRICS.md` and the `docs/PHASE*.md` notes.
 
-**186 entries** — 46 finding · 41 decision · 36 note · 32 fix · 28 issue · 3 deadend
+**215 entries** — 54 finding · 49 note · 44 decision · 37 fix · 28 issue · 3 deadend
 
 
 ## Phase 0 — Scaffold
@@ -6574,6 +6574,883 @@ Nothing is left half-finished. The next pass writes experiments: add a scenario 
 SCENARIOS and cells to EXPERIMENTS, run tools/sweep.py run, reduce, and paste the tables into
 docs/PHASE5.md under a new section. The production sweep has NOT been run -- at 7.04x, 200
 trials at DEFAULT_PARAMS is about 1.9 hours at 20 workers.
+
+### `[-]` progress: step 1 of 5 done
+
+*note · roc-family · 2026-09-05T03:35:37Z*
+
+Step 1 of 5 done: read the harness and settled the ROC family's design against it.
+
+WHAT IS NOW TRUE. The Phase 5 harness scores one transcript at one eps, but a ROC needs the
+same runs scored at every eps, and unpaired points would make a wobble in the curve sampling
+noise rather than a finding about a threshold. Measured the cost of the two halves at
+L=384/check=0.25: session 798 ms, transcript JSON 125 KB, TranscriptStatistics.from_json 7 ms,
+detect() 2.58 ms. So the eps ladder is ~5% of a session and the whole ROC can be a REDUCE-TIME
+object: the cells set retain_transcript=True and the reduction calls the shipped detect() once
+per eps per run. That keeps the ladder unfrozen (a reviewer can add an operating point without
+re-running the sweep) and needs no change to records/runner/store/manifest.
+
+NUMBERS THAT DECIDED IT. All nine adversary arms run clean at L=384, check_fraction=0.25, which
+is the only arrangement where the channel family is evaluable at all (n=288, four links
+published, withheld=()). detect() refuses below about 1e-310 with a clear message; at eps<=1e-30
+it withholds structural:evidence-abort, which is the can_fire story surfacing on its own. Under
+a NOISELESS null every adversary is detected at every eps from 0.5 down to 1e-200 -- a flat ROC,
+because the separations are point-mass-against-1/2. Shape appears once the link's true error
+rate is passed as the null: at tolerated p0=0.05 (channel_error_rate=0.025), a depolariser at
+p=0.35 on Bob's link gives 6/6 at eps=1e-1, 3/6 at 1e-3, 1/6 at 1e-6, 0/6 at 1e-9.
+
+NEXT: step 2, write sih141/eval/roc.py -- five new scenarios (outside forgery, recipient
+forgery, replay, starvation, impersonation), fifteen cells, the committed eps ladder, and the
+reduction. One additive hook in reduce.py (EXTRA_REDUCTIONS) so tools/sweep.py reduce roc emits
+the ROC tables without a CLI change.
+
+### `[-]` progress: steps 2 and 3 of 5 done
+
+*note · roc-family · 2026-09-05T03:50:13Z*
+
+Steps 2 and 3 of 5 done: sih141/eval/roc.py ships and a reduced sweep has run end to end.
+
+WHAT IS NOW TRUE. `python tools/sweep.py run roc` and `python tools/sweep.py reduce roc
+--charts DIR` both work. Fifteen cells, five new scenarios under `roc-` prefixed keys, a
+committed fifteen-rung EPS_LADDER from 5e-1 to 1e-30, three tables (roc, roc-envelope,
+roc-prototype) and an SVG whose axis labels carry the words PROVEN and MEASURED. Two additive
+hooks were needed: reduce.EXTRA_REDUCTIONS and reduce.EXTRA_CHARTS, plus a --charts flag on the
+reduce subcommand. A validation sweep of 4 trials per cell ran 60/60 with 0 failures in 11.8 s
+at 8 workers.
+
+NUMBERS. Under the NOISELESS null all eight attacked arms sit at 4/4 across all fifteen budgets
+-- a flat ROC, which is the honest result: a substituted declaration puts the mismatch rate at
+1/2 against a point mass at 0, so the derived cut is nowhere near the boundary. Under the
+TRUE-RATE null (p0=0.05, p_e=0.025) the curve has a shape: tol-p35 is 4/4 at eps>=1e-3, 3/4 at
+1e-4, 2/4 at 1e-5, 0/4 from 1e-6 down. structural:evidence-abort is withheld from eps<=1e-24.
+Prototype row now splits by null rather than pooling: 8 of 8 at 100% (noiseless) against 0 of 3
+(true rate), never averaged together.
+
+TWO THINGS FIXED WHILE VALIDATING. The reduction scored every transcript five times and
+re-parsed 125 KB of JSON on every rung; parsing once per record and memoising the ladder took
+one pass over 60 records from 9.2 s to 3.05 s and the whole reduce from 48 s to 5.5 s. And
+`breaks at` printed 5e-01 for impersonation-full, i.e. a measured curve for a hypothesis ruled
+out by assumption -- it now prints undetectable-by-construction, and distinguishes "never below
+1.0" from "below 1.0 at every budget", which are different facts.
+
+NEXT: step 4, tests/test_eval_roc.py -- every check has to be one that could fail, so:
+recompute a table cell by an independent route, assert the chart's plotted geometry rather than
+its strings, prove the ladder is not frozen, and prove an arm that reports zero actually acted.
+
+### `[D]` The eps ladder is a reduce-time axis, so the ROC's points are paired
+
+*decision · roc-family · 2026-09-05T04:03:17Z*
+
+The Phase 5 ROC family sweeps eps as a REDUCE-TIME axis, not as a cell dimension. The cells
+retain their transcripts and `roc.score_ladder` hands each one to the shipped `detect()` once
+per budget on a committed fifteen-rung ladder.
+
+WHY NOT A CELL PER BUDGET. A trial's seed is a pure function of (experiment, cell, index), so
+`eps` as a cell dimension gives each operating point a different sample of runs. At n=40 a
+five-percent difference between two adjacent points is then sampling noise, and this family's
+headline claim -- "if the curve goes non-monotonic that is a finding about a threshold" -- would
+be unsupportable. Pairing removes the sample as an explanation: at RUN level the set of budgets
+a run fires at must be an up-set, and `monotonicity_violations` checks exactly that, per run,
+not per rate.
+
+WHAT IT COSTS AND WHAT IT BUYS. Measured at L=384, check_fraction=0.25: session 798 ms,
+transcript JSON 125 KB, from_json 7 ms, one detect 2.6-3 ms. Fifteen budgets is about 5% of one
+session, and the reduction pays it rather than the sweep. The whole family is 75 MB of retained
+transcripts and a reduce of about 35 s at production scale (extrapolated from 5.5 s over 60
+records). What that buys is that the ladder IS NOT FROZEN AT RUN TIME: a reviewer who wants an
+operating point between two of ours re-reduces and nobody re-runs, which is a stronger form of
+D9 than storing the points would have given. A test asserts it by scoring an off-ladder budget.
+
+WHEN TO REVERSE IT. At L=115200 a transcript is 38 MB and this trade flips; the ladder then
+belongs on the record. Said in the module docstring so a later scale-up does not rediscover it.
+
+TWO ADDITIVE HOOKS WERE NEEDED, both general rather than ROC-specific, because
+`reduce_experiment` is the single funnel `tools/sweep.py reduce` goes through:
+`sih141.eval.reduce.EXTRA_REDUCTIONS` (experiment name -> extra tables) and `EXTRA_CHARTS`
+(experiment name -> filename/document map), plus a `--charts DIR` flag on the reduce subcommand.
+The other experiment families can use both.
+
+SCENARIO KEYS ARE PREFIXED `roc-`. SCENARIOS is a flat registry and three families are being
+written at once; two of us registering "outside-forgery" would silently give whichever imported
+last, and the loser's cells would run the winner's adversary under the loser's ground-truth
+label. `register()` also refuses to overwrite a name it does not own, and a test proves it.
+
+### `[*]` The ROC is flat at 1.0 under a noiseless null; shape appears only when the link's noise enters the null
+
+*finding · roc-family · 2026-09-05T04:04:56Z*
+
+Measured on the ROC family's validation sweep: L=384, check_fraction=0.25, four trials per cell,
+fifteen budgets from 5e-1 to 1e-30, every point derived by passing eps to the shipped detect().
+Command: `python tools/sweep.py run roc --trials 4 --workers 20 --results DIR` then
+`python tools/sweep.py reduce roc --results DIR --charts DIR`.
+
+1. UNDER A NOISELESS NULL THE ROC IS A HORIZONTAL LINE AT 1.0 ACROSS THIRTY DECADES OF BUDGET.
+Outside forgery, recipient forgery under both orderings, replay, count starvation (total and
+selective) and impersonation-signing are all at 4/4 at every rung from 5e-1 to 1e-30. That is
+not a detector with no discrimination; it is a separation so large the derived cut is nowhere
+near the boundary -- a substituted declaration puts the mismatch rate at 1/2 against a null that
+is a point mass at 0. Phase 4 said this in prose at one budget; the sweep now says it over the
+whole axis. The correct reading is that eps is not the binding constraint for these adversaries,
+so there is no operating point to trade.
+
+2. THE CURVE ONLY HAS A SHAPE ONCE THE LINK'S TRUE ERROR RATE IS IN THE NULL. With p0=0.05
+tolerated and channel_error_rate=0.025 passed, a depolariser on Bob's link at p=0.35 gives 4/4
+at eps>=1e-3, 3/4 at 1e-4, 2/4 at 1e-5 and 0/4 from 1e-6 down -- monotone, and the up-set check
+holds per run, so the fall is the threshold moving and not the sample. This is the only cell in
+the family that produces a real trade-off, and it exists because the channel family's QBER and
+CHSH members are genuine statistical cuts rather than point masses.
+
+3. AN ADVERSARY AT OR BELOW THE TOLERATED NOISE LEVEL IS INVISIBLE AT EVERY BUDGET. tol-p05 --
+an attacker sitting exactly at the level the null admits -- is 0/4 across the entire ladder, and
+tol-p20, at four times the tolerated level, only reaches 1/4 at eps=0.5. That is a result about
+the protocol's observability, not about the detector: what the null tolerates, the detector must
+tolerate. It is the same species as constraint 9's dominance_noise_level note, reached from the
+other side.
+
+4. THE FALSE-ALARM AXIS BEHAVES. The proven bound falls strictly with eps at every rung (slack
+2.0x to 13.9x), measured false alarms are 0/4 on the honest cells at every budget, and the
+anchor bound reproduces docs/PHASE4.md's published figures exactly: 3.3964e-10 on the checked
+arm and 2.7818e-10 on the unchecked one. A test asserts both against those literals, which is
+the cheapest external cross-check available -- different code, different seeds, same number.
+
+CAVEAT ON ALL FOUR: n=4 per cell. These are the validation sweep's numbers and they are here so
+a successor knows what to expect, not to be published. The production sweep is 40 trials per
+cell and costs 555 core-seconds.
+
+### `[*]` structural:evidence-abort has no operating point below eps=4.9e-19, above the project's own smallest budget
+
+*finding · roc-family · 2026-09-05T04:05:11Z*
+
+Sweeping eps found a can_fire boundary that nobody had a reason to look for at eps=1e-9.
+
+At L=384 with check_fraction=0.25, the structural family's member `structural:evidence-abort` is
+SCORED at eps=1e-18 and WITHHELD at eps=1e-24. Bisecting between them puts the crossover at
+eps about 4.9e-19 (10**-18.3117), identically on all four honest runs -- so it is a property of
+the parameter set, not of a realisation.
+
+WHY THAT NUMBER MATTERS. It sits ABOVE 2**-64, about 5.42e-20, which detect()'s own underflow
+message names as "the smallest budget this project quotes". So at the tightest budget anyone
+here would actually ask for, that member has no admissible operating point, and a table that
+summed family bounds without consulting can_fire would be publishing a family bound above its
+own budget -- Phase 4 audit A1-2, one budget further down than where it was found. The ROC
+family does not sum bounds by hand (detect() does it), so this surfaces as `withheld` on the
+row and prints `not evaluated (1)`, never `passed`.
+
+The honest-unchecked cell shows the other withholding at every budget, for the unrelated reason
+that a run with no check rounds publishes no channel statistics at all: "an unmonitored link is
+not a clean one". At eps<=1e-21 that cell withholds both.
+
+PINNED BY A TEST, not by prose: tests/test_eval_roc.py::
+test_a_structural_member_loses_its_operating_point_below_5e_19 asserts the 1e-18 end scores and
+the 1e-24 end withholds, then re-bisects and asserts the crossover to 2% and that it exceeds
+2**-64. Asserting only one end would pass for a detector that withheld everywhere.
+
+WHAT I DID NOT DO. I did not widen any threshold to make the member fire at 1e-30, and it would
+have been a D7 violation to do so. The boundary is where the derivation puts it.
+
+### `[+]` Three defects in the ROC reduction: a measured curve for an excluded hypothesis, a 5x redundant reduce, a doctest that was not a superset test
+
+*fix · roc-family · 2026-09-05T04:05:29Z*
+
+Two defects in the ROC reduction, both found by driving it rather than by reading it, plus one
+inherited doctest that concurrent registration broke.
+
+1. `breaks at` PRINTED A MEASURED CURVE FOR A HYPOTHESIS RULED OUT BY ASSUMPTION. The envelope
+table's crossover column took the first budget whose measured rate fell below 1.0. For
+impersonation-full that rate is a real 0/4, so the column printed `5e-01` -- a number that reads
+as "the detector held up to here and then failed", for the one hypothesis (AUTH) excludes by
+construction. Phase 3 constraint 5 says such a cell is never a blank, a dash or a zero; it turns
+out it must not be a budget value either. The column now answers one of five things and says
+which: undetectable-by-construction, `no attacked runs`, `never below 1.0`, `below 1.0 at every
+budget on the ladder`, or a budget. The middle two are different facts and collapsing them was
+the same error one step down. Four parametrised tests, one per answer.
+
+2. THE REDUCTION SCORED EVERY TRANSCRIPT FIVE TIMES AND RE-PARSED 125 KB ON EVERY RUNG. Three
+tables, a chart and the reconciliation each called score_ladder independently, and score_ladder
+handed detect() the JSON text rather than a parsed TranscriptStatistics -- so a fifteen-rung
+ladder spent two thirds of its time re-reading the same document. Parsing once per record and
+memoising the ladder on (identity, fingerprint, nulls, ladder) took one pass over 60 records
+from 9.2 s to 3.05 s and the whole `reduce roc` from 48.0 s to 5.5 s. The memo is keyed on the
+record's FINGERPRINT and not on its identity, so a record that changed gets a fresh answer; a
+test mutates a record in place and asserts the verdict flips, because an identity-keyed memo
+would have been the most comfortable possible way to keep publishing a stale number.
+
+3. TWO REGISTRY DOCTESTS BROKE UNDER CONCURRENT REGISTRATION, in both directions. sih141/eval/
+__init__.py had been changed by another family to `sorted(EXPERIMENTS) >= ['honest', 'noise',
+'scaling', 'smoke']`, which is a LEXICOGRAPHIC list comparison and not a superset test: once
+'roc' registers, ['honest','noise','roc',...] >= ['honest','noise','scaling',...] is False
+because 'roc' < 'scaling'. And experiments.py still pinned the literal list, which I had edited
+to add 'roc' and which the security family then invalidated again. Both are now
+`set(EXPERIMENTS) >= {...}`, which is registry-open and actually a superset test. Worth
+recording because the intent was right in both cases and the expression was wrong in one; a
+doctest that reads like an assertion and is not one is the same failure mode as a test that
+asserts a string is present in a file.
+
+### `[-]` progress: step 4 of 5 done
+
+*note · roc-family · 2026-09-05T04:05:41Z*
+
+Step 4 of 5 done: tests/test_eval_roc.py ships, 67 tests, and the family's cost is measured.
+
+WHAT IS NOW TRUE. Every claim the ROC family makes has a test that could fail: the ladder is
+checked by asserting the bound falls strictly at every rung and the verdict actually changes;
+the reduce-time recomputation is checked against the verdict the sweep stored AND a corrupted
+record is fed in to prove the check bites; the chart is checked by inverting its own y and x
+mappings back to the measured rate and the proven bound, not by grepping the markup; the
+missing-trial note, the registration collision refusal and the up-set checker are each shown to
+fire on an input that should trip them; and the anchor bound is asserted against the literals
+docs/PHASE4.md published (3.3964e-10 checked, 2.7818e-10 unchecked) -- different code, different
+seeds, same number.
+
+COST, MEASURED NOT GUESSED. One trial of every cell single-threaded: 13.87 core-seconds
+(per-cell 0.80-0.92 s, except replay at 1.73 s on its first trial because it pays for the
+capture session, which then caches per worker). Production at 40 trials/cell = 600 trials =
+555 core-seconds, about 9.2 core-minutes; the true figure is nearer 538 because the replay
+capture is paid once per worker rather than once per trial. Wall clock: 60 trials took 9.8 s at
+20 workers and 11.8 s at 8, so the production sweep is about 1.5 minutes at 20 workers. Storage
+75 MB of retained transcripts. Reduce 5.5 s over 60 records, so about 35 s at production scale.
+
+NEXT: step 5, run the full suite and report the exact tail.
+
+### `[-]` progress: steps 1-3 of 5 done
+
+*note · security-curves agent · 2026-09-05T04:12:37Z*
+
+Steps 1-3 of 5 done. The security-curve family now exists as sih141/eval/security.py
+(one module, no second runner) plus tests/test_eval_security.py; 44 tests and 21 doctests
+pass. Two experiments are registered through the same EXTRA_REDUCTIONS/EXTRA_CHARTS hook the
+roc family added: repudiation-curve (a payload-seam Alice who prepares the orthogonal
+eigenstate with probability q, ten rungs from L=24 to L=768, plus an ordering control and
+three unsymmetrised positive controls) and forgery-curve (Eve on the signer seam at L=9..30,
+Bob forging to Charlie at L=96..1200 under BOTH count orderings).
+
+Numbers established by computation rather than by reading prose. The floor crossover is
+L=137 exactly (pooled floor first exceeds 1; security_claim flips there) and the
+per-verifier floor does not bite until L=273 -- the brief's "below L=140" is close but the
+boundary is 137, and 137/138/139 do carry a claim. enforced_repudiation_bound is 0.9940 at
+L=192, 0.9434 at L=600 and 0.4806 at L=4800, which confirms README's three anecdotes exactly.
+The strongest symmetric-tilt Alice achieves an exact in-model 0.2498 at L=24, 0.0295 at
+L=192, 0.00194 at L=600 and 0.000584 at L=768 -- so the brief's "3.5% at L=600" is a figure
+for about L=138, not L=600, and the ladder is built on the computed optimum at each rung
+(optimal_tilt, exhaustive over a 0.001 grid so the returned value is the best value it can
+return; rounding a continuous optimum afterwards answered 0.086 at L=24 where 0.085 scores
+higher, and that bug is now a doctest).
+
+Next: step 4, drive the whole path through tools/sweep.py run/reduce/--charts on a reduced
+sweep and measure estimated_core_seconds per experiment; then step 5, full suite.
+
+### `[+]` Correction: the ROC family is 90 MB on disk, not the 75 MB I extrapolated
+
+*fix · roc-family · 2026-09-05T04:13:18Z*
+
+Correction to the decision entry "The eps ladder is a reduce-time axis": I wrote 75 MB for the
+family's storage, extrapolating from the 125 KB transcript. MEASURED, it is 154 KB per RECORD --
+the transcript plus the verdict dict, the transcript summary and JSON escaping -- so the
+production family at 600 trials is 90 MB, not 75. Both docstring sites in sih141/eval/roc.py now
+carry the measured figure.
+
+Small, and worth the entry anyway: it is the same shape as the tracemalloc timing that nearly
+shipped. A number extrapolated from a plausible proxy agreed with itself and was 20% wrong, and
+the only thing that settled it was measuring the artefact that actually lands on disk.
+`du -sh` on the validation store: 6.76 MB over 45 records, 153.9 KB each, on two independent
+sweeps (45 records and 60 records) that agree to 0.3%.
+
+### `[-]` progress: step 4 of 5 done, cost measured
+
+*note · security-curves agent · 2026-09-05T04:23:23Z*
+
+Step 4 of 5 done: the whole path is driven end to end and the cost is measured, not guessed.
+`python tools/sweep.py run repudiation-curve --trials 8 --workers 8` then `reduce` then
+`reduce --charts` all work; the reduce output carries five tables (the harness's three plus
+repudiation-curve and security-floors) and an SVG with error bars, each stamped with its
+regenerating command.
+
+MEASURED COST at 400 trials/cell, from a reduced sweep at 8 workers scaled by per-cell mean:
+repudiation-curve 5967 core-seconds (14 cells), forgery-curve 8063 core-seconds (15 cells).
+About 3.9 core-hours together, ~29 min wall at 8 workers. The expensive cells are the two
+bob1200 arms at ~2000 core-s each and unsym768/l768 at ~1100.
+
+DRIVING IT FOUND TWO DEFECTS THAT ALL THE TESTS HAD PASSED THROUGH. (1) The `exact in-model P`
+column printed repudiation_probability on the unsymmetrised control rows, putting 2.26e-09
+next to a measured 8/8 -- arithmetically true of a different experiment and a flat
+contradiction of the row it sat on. It now reads `n/a: closed form assumes the symmetrised,
+untargeted family`, and a test checks the rung rows still get their number so the column was
+not merely emptied. (2) The DEMO-SCALE footnote quoted the FIRST zero row (l132) rather than
+the longest key that measured zero (l768), understating the gap by a factor of 60; it now
+takes the max over key length and a deterministic test on _repudiation_notes pins the choice.
+Neither was reachable by any test that did not read the printed table.
+
+Also added, for Phase 3 constraint 9: a DOMINANCE note computed from the runs' own matched
+counts. At this family's scale (|M_R| 3 to 279) dominance_noise_level is 0.000000 to 0.008913
+at Charlie's cut, far below 2*s_a = 0.03125 -- so at demo scale the mismatch detector is
+dominated on any link that is noisy at all, and these rows are only informative because the
+link is genuinely noiseless. A test reproduces the project's published 0.012119 at
+DEFAULT_PARAMS to confirm the call is the same call.
+
+Next: step 5, the full suite.
+
+### `[*]` Floor crossover is L=137; the 3.5%-at-L=600 anecdote is a figure for L=138
+
+*finding · security-curves agent · 2026-09-05T04:23:40Z*
+
+Two figures the brief carried forward from README do not survive computation, and a third does.
+
+1. THE FLOOR CROSSOVER IS L=137, NOT 140, AND THE REGION BELOW IT IS L<=136. The brief says
+   "below L = 140 both floors degenerate and a run carries no security claim at all." Scanned
+   rather than read: minimum_pooled_matched_count first exceeds 1 at L=137, so
+   TranscriptStatistics.security_claim is True at 137, 138 and 139. The per-verifier floor does
+   not bite until L=273. Both crossovers are now doctests (FLOOR_CROSSOVER,
+   PER_VERIFIER_CROSSOVER) and a test scans for them rather than asserting them, so a change to
+   HONEST_ABORT_BUDGET moves the test rather than leaving the constant stale.
+
+2. "A REAL ALICE GENUINELY REPUDIATES ABOUT 3.5% OF THE TIME AT L=600" IS A FIGURE FOR ABOUT
+   L=138, NOT L=600. The strongest symmetric-tilt Alice -- optimal q at each length, computed --
+   achieves an exact in-model 0.0327 at L=138 and 0.00194 at L=600, a factor of 17 apart. At
+   L=600, 3.5% would be eighteen times the true rate. Measured 1/7 at L=48 against an exact
+   0.157, 1/8 at L=192 against 0.0295 and 3/8 at L=24 against 0.250 in a reduced sweep; a test
+   at L=48 with n=90 puts the measurement's 99% interval around the closed form.
+
+3. THE THREE ENFORCED-BOUND ANECDOTES ARE CORRECT: 0.9940 at L=192 (DEMO_PARAMS), 0.9434 at
+   L=600, 0.4806 at L=4800, and 1.4139e-09 at L=115200. These are reproduced by an independent
+   log-space recomputation, -floor*gap^2/8/ln(10), which agrees with
+   log10(enforced_repudiation_bound) to 1e-9 and is what the tables print.
+
+The reason the log-space route exists at all is a fourth finding: forgery_bound(DEFAULT_PARAMS,
+method="kl") returns 0.0. That is a float underflow of 10^-6553, and printing it in a results
+table would state a bound of exactly zero -- a claim no proof in this package makes. The floor
+table prints "10^-6553.3" and a test fails if a zero ever appears in a bound column.
+
+### `[+]` The ROC chart drew eleven adversaries in eight colours, and the legend ran off the page
+
+*fix · roc-family · 2026-09-05T04:27:12Z*
+
+Found by looking at the artefact rather than by reading the code, which is the only way this
+class of defect is found at all.
+
+THE CHART GAVE ELEVEN ADVERSARIES EIGHT COLOURS. `_SERIES_COLOURS` holds eight entries and the
+series index ran over every GROUP, including the three cells with no attacked runs, which appear
+in the legend as text and draw no line. Fifteen groups over eight colours meant three pairs of
+real adversaries were drawn in identical colours with a colour-keyed legend -- a figure that
+renders perfectly and cannot be read. Now: the counter increments only for series that actually
+get a line, the second cycle is dashed and the third is dotted, and each legend row carries a
+swatch drawn in its own stroke so the key does not depend on colour perception at all. Verified
+on the real chart: eleven series, eleven distinct (stroke, dasharray) pairs.
+
+THE LEGEND ALSO DID NOT FIT. `recipient-forgery-after [after-forwarding] (n=40)` is 48
+characters; at 12 px in a 300 px gutter it ran off the canvas. The gutter is 344 px, the legend
+face is 11 px, and the longest label now ends at 951 px of 980.
+
+WHAT I TOOK FROM IT. Both tests I had for the chart passed throughout: the geometry test
+inverts a circle's cy back to the measured rate, and the axis-label test finds PROVEN and
+MEASURED. Both are good tests, and neither could see either defect, because both are about one
+series at a time. The check that would have caught it is the one that asks a question about the
+figure AS A WHOLE -- are these eleven things distinguishable, does everything fit inside the
+page -- and there are now two tests that do, one asserting distinct (stroke, dasharray) pairs
+across every drawn series and one estimating rendered text width against the canvas. Same lesson
+as the Phase 6 projector mode from the other side: that defect was invisible until someone
+measured the document height, and this one was invisible until someone counted the colours.
+
+### `[+]` Three of ten registered scenarios were exempt from the seed-discipline check because the test could not construct them
+
+*fix · roc-family · 2026-09-05T04:39:34Z*
+
+The harness's own contract test -- `test_every_scenario_is_reproducible_from_its_seeds`, which
+runs EVERY registered scenario twice at one seed pair and compares -- could not construct three
+of the ten scenarios now in the registry, and it had stopped being able to construct any scenario
+whose options have no default.
+
+WHY IT BROKE. The test carried the options inline: `{"strength": 0.25} if name == "depolarising"
+else {}`. That is correct for a registry of two scenarios and wrong for an open one. Both Phase 5
+experiment families that have registered since refuse to default their scenario options -- rightly,
+because a defaulted typo is how an inert arm comes to report a clean zero -- so `roc-impersonation`
+raised on a missing `scope` and all three `security-*` scenarios raised on `count_exchange_timing`
+or `strength`. VERIFIED THAT THIS PRE-DATES MY WORK: running HEAD's copy of the test file against
+the current package fails the same way, and constructing the three security scenarios with `{}`
+raises for each of them independently of anything in sih141/eval/roc.py.
+
+WHAT THE FAILURE LOOKED LIKE IS THE INTERESTING PART. It was not "these scenarios are broken". It
+was "these scenarios are not being checked", and it presented as a KeyError from deep inside a
+family module with nothing to say which registry was empty. A scenario the contract test cannot
+construct is silently exempt from the only check that it takes its randomness from its seeds.
+
+FIX. `sih141.eval.experiments.SCENARIO_PROBE_OPTIONS`: scenario name -> the smallest options that
+make it run at all. Each family registers its own beside its scenarios (roc.py does, through
+ROC_PROBE_OPTIONS and the same collision-refusing `_claim` its scenarios go through). The test
+reads the registry and, when a scenario still cannot be constructed, raises an AssertionError
+naming the scenario and where to register it instead of surfacing the KeyError.
+
+ONE THING TO TIDY. The three `security-*` entries are currently in experiments.py rather than in
+sih141/eval/security.py, discovered mechanically by asking each scenario what it wanted until it
+ran -- {'count_exchange_timing': 'before-forwarding'} for the two forgery arms and
+{'strength': 0.25, 'symmetrised': True, 'count_exchange_timing': 'before-forwarding'} for the
+tilt arm. That module was written concurrently and I would not edit it. Nothing there reaches a
+published number -- the probe runs a scenario twice and compares -- but they belong beside the
+scenarios they describe and the comment in experiments.py says so.
+
+### `[-]` progress: step 5 of 5, suite running
+
+*note · roc-family · 2026-09-05T04:39:56Z*
+
+Step 5 of 5 in progress: full suite running on the frozen tree; everything else is done.
+
+WHAT IS NOW TRUE. The ROC family ships: sih141/eval/roc.py (fifteen cells, five prefixed
+scenarios, a committed fifteen-rung EPS_LADDER, three tables and an SVG) and
+tests/test_eval_roc.py (62 test functions, 72 cases). tests/test_eval_roc.py, tests/
+test_eval_security.py, tests/test_eval_harness.py and every doctest under sih141/eval all pass;
+pyright reports zero errors on every file I touched.
+
+COST, MEASURED. One trial of every cell single-threaded is 13.87 core-seconds, so the production
+sweep at 40 trials per cell (600 trials) is 555 core-seconds, about 9.2 core-minutes; 60 trials
+took 9.8 s at 20 workers, so the whole thing is under two minutes of wall clock. Storage is
+153.9 KB per record measured, 90 MB for the family. A full reduce is 5.5 s over 60 records, so
+about 35 s at production scale.
+
+SHARED FILES I TOUCHED, all additive: reduce.py gained EXTRA_REDUCTIONS and EXTRA_CHARTS (both
+now used by the security family too), tools/sweep.py gained `reduce --charts DIR`,
+experiments.py gained SCENARIO_PROBE_OPTIONS, and two registry doctests became
+`set(EXPERIMENTS) >= {...}` so they stop needing an edit per family.
+
+NEXT: report the suite tail and the run plan. Nothing is half-finished; the production sweep has
+deliberately not been run.
+
+### `[D]` Security curves: the repudiating Alice sits on the payload seam so a closed form can check her
+
+*decision · security-curves agent · 2026-09-05T04:41:31Z*
+
+The security-curve family: what it measures, what it refuses to measure, and why the
+repudiating Alice sits on the payload seam rather than the signer seam.
+
+QUESTIONS. repudiation-curve: as key length grows, how often does a signer who is genuinely
+trying to repudiate succeed against the shipped protocol, and how does the enforced a-priori
+bound track that rate? forgery-curve: how often is a forged declaration accepted, as key length
+grows, for the outside forger and for the binding one -- a recipient who holds half the target's
+evidence? The floors and the s_a/s_v gap are answered by two analytic tables reduced beside the
+curve, because they are closed forms and labelling them as measurements would be the exact
+mistake constraint 6 is about.
+
+WHY THE PAYLOAD SEAM. Three routes to a repudiating Alice were considered.
+ (a) The SIGNER seam, declaring a key that differs from the one distributed. Rejected: one
+     declaration reaches both verifiers, so a flipped position corrupts BOTH copies identically
+     and the symmetrisation coin moves no corruption between them. Both verifiers see the same
+     rate, so she can only split them through the m_B/m_C fluctuation -- strictly weaker.
+ (b) The PAYLOAD seam, corrupting only one recipient's copies. This is the classical attack
+     symmetrise.py describes. Under the shipped protocol the coins re-split the corrupted
+     copies, so each verifier sees q/2 and the attack becomes (c) with half the strength.
+     Measured 15/200 at L=96 against (c)'s 11/200 -- the same thing within its interval.
+ (c) The PAYLOAD seam, corrupting BOTH recipients' copies independently at rate q. CHOSEN.
+     Each verifier's final record is one of two independently corrupted copies, so e_B ~
+     Bin(m_B, q) and e_C ~ Bin(m_C, q) INDEPENDENTLY, which is exactly the family
+     analysis.repudiation_probability computes exactly. That gives the published measurement an
+     independent closed form to be checked against, computed by code that knows nothing about
+     the simulator. Measured 28/200 at L=48 against an exact 0.157, 11/200 at L=96 against
+     0.066, 6/200 at L=192 against 0.0295.
+The strength at each rung is optimal_tilt(params): the argmax over a 0.001 grid, exhaustive so
+the returned value is the best value that can be returned. This is a choice about the ADVERSARY,
+not a threshold tuned on attack data -- D7 forbids the latter and publishing a weaker Alice's
+rate would overstate the scheme.
+
+WHY THERE IS A POSITIVE CONTROL. The top of the ladder reports 0/400, and a zero is only
+evidence if the attack works. Three unsym* cells run the same adversary against
+symmetriser=no_symmetrisation, where repudiation succeeds at every key length: measured 8/8 in
+the reduced sweep and 12/12 in a test that runs both arms side by side at one key length with
+one seed set. Phase 4's replay arm reported a clean 0/40 while forwarding honestly and had a
+green test; the difference between that and this is a row whose failure would be visible.
+
+WHY THE FORGERY LADDER RUNS BOTH COUNT ORDERINGS. Not because constraint 2 says so, but
+because measuring it showed the two orderings answer differently: at L=96 over 40 runs of the
+identical attack against identical code, before-forwarding gives 0 accepted / 0 rejected / 40
+no verdict, and after-forwarding gives 12 / 28 / 0. Before forwarding, a substituted declaration
+leaves the pooled matched count undefined and both verifiers refuse -- the attack is a denial of
+transfer, not a detected forgery. Pooling the two would publish 12/80 = 15% as "the recipient
+forgery rate", a number describing neither run. So the ordering is a grouping key and the
+before-forwarding arm is run at the same trial count so its categorical result is backed by a
+denominator rather than asserted.
+
+WHAT IS DELIBERATELY NOT MEASURED. The outside forger above L=30 (1.1e-12 at L=192: the four
+short rungs anchor the closed form to a measurement where one is possible at all, and the closed
+form carries the curve). The recipient forger above L=1200 (8.9e-04 at L=2400 needs thousands of
+trials for one success). Repudiation above L=768. Every one of those is stated in the table's
+notes as a limit of the sample, never as a zero.
+
+### `[+]` Two table defects that only reading the printed output could find
+
+*fix · security-curves agent · 2026-09-05T04:41:46Z*
+
+Driving the reduce output found two defects that every test had passed through, and both are the
+same species as the Phase 6 CSS-variable defect: a check on the code's structure that says
+nothing about the value it produces.
+
+1. THE EXACT COLUMN PRINTED A NUMBER FOR AN EXPERIMENT THAT WAS NOT RUN. repudiation_curve_table
+   filled `exact in-model P` from repudiation_probability(params, q) on every row. That closed
+   form is exact for ONE family -- a signer who tilts both deliveries independently against the
+   SYMMETRISED protocol -- and the unsym* control rows run neither. The published row therefore
+   read "measured 8/8 = 1.0000, exact 2.260e-09": arithmetically true of a different experiment
+   and a flat contradiction of the row it sat on. A reader would conclude one of the two is
+   wrong. Fixed: the column reads `n/a: closed form assumes the symmetrised, untargeted family`
+   whenever the group is unsymmetrised or aimed, and a test asserts the ladder rows still carry
+   their number so the column was not merely emptied.
+
+2. THE LIMITATION FOOTNOTE QUOTED THE WRONG ROW. The note that says where demo-scale runs cannot
+   demonstrate non-repudiation picked zeros[0] -- the first zero row in table order, l132 --
+   instead of the longest key that measured zero, l768. It understated the gap between the exact
+   probability and the measurement's upper limit by a factor of 62 (5.845e-04 against 3.639e-02).
+   Fixed to max over key length, with the n/a rows excluded so a control cannot be quoted as a
+   rung. A deterministic test hands _repudiation_notes four hand-built rows, three of them zeros
+   at different key lengths and one longer row whose column does not apply, and asserts it quotes
+   l768 and not the longer one.
+
+Neither was reachable by any test that did not read the printed table. The tests that existed
+checked that the column was present, that the note mentioned DEMO-SCALE, and that the numbers in
+each column agreed with the library -- all true, all green, both defects live.
+
+### `[-]` The ROC family's 555 core-seconds is a quiet-machine figure; under load the same cell costs 14% more
+
+*note · roc-family · 2026-09-05T04:42:39Z*
+
+A caveat on the ROC family's cost figure, measured twice under different machine load, because
+the run plan is built out of it.
+
+QUIET MACHINE: one trial of every one of the fifteen cells, single worker, nothing else running:
+13.87 core-seconds, per cell 0.80-0.92 s except replay at 1.73 s on its first trial (it pays for
+the captured declaration once per worker, then the cache serves it). Scaled to 40 trials per
+cell that is 555 core-seconds, about 9.2 core-minutes for 600 trials.
+
+BUSY MACHINE: forty trials of the `honest` cell, single worker, while the full test suite and
+another agent's work were running: mean 0.968 s against the 0.849 s the quiet measurement gave
+for the same cell -- 14% higher, median 0.947, max 1.312. So the honest bracket for the
+production sweep is 555 core-seconds on an idle machine and about 630 if it is as busy as it was
+here. Wall clock at 20 workers was 9.8 s for 60 trials, so the whole sweep is under two minutes
+either way and the difference does not change any decision -- but a successor building a plan out
+of the 555 should know it was taken on a quiet machine and is the optimistic end.
+
+The per-trial cost is otherwise flat over forty trials: min 0.884, median 0.947, max 1.312, no
+drift. Nothing accumulates across trials in a worker except the replay capture cache, which
+makes the replay cell CHEAPER after its first trial rather than more expensive.
+
+### `[*]` The honest arm at n=40 reproduces both of Phase 4's published bounds, including the one-run split caused by an empty CHSH cell
+
+*finding · roc-family · 2026-09-05T04:44:25Z*
+
+Ran the ROC family's `honest` cell at the production trial count -- forty trials, indices 0-39,
+the same seeds the production sweep will use -- and scored it at all fifteen budgets. It is one
+cell, not the sweep, but it is the arm the whole false-positive axis rests on and it reproduces
+two things docs/PHASE4.md published, from a different seed set through different code.
+
+THE BOUND SPLITS EXACTLY AS PHASE 4 SAID IT WOULD. Thirty-nine of the forty runs prove
+3.3964e-10 at eps=1e-9 and withhold nothing. One proves 3.1464e-10 and withholds
+`channel:Bob/1:chsh`. Those are the two numbers PHASE4.md section 5 prints for the checked arm,
+with the footnote "a run whose own check plan leaves one channel member unevaluable -- a CHSH
+cell that came up empty, say -- spends less of the budget and proves a smaller number". The
+unchecked cell proves 2.7818e-10, also as published. Nothing in this family was fitted to those
+figures; they fall out of passing eps to the shipped detector.
+
+THE LOOSE END OF THE LADDER EARNS ITS PLACE. Measured false alarms on those forty honest runs:
+3/40 at eps=5e-1 and 0/40 at every budget from 1e-1 down. The proven bound at 5e-1 is 0.2434 and
+3/40 is 0.075, so the observation sits comfortably inside it -- but it is an OBSERVATION of a
+non-zero false-alarm rate, and it is the only place on the whole ladder where the measured
+false-positive column says anything at all. A ladder that stopped at 1e-1 would report 0/n
+everywhere and a reader would have no way to tell a detector that never fires from one that has
+never been pushed.
+
+ALSO CONFIRMED AT n=40: the proven bound falls strictly at every one of the fifteen rungs, the
+run-level up-set property holds on every run, the reduction's recomputation agrees with all forty
+stored verdicts, and `structural:evidence-abort` joins the withheld set at 1e-24 and below on
+every run rather than on some.
+
+### `[*]` At n=40 the tolerated-null arms give a real monotone ROC: tol-p35 runs 40/40 down to 0/40 across eight decades of budget
+
+*finding · roc-family · 2026-09-05T04:46:25Z*
+
+The ROC family's headline claim is that its curve has a shape only once the link's own error rate
+is admitted into the null. At four trials per cell that claim rested on a sample too small to
+distinguish a curve from a coin, so I ran the two tolerated-null attack cells at the production
+trial count -- forty trials each, indices 0-39, four workers, 28 s. One arm, not the sweep.
+
+MEASURED, tol-p35 (a depolariser at seven times the tolerated level on Bob's link, scored against
+p0 = 0.05 and p_e = 0.025), detections over forty attacked runs:
+
+  eps    5e-1  1e-1  1e-2  1e-3  1e-4  1e-5  1e-6  1e-7  1e-8  1e-9
+  det   40/40 40/40 39/40 30/40 18/40 11/40  3/40  1/40  0/40  0/40
+
+and tol-p20, at four times the tolerated level:
+
+  eps    5e-1  1e-1  1e-2  1e-3  1e-4  1e-5  1e-6  1e-7  1e-8  1e-9
+  det   26/40 13/40  7/40  4/40  1/40  0/40  0/40  0/40  0/40  0/40
+
+Monotone at every rung, and the run-level up-set check -- a run that fires at a tighter budget
+must fire at every looser one, checked per run because every budget scores the same transcripts --
+found no violation across all eighty runs. The reduction's recomputation agreed with all eighty
+stored verdicts. The proven bound falls strictly at every rung on both arms, from 4.4e-1 at
+eps=5e-1 to 7.2e-10 at eps=1e-9.
+
+WHAT IT SETTLES. There is a real operating characteristic here, with a real trade-off, and the
+detector's power against a channel adversary hiding near the tolerated noise floor is a smooth
+function of the budget rather than a step. It also settles the direction: at the budget this
+project actually quotes, eps=1e-9, both arms are at 0/40. An adversary willing to sit inside the
+noise the protocol already tolerates is not visible at the budget we publish at, and buying
+visibility means accepting a false-positive bound six or seven orders of magnitude weaker. That
+is a statement about the protocol's observability, not a detector that needs tuning.
+
+THESE ARE NOT PUBLISHED NUMBERS. Two cells of fifteen, run to check the experiment is correct.
+The production sweep is 600 trials and 555 core-seconds and has deliberately not been run here.
+
+### `[D]` Probe options moved to the family that owns the scenarios
+
+*decision · security-curves agent · 2026-09-05T04:47:55Z*
+
+Moved the security-curve family's SCENARIO_PROBE_OPTIONS entries out of sih141/eval/experiments.py
+and into sih141/eval/security.py, where the scenarios they describe live.
+
+A concurrent agent added SCENARIO_PROBE_OPTIONS to the shared registry so that the harness's
+generic contract test -- run every registered scenario twice at one seed pair and compare -- could
+construct the three scenarios this family registers. Those scenarios refuse a missing option
+rather than defaulting it (_require), which is deliberate: a defaulted typo is how an inert arm
+comes to report a clean zero. The price is that they cannot be built generically unless somebody
+says how, and the entries landed in the shared file with a comment saying they belonged here.
+
+They now do. SECURITY_PROBE_OPTIONS sits beside SECURITY_SCENARIOS and register() copies it into
+the shared registry at import, the same way it copies the scenarios themselves. experiments.py's
+dict is back to its own one entry plus the paragraph explaining that a family registering a
+scenario registers its probe options too. Two tests came with the move: one asserts every
+registered cell in both experiments carries every option its scenario demands (and that
+check_fraction is zero, which is what makes these signing-statistics cells rather than channel
+ones), and one builds and runs each scenario from its probe options so a missing or misspelled
+key fails here rather than six hours into a sweep.
+
+The whole change is additive to my module and subtractive from the shared one, so a concurrent
+rewrite of experiments.py that reinstated the provisional block would still work: register()
+overwrites the same three keys with the same three values.
+
+### `[*]` The ROC is monotone between the rungs too: 150 budgets over ten decades, 120 runs, zero up-set violations
+
+*finding · roc-family · 2026-09-05T04:51:04Z*
+
+The committed EPS_LADDER has fifteen rungs, which is enough to draw a curve and not enough to
+claim it is monotone: a threshold could misbehave between two rungs and the chart would join the
+points with a straight line through the defect.
+
+So I checked between them. 150 budgets spaced evenly in log10 from 5.01e-1 to 5.01e-11 -- ten
+decades, roughly fifteen rungs per decade -- against the 120 records from the three cells run at
+the production trial count (honest, tol-p20, tol-p35 at n=40 each). ZERO up-set violations.
+
+The check is per RUN, not per rate, which is what makes it worth doing: because every budget
+scores the same transcript, the set of budgets a given run fires at must be an up-set, so a
+single run that fires at 3.2e-6 and not at 3.9e-6 is a threshold that is not monotone in eps.
+Across 120 runs and 150 budgets that is 18,000 (run, budget) verdicts and 17,880 adjacent pairs,
+all in order. 63 seconds to compute.
+
+This is the strongest form of the family's monotonicity claim available without a proof, and it
+is worth stating precisely because the weaker form -- "the fifteen published rates decrease" --
+is compatible with a threshold that jumps around between them, and would also be compatible with
+sampling noise if the points were not paired. Both explanations are closed off here.
+
+The committed ladder stays at fifteen: the fine grid is a check, not a publication axis, and
+150 rungs would make the reduce ten times slower and the table unreadable.
+
+### `[-]` The ROC scenarios give identical records at one worker and eight, including the replay arm with its shared capture cache
+
+*note · roc-family · 2026-09-05T04:53:16Z*
+
+D9's corollary is that a trial's result depends on its seed and on nothing else -- not on worker
+count, not on scheduling. The harness proved that generically for its own `smoke` experiment. Two
+of the ROC family's scenarios carry per-process state that the generic proof does not exercise, so
+I checked them directly.
+
+Ran five cells -- outside-forgery, replay, starvation-selective, impersonation-full, tol-p35 --
+three trials each, once at one worker (16.5 s) and once at eight (4.9 s), into separate stores.
+All fifteen TrialRecord fingerprints identical. The rendered ROC table byte-identical.
+
+WHY THOSE FIVE. `replay` is the one that mattered: it holds its captured declaration in
+`sih141.attacks.replay._CAPTURE_CACHE`, a module-level dict shared by every trial a worker runs,
+and I made the capture seed constant per cell precisely so that cache would hit. A cache keyed
+wrongly -- on anything that varies with scheduling rather than on (key_length, message_bit, seed)
+-- would make a trial's result depend on which worker picked it up and on what that worker had
+already run. It does not. `impersonation-full` was included for the same reason: Mallory caches
+her drawn keys on the adversary object, which is per trial, but the check costs nothing.
+
+This is the observation that would differ if the property were false, rather than an argument that
+it holds. The generic version -- comparing two whole sweeps by SHA-256 across worker counts -- is
+already in tests/test_eval_harness.py; this is the same check aimed at the two scenarios with
+state.
+
+### `[-]` The arms that report 0/40 acted on 128-301 hops a run: the zero is a decision, not an inert arm
+
+*note · roc-family · 2026-09-05T04:54:16Z*
+
+The tolerated-null arms are the ones that report 0/40 at the budget this project publishes at,
+and Phase 4's replay arm is the standing reminder that an arm reporting a clean zero may simply
+not have acted. So I checked what the adversary's own log says on exactly those rows.
+
+tol-p20 (a depolariser at four times the tolerated level, on Bob's link): hops actually touched
+per run, min 128, median 155, max 180, over forty runs, every one non-zero.
+tol-p35 (seven times the tolerated level): min 241, median 272, max 301, every one non-zero.
+
+So the 0/40 at eps=1e-9 on both arms is a detector that looked at a heavily damaged link and,
+correctly under a null that admits 5% depolarising noise, declined to call it an adversary. Not
+an inert arm.
+
+The signal kinds show the same thing from the detector's side, thinning out rung by rung rather
+than being absent throughout. On tol-p35 at eps=5e-1, 39 of 40 runs fire something and 37 of
+those include a `channel` signal; at 1e-2 it is 28 of 40; at 1e-4, 18; at 1e-6, 3; at 1e-9,
+none. `mismatch` still fires on some runs even though the link's true error rate was passed as
+the null, which is right: p=0.35 of depolarising produces far more mismatches than p_e=0.025
+predicts.
+
+GroundTruth refuses engaged=True with engaged_count=0, so an arm cannot claim to have acted
+without a number behind it. That constructor check is what makes this paragraph cheap to write.
+
+### `[*]` The selective starver at n=40: scoring its untargeted runs as misses would have published 0.550 instead of 1.000
+
+*finding · roc-family · 2026-09-05T04:55:18Z*
+
+Constraint 4 says an untargeted run is byte-identical to an honest one and must be scored as one.
+The ROC family's `starvation-selective` cell exists to make that concrete rather than to be
+recited, and at the production trial count it puts a number on what the mistake would cost.
+
+Forty trials, a CountStarver at denial_probability = 0.5. It denied 22 runs and left 18 alone,
+which its own log records as engaged_count = 0 on every one of the eighteen. Scored against that
+label at eps = 1e-9:
+
+  attacked 22, detected 22/22 = 1.000
+  clean    18, false alarms 0/18 = 0.000
+  refusals 22, exactly the denied runs
+  22 + 18 = 40, so no run is missing from a denominator
+
+HAD THE REDUCTION SCORED THE WHOLE CELL AS ATTACKED -- which is what "40 trials of a starvation
+cell, 22 detections" invites -- the published rate would have been 22/40 = 0.550 against a true
+1.000. Forty-five percentage points, from a table that is arithmetically correct and counting
+eighteen runs on which nothing happened.
+
+The other half is just as wrong in the other direction: those eighteen runs are the cell's own
+false-alarm denominator, and folding them into the attacked column would have thrown away a
+measurement rather than only spoiling one.
+
+None of this needs a convention to hold. GroundTruth reads engaged off the adversary's log and
+refuses engaged=True with engaged_count=0, and roc_points splits on truth.attacked, so a cell
+cannot report a rate over runs its adversary skipped even if someone wanted it to.
+
+### `[-]` Per-link attribution is out of the ROC family's scope but its store already carries what an attribution table needs
+
+*note · roc-family · 2026-09-05T04:56:26Z*
+
+Phase 3 constraint 3 -- do not pool the two links' check logs, because per-link QBER is the only
+statistic that both detects a party-targeted channel attack and attributes it -- is not a table
+this family draws. The ROC's axes are eps and detection rate, and an attribution column would be
+a different experiment. But I checked that the data is there, so whoever owns that table does not
+have to re-run anything.
+
+The `channel-bob` cell mounts a depolariser on Bob's link only and records `targeted_link = "Bob"`
+on the ground truth, which the detector never sees. On every record the fired channel-family
+signals name only Bob:
+
+  channel:Bob/0:min_fidelity, channel:Bob/0:qber_errors,
+  channel:Bob/1:min_fidelity, channel:Bob/1:qber_errors
+
+and never a Charlie link. Signal names are on `record.detection["signals"]`, one entry per fired
+member with its family, its observed and critical values and its own proven bound, so an
+attribution table is a reduction over records that are already on disk. `truth.targeted_link` is
+the label to score it against and is on every channel cell.
+
+The two tolerated-null arms carry the same targeting and would give the more interesting
+attribution row, since they are the only ones where the channel family is doing work the mismatch
+member is not already doing.
+
+### `[*]` Across 205 validated records: no proven bound above its budget, no up-set violation on a 120-rung grid, both routes agree everywhere
+
+*finding · roc-family · 2026-09-05T05:00:20Z*
+
+Consolidated checks over every record produced while validating the ROC family -- 205 trials
+across all fifteen cells, from four separate stores (the fifteen-cell sweep at n=3, honest at
+n=40, the two tolerated-null arms at n=40, and the selective starver at n=40).
+
+THE COMPOSITE NEVER EXCEEDS ITS BUDGET. 205 records at all fifteen rungs is 3,075 verdicts, and
+in none of them is Detection.false_positive_bound above the eps it was derived at. The slack --
+eps over what the composite actually proves -- runs 1.1x to 2.9x at the loose end and 2.5x to
+6.8x at 1e-30, growing as the budget tightens because the point-mass members cannot spend their
+share however small it gets. That is the number to quote instead of eps: a table that printed
+the budget as the detector's false-positive rate would overstate it by exactly this factor.
+
+THE UP-SET PROPERTY HOLDS BETWEEN THE RUNGS AS WELL AS AT THEM. 205 records against a 120-rung
+grid spaced evenly in log10 over ten decades: 24,600 verdicts, 24,395 adjacent pairs, zero
+violations. Checked per run, which is what makes it a statement about the thresholds rather than
+about the sample.
+
+THE TWO ROUTES TO THE ANCHOR BUDGET AGREE ON ALL 205. Every record's stored verdict -- computed
+in a worker at run time from a live TranscriptStatistics -- matches the reduction's recomputation
+from the stored JSON, on `detected`, on `false_positive_bound` and on `withheld`. A single
+disagreement makes roc_reduction refuse to publish, and a test corrupts a record to prove that
+refusal fires.
+
+### `[-]` python -m pytest -q drops the summary line, because pyproject already supplies -q and two make -qq
+
+*note · roc-family · 2026-09-05T05:08:14Z*
+
+An operational note for whoever runs the suite next and wants a quotable tail.
+
+`pyproject.toml` already puts `-q` in `addopts`. Adding another `-q` on the command line makes it
+`-qq`, and at that level pytest DROPS THE SUMMARY LINE ENTIRELY. So `python -m pytest -q` writes
+a screen of dots, `[100%]`, and nothing else -- no "N passed in Xs". The run is fine and the exit
+code is 0; the number you wanted is simply not printed, and you find that out after half an hour.
+
+Run `python -m pytest` with no flags. The ini's own `-q` gives the compact dots AND the summary.
+
+Cost of learning this the slow way: one 30-minute suite run whose result was correct and
+unquotable.
+
+### `[-]` progress: step 5 of 5 done, suite green at 3750
+
+*note · security-curves agent · 2026-09-05T05:19:06Z*
+
+Step 5 of 5 done. Full suite green on the final tree: 3750 passed in 1614.53s (0:26:54), exit 0.
+This family contributes 55 tests in tests/test_eval_security.py and 22 doctests in
+sih141/eval/security.py.
+
+WHAT IS NOW TRUE. Two experiments are registered and reducible without re-running anything:
+repudiation-curve (14 cells, 400 trials each, 5967 measured core-seconds) and forgery-curve
+(15 cells, 400 trials each, 8063 measured core-seconds). `tools/sweep.py reduce
+repudiation-curve` emits six tables -- the harness's three plus repudiation-curve,
+security-floors and security-gap -- and `--charts` renders an SVG with 99% Wilson error bars,
+three series and its own regenerating command on the figure. `reduce forgery-curve` emits five.
+The production sweep has NOT been run; that is a later stage.
+
+The family's headline, which is a limitation rather than a number: at L=768 with 400 trials a
+measured 0/400 has a 99% upper limit of 0.0163, the exact in-model probability is 5.845e-04
+(28x below what the sample could resolve) and the proven enforced bound is 0.9212 (57x looser
+than the measurement). The proof is vacuous over exactly the range a measurement can reach and
+the region the claim lives in, 1.4139e-09 at L=115200, is unreachable by both. Demo-scale runs
+cannot demonstrate non-repudiation, and the table says so in a footnote built from its own rows
+rather than remembered.
+
+Nothing is half-finished. The only follow-ups for the integrator are: run the sweep (about 3.9
+core-hours, ~29 min wall at 8 workers), and decide whether docs/PHASE5.md wants the security-gap
+table, which is analytic and needs no trials at all.
+
+### `[-]` progress: all 5 steps done, suite green at 3750 passed in 26:01
+
+*note · roc-family · 2026-09-05T05:34:27Z*
+
+Step 5 of 5 done. Full suite green on the frozen tree:
+
+    3750 passed in 1561.07s (0:26:01)
+
+Run as `python -m pytest` from the repo root, exit code 0, nothing skipped, no warnings section.
+That count includes both new Phase 5 families (72 ROC tests, 47 security tests) and the harness's
+own 81.
+
+WHAT SHIPS. sih141/eval/roc.py -- fifteen cells at L=384/check_fraction=0.25, five scenarios under
+`roc-` prefixed keys, a committed fifteen-rung EPS_LADDER from 5e-1 to 1e-30, three tables (roc,
+roc-envelope, roc-prototype) and an SVG whose axis labels carry PROVEN and MEASURED. Reached by
+`python tools/sweep.py run roc` and `python tools/sweep.py reduce roc --charts DIR`.
+tests/test_eval_roc.py -- 62 test functions, 72 cases.
+
+FOUR ADDITIVE CHANGES TO SHARED FILES, all now used by the other family too: EXTRA_REDUCTIONS and
+EXTRA_CHARTS in reduce.py, `reduce --charts DIR` in tools/sweep.py, SCENARIO_PROBE_OPTIONS in
+experiments.py, and two registry doctests rewritten as `set(EXPERIMENTS) >= {...}` so they no
+longer need an edit per family.
+
+COST, MEASURED: 555 core-seconds for the production sweep (600 trials), under two minutes at 20
+workers, 90 MB of retained transcripts, about 45 s to reduce. The production sweep has NOT been
+run; three cells were taken to n=40 to confirm the experiment is correct at a real sample size.
 
 
 ## Phase 6 — Dashboard

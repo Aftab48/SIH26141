@@ -37,6 +37,7 @@ from sih141.detect.thresholds_structural import NoVerdictCount, tally_outcomes
 from sih141.eval import perf
 from sih141.eval.experiments import (
     EXPERIMENTS,
+    SCENARIO_PROBE_OPTIONS,
     SCENARIOS,
     Cell,
     Experiment,
@@ -346,7 +347,12 @@ def test_every_scenario_is_reproducible_from_its_seeds() -> None:
     params = ProtocolParams(key_length=48, check_fraction=0.25)
     seeds = trial_seeds("smoke", "tiny", 0)
     for name in sorted(SCENARIOS):
-        options = {"strength": 0.25} if name == "depolarising" else {}
+        # Read from the registry rather than listed here, so a family that
+        # adds a scenario adds its probe options beside it in its own module.
+        # A scenario that needs options and registers none raises below, which
+        # is the intended failure: it cannot be constructed, so it has never
+        # been checked.
+        options = dict(SCENARIO_PROBE_OPTIONS.get(name, {}))
         cell = Cell(
             name="tiny",
             params=params,
@@ -354,8 +360,17 @@ def test_every_scenario_is_reproducible_from_its_seeds() -> None:
             scenario_options=options,
             truth_hypothesis="honest",
         )
-        first, first_truth = SCENARIOS[name](cell, seeds)
-        second, second_truth = SCENARIOS[name](cell, seeds)
+        try:
+            first, first_truth = SCENARIOS[name](cell, seeds)
+            second, second_truth = SCENARIOS[name](cell, seeds)
+        except KeyError as missing:
+            raise AssertionError(
+                f"scenario {name!r} cannot be constructed generically, so it "
+                f"is not being checked for seed discipline at all: {missing}. "
+                f"Register the smallest options it needs in "
+                f"sih141.eval.experiments.SCENARIO_PROBE_OPTIONS, from the "
+                f"module that registers the scenario."
+            ) from missing
         assert first == second, name
         assert first_truth == second_truth, name
 

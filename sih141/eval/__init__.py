@@ -59,9 +59,18 @@ rather than in documentation:
 
 Examples
 --------
+The registry is open: a Phase 5 family adds its experiments from its own
+module, so this asserts that the four the harness itself ships are present
+rather than that nothing else is. A literal list here would have to be edited
+by every family that registers one, which is a merge conflict standing in for
+a check nobody wants.
+
 >>> from sih141.eval import EXPERIMENTS, trial_seeds
->>> sorted(EXPERIMENTS)
-['honest', 'noise', 'scaling', 'smoke']
+>>> set(EXPERIMENTS) >= {'honest', 'noise', 'scaling', 'smoke'}
+True
+>>> [name for name in ('honest', 'noise', 'scaling', 'smoke')
+...  if name not in EXPERIMENTS]
+[]
 >>> trial_seeds("honest", "l192", 0).session
 15537000204045215064
 """
@@ -69,6 +78,8 @@ Examples
 from __future__ import annotations
 
 from . import experiments, manifest, perf, records, reduce, runner, seeds, store
+from . import roc
+from . import security
 from .experiments import (
     DEFAULT_EPS,
     EXPERIMENTS,
@@ -109,11 +120,46 @@ from .perf import (
     time_session,
 )
 from .reduce import (
+    EXTRA_CHARTS,
+    EXTRA_REDUCTIONS,
     Table,
     detection_table,
     outcome_table,
     reduce_experiment,
     timing_table,
+)
+from .roc import (
+    EPS_LADDER,
+    RocPoint,
+    monotonicity_violations,
+    reconciliation,
+    roc_chart_svg,
+    roc_points,
+    roc_reduction,
+    roc_table,
+    score_ladder,
+)
+from .security import (
+    FLOOR_CROSSOVER,
+    FLOOR_LADDER,
+    PER_VERIFIER_CROSSOVER,
+    REPUDIATION_LADDER,
+    SECURITY_PROBE_OPTIONS,
+    SECURITY_SCENARIOS,
+    TiltingPreparation,
+    averaged_bound_log10,
+    enforced_bound_log10,
+    floor_table,
+    forgery_reduction,
+    forgery_table,
+    gap_table,
+    optimal_tilt,
+    orthogonal_state,
+    repudiated_from_verdicts,
+    repudiation_curve_table,
+    repudiation_reduction,
+    security_charts,
+    security_claim_at,
 )
 from .runner import (
     TrialOutcome,
@@ -143,8 +189,13 @@ __all__ = [
     "Cell",
     "DEFAULT_EPS",
     "DEFAULT_RESULTS_ROOT",
+    "EPS_LADDER",
     "EXPERIMENTS",
+    "EXTRA_CHARTS",
+    "EXTRA_REDUCTIONS",
     "Experiment",
+    "FLOOR_CROSSOVER",
+    "FLOOR_LADDER",
     "GroundTruth",
     "HARNESS_VERSION",
     "MANIFEST_GLOB",
@@ -152,35 +203,50 @@ __all__ = [
     "MEASURED_SESSIONS",
     "NAME_PATTERN",
     "NON_DETERMINISTIC_FIELDS",
+    "PER_VERIFIER_CROSSOVER",
     "RECORD_SCHEMA",
     "REFERENCE_MS_PER_POSITION",
+    "REPUDIATION_LADDER",
     "ResultStore",
+    "RocPoint",
     "RunManifest",
     "SCENARIOS",
+    "SECURITY_PROBE_OPTIONS",
+    "SECURITY_SCENARIOS",
     "SEED_DOMAIN",
     "SEED_PERSON",
     "SESSION_ROLE",
     "Scenario",
     "TRIAL_GLOB",
     "Table",
+    "TiltingPreparation",
     "TrialOutcome",
     "TrialRecord",
     "TrialSeeds",
     "TrialSpec",
     "UNDETECTABLE_BY_CONSTRUCTION",
     "all_cells",
+    "averaged_bound_log10",
     "check_name",
     "default_results_root",
     "command_line",
     "depolarising_scenario",
     "detection_table",
     "detector_latency",
+    "enforced_bound_log10",
     "experiment",
     "experiments",
+    "floor_table",
+    "forgery_reduction",
+    "forgery_table",
+    "gap_table",
     "git_state",
     "honest_scenario",
     "machine_facts",
     "manifest",
+    "monotonicity_violations",
+    "optimal_tilt",
+    "orthogonal_state",
     "outcome_table",
     "perf",
     "pin_blas_threads",
@@ -188,12 +254,25 @@ __all__ = [
     "probe_pool",
     "projected_session_seconds",
     "projected_sweep_hours",
+    "reconciliation",
     "records",
     "reduce",
     "reduce_experiment",
+    "repudiated_from_verdicts",
+    "repudiation_curve_table",
+    "repudiation_reduction",
+    "roc",
+    "roc_chart_svg",
+    "roc_points",
+    "roc_reduction",
+    "roc_table",
     "run_experiment",
     "run_trial",
     "runner",
+    "score_ladder",
+    "security",
+    "security_charts",
+    "security_claim_at",
     "seed_derivation",
     "seeds",
     "store",

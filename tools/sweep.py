@@ -66,7 +66,7 @@ from sih141.eval.perf import (  # noqa: E402
     measure_scaling,
     speedup_table,
 )
-from sih141.eval.reduce import reduce_experiment  # noqa: E402
+from sih141.eval.reduce import EXTRA_CHARTS, reduce_experiment  # noqa: E402
 from sih141.eval.runner import (  # noqa: E402
     pin_blas_threads,
     plan_trials,
@@ -201,6 +201,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="write to this directory instead of stdout",
+    )
+    reduce_cmd.add_argument(
+        "--charts",
+        type=Path,
+        default=None,
+        help=(
+            "also render this experiment's charts into this directory, "
+            "for experiments that register one"
+        ),
     )
 
     perf = sub.add_parser("perf", help="measure this machine, not the protocol")
@@ -385,6 +394,9 @@ def command_reduce(args: argparse.Namespace) -> int:
         store, args.experiment, command=regenerate, cells=cells
     )
 
+    if args.charts is not None:
+        _write_charts(store, args.experiment, cells, args.charts, regenerate)
+
     manifests = store.manifests(args.experiment)
     provenance = _provenance(manifests)
     if args.format == "json":
@@ -412,6 +424,62 @@ def command_reduce(args: argparse.Namespace) -> int:
             path.write_text(body, encoding="utf-8")
             print(f"wrote {path}", file=sys.stderr)
     return 0
+
+
+def _write_charts(
+    store: ResultStore,
+    experiment_name: str,
+    cells: Sequence[str] | None,
+    destination: Path,
+    command: str,
+) -> None:
+    """Render an experiment's registered charts into a directory.
+
+    Parameters
+    ----------
+    store : ResultStore
+        Where results live.
+    experiment_name : str
+        Which experiment.
+    cells : Sequence of str or None
+        Restrict to these cells, as ``reduce`` does.
+    destination : Path
+        Directory to write into; created if absent.
+    command : str
+        The regenerating command, handed to the renderer so the figure can
+        carry it (D9).
+
+    Notes
+    -----
+    Says so loudly when an experiment registers no chart. Writing nothing and
+    exiting zero would be indistinguishable from a renderer that silently
+    produced an empty figure.
+    """
+    renderer = EXTRA_CHARTS.get(experiment_name)
+    if renderer is None:
+        print(
+            f"no chart is registered for {experiment_name!r}; nothing written "
+            f"to {destination}",
+            file=sys.stderr,
+        )
+        return
+    wanted = None if cells is None else set(cells)
+    records = [
+        record
+        for record in store.read_experiment(experiment_name)
+        if wanted is None or record.cell in wanted
+    ]
+    order = None
+    registered = EXPERIMENTS.get(experiment_name)
+    if registered is not None:
+        order = registered.cell_names
+    destination.mkdir(parents=True, exist_ok=True)
+    for name, body in renderer(
+        records, command=f"{command} --charts {destination}", cell_order=order
+    ).items():
+        path = destination / name
+        path.write_text(body, encoding="utf-8")
+        print(f"wrote {path}", file=sys.stderr)
 
 
 def _provenance(manifest_paths: Sequence[Path]) -> dict[str, Any]:
