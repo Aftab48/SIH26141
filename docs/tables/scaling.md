@@ -2,10 +2,9 @@
 
 **Provenance.**
 
-- commit: `6cb0f57750c0`
-- **the working tree was dirty for at least one run**, so the commit above does not fully describe the code that ran
+- commit: `f94d9feb73be`
 - worker counts: [20]
-- produced by: `python 'C:\Users\Aftab\Desktop\local websites\sih-141\tools\sweep.py' run scaling --workers 20`
+- produced by: `python tools/sweep.py run scaling --workers 20`
 
 ### Run outcomes, by cell and count ordering
 
@@ -46,10 +45,10 @@ Regenerate: `python tools/sweep.py reduce scaling --results 'C:\Users\Aftab\.sih
 
 | cell | key_length | trials | session s (total) | session s (mean) | detect s (mean) | ms/position |
 | --- | --- | --- | --- | --- | --- | --- |
-| l192 | 192 | 20 | 19.24 | 0.962 | 0.0143 | 5.010 |
-| l768 | 768 | 20 | 83.14 | 4.157 | 0.0452 | 5.413 |
-| l3072 | 3072 | 20 | 342.64 | 17.132 | 0.1961 | 5.577 |
-| l12288 | 12288 | 20 | 1780.19 | 89.010 | 1.1789 | 7.244 |
+| l192 | 192 | 20 | 19.56 | 0.978 | 0.0155 | 5.095 |
+| l768 | 768 | 20 | 84.13 | 4.207 | 0.0494 | 5.477 |
+| l3072 | 3072 | 20 | 379.89 | 18.995 | 0.2634 | 6.183 |
+| l12288 | 12288 | 20 | 1671.34 | 83.567 | 1.3223 | 6.801 |
 
 Regenerate: `python tools/sweep.py reduce scaling --results 'C:\Users\Aftab\.sih141\results'`
 

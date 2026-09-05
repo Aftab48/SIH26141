@@ -2,10 +2,9 @@
 
 **Provenance.**
 
-- commit: `6cb0f57750c0`
-- **the working tree was dirty for at least one run**, so the commit above does not fully describe the code that ran
+- commit: `f94d9feb73be`
 - worker counts: [20]
-- produced by: `python 'C:\Users\Aftab\Desktop\local websites\sih-141\tools\sweep.py' run honest --workers 20`
+- produced by: `python tools/sweep.py run honest --workers 20`
 
 ### Run outcomes, by cell and count ordering
 
@@ -44,9 +43,9 @@ Regenerate: `python tools/sweep.py reduce honest --results 'C:\Users\Aftab\.sih1
 
 | cell | key_length | trials | session s (total) | session s (mean) | detect s (mean) | ms/position |
 | --- | --- | --- | --- | --- | --- | --- |
-| l192 | 192 | 30 | 27.41 | 0.914 | 0.0166 | 4.759 |
-| l384 | 384 | 30 | 59.89 | 1.996 | 0.0259 | 5.199 |
-| l768 | 768 | 30 | 117.99 | 3.933 | 0.0386 | 5.121 |
+| l192 | 192 | 30 | 28.06 | 0.935 | 0.0168 | 4.872 |
+| l384 | 384 | 30 | 59.59 | 1.986 | 0.0243 | 5.173 |
+| l768 | 768 | 30 | 118.78 | 3.959 | 0.0426 | 5.156 |
 
 Regenerate: `python tools/sweep.py reduce honest --results 'C:\Users\Aftab\.sih141\results'`
 

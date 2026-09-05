@@ -2,10 +2,9 @@
 
 **Provenance.**
 
-- commit: `6cb0f57750c0`
-- **the working tree was dirty for at least one run**, so the commit above does not fully describe the code that ran
+- commit: `f94d9feb73be`
 - worker counts: [20]
-- produced by: `python 'C:\Users\Aftab\Desktop\local websites\sih-141\tools\sweep.py' run roc --workers 20`
+- produced by: `python tools/sweep.py run roc --workers 20`
 
 ### Run outcomes, by cell and count ordering
 
@@ -68,21 +67,21 @@ Regenerate: `python tools/sweep.py reduce roc --results 'C:\Users\Aftab\.sih141\
 
 | cell | key_length | trials | session s (total) | session s (mean) | detect s (mean) | ms/position |
 | --- | --- | --- | --- | --- | --- | --- |
-| honest | 384 | 40 | 85.53 | 2.138 | 0.0294 | 5.569 |
-| honest-unchecked | 384 | 40 | 95.98 | 2.399 | 0.0250 | 6.248 |
-| outside-forgery | 384 | 40 | 108.41 | 2.710 | 0.0323 | 7.058 |
-| recipient-forgery | 384 | 40 | 108.42 | 2.711 | 0.0334 | 7.059 |
-| recipient-forgery-after | 384 | 40 | 106.10 | 2.652 | 0.0350 | 6.907 |
-| replay | 384 | 40 | 159.85 | 3.996 | 0.0317 | 10.407 |
-| starvation | 384 | 40 | 112.85 | 2.821 | 0.0334 | 7.347 |
-| starvation-selective | 384 | 40 | 115.57 | 2.889 | 0.0343 | 7.524 |
-| impersonation-signing | 384 | 40 | 113.74 | 2.843 | 0.0336 | 7.405 |
-| impersonation-full | 384 | 40 | 113.05 | 2.826 | 0.0331 | 7.360 |
-| channel-bob | 384 | 40 | 115.69 | 2.892 | 0.0320 | 7.532 |
-| tol-honest | 384 | 40 | 109.85 | 2.746 | 0.0310 | 7.152 |
-| tol-p05 | 384 | 40 | 107.98 | 2.700 | 0.0307 | 7.030 |
-| tol-p20 | 384 | 40 | 114.73 | 2.868 | 0.0335 | 7.469 |
-| tol-p35 | 384 | 40 | 115.02 | 2.875 | 0.0273 | 7.488 |
+| honest | 384 | 40 | 84.18 | 2.104 | 0.0300 | 5.480 |
+| honest-unchecked | 384 | 40 | 95.91 | 2.398 | 0.0267 | 6.244 |
+| outside-forgery | 384 | 40 | 104.27 | 2.607 | 0.0309 | 6.789 |
+| recipient-forgery | 384 | 40 | 103.65 | 2.591 | 0.0314 | 6.748 |
+| recipient-forgery-after | 384 | 40 | 108.41 | 2.710 | 0.0330 | 7.058 |
+| replay | 384 | 40 | 160.48 | 4.012 | 0.0317 | 10.448 |
+| starvation | 384 | 40 | 111.31 | 2.783 | 0.0295 | 7.247 |
+| starvation-selective | 384 | 40 | 103.50 | 2.588 | 0.0314 | 6.738 |
+| impersonation-signing | 384 | 40 | 104.18 | 2.604 | 0.0293 | 6.782 |
+| impersonation-full | 384 | 40 | 108.62 | 2.716 | 0.0319 | 7.072 |
+| channel-bob | 384 | 40 | 103.08 | 2.577 | 0.0292 | 6.711 |
+| tol-honest | 384 | 40 | 108.17 | 2.704 | 0.0324 | 7.042 |
+| tol-p05 | 384 | 40 | 105.06 | 2.627 | 0.0310 | 6.840 |
+| tol-p20 | 384 | 40 | 98.03 | 2.451 | 0.0270 | 6.382 |
+| tol-p35 | 384 | 40 | 93.91 | 2.348 | 0.0245 | 6.114 |
 
 Regenerate: `python tools/sweep.py reduce roc --results 'C:\Users\Aftab\.sih141\results'`
 

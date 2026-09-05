@@ -2,10 +2,9 @@
 
 **Provenance.**
 
-- commit: `6cb0f57750c0`
-- **the working tree was dirty for at least one run**, so the commit above does not fully describe the code that ran
+- commit: `f94d9feb73be`
 - worker counts: [20]
-- produced by: `python 'C:\Users\Aftab\Desktop\local websites\sih-141\tools\sweep.py' run forgery-curve --workers 20`
+- produced by: `python tools/sweep.py run forgery-curve --workers 20`
 
 ### Run outcomes, by cell and count ordering
 
@@ -68,21 +67,21 @@ Regenerate: `python tools/sweep.py reduce forgery-curve --results 'C:\Users\Afta
 
 | cell | key_length | trials | session s (total) | session s (mean) | detect s (mean) | ms/position |
 | --- | --- | --- | --- | --- | --- | --- |
-| eve9 | 9 | 400 | 19.68 | 0.049 | 0.0016 | 5.466 |
-| eve15 | 15 | 400 | 32.60 | 0.082 | 0.0019 | 5.433 |
-| eve24 | 24 | 400 | 52.03 | 0.130 | 0.0023 | 5.420 |
-| eve30 | 30 | 400 | 76.38 | 0.191 | 0.0031 | 6.365 |
-| eve24after | 24 | 400 | 65.20 | 0.163 | 0.0029 | 6.791 |
-| bob96before | 96 | 400 | 254.98 | 0.637 | 0.0087 | 6.640 |
-| bob96after | 96 | 400 | 263.29 | 0.658 | 0.0089 | 6.856 |
-| bob192before | 192 | 400 | 529.15 | 1.323 | 0.0153 | 6.890 |
-| bob192after | 192 | 400 | 467.90 | 1.170 | 0.0139 | 6.092 |
-| bob384before | 384 | 400 | 876.51 | 2.191 | 0.0236 | 5.706 |
-| bob384after | 384 | 400 | 810.56 | 2.026 | 0.0226 | 5.277 |
-| bob768before | 768 | 400 | 1667.84 | 4.170 | 0.0415 | 5.429 |
-| bob768after | 768 | 400 | 1672.36 | 4.181 | 0.0414 | 5.444 |
-| bob1200before | 1200 | 400 | 2534.28 | 6.336 | 0.0580 | 5.280 |
-| bob1200after | 1200 | 400 | 2533.80 | 6.334 | 0.0593 | 5.279 |
+| eve9 | 9 | 400 | 21.55 | 0.054 | 0.0017 | 5.986 |
+| eve15 | 15 | 400 | 35.85 | 0.090 | 0.0020 | 5.974 |
+| eve24 | 24 | 400 | 56.15 | 0.140 | 0.0024 | 5.849 |
+| eve30 | 30 | 400 | 69.94 | 0.175 | 0.0029 | 5.829 |
+| eve24after | 24 | 400 | 55.21 | 0.138 | 0.0024 | 5.751 |
+| bob96before | 96 | 400 | 244.10 | 0.610 | 0.0084 | 6.357 |
+| bob96after | 96 | 400 | 223.20 | 0.558 | 0.0073 | 5.813 |
+| bob192before | 192 | 400 | 435.32 | 1.088 | 0.0125 | 5.668 |
+| bob192after | 192 | 400 | 431.79 | 1.079 | 0.0129 | 5.622 |
+| bob384before | 384 | 400 | 814.55 | 2.036 | 0.0219 | 5.303 |
+| bob384after | 384 | 400 | 846.06 | 2.115 | 0.0225 | 5.508 |
+| bob768before | 768 | 400 | 1664.32 | 4.161 | 0.0405 | 5.418 |
+| bob768after | 768 | 400 | 1695.59 | 4.239 | 0.0410 | 5.520 |
+| bob1200before | 1200 | 400 | 2788.36 | 6.971 | 0.0629 | 5.809 |
+| bob1200after | 1200 | 400 | 2743.68 | 6.859 | 0.0612 | 5.716 |
 
 Regenerate: `python tools/sweep.py reduce forgery-curve --results 'C:\Users\Aftab\.sih141\results'`
 

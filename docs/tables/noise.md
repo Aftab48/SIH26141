@@ -2,10 +2,9 @@
 
 **Provenance.**
 
-- commit: `6cb0f57750c0`
-- **the working tree was dirty for at least one run**, so the commit above does not fully describe the code that ran
+- commit: `f94d9feb73be`
 - worker counts: [20]
-- produced by: `python 'C:\Users\Aftab\Desktop\local websites\sih-141\tools\sweep.py' run noise --workers 20`
+- produced by: `python tools/sweep.py run noise --workers 20`
 
 ### Run outcomes, by cell and count ordering
 
@@ -46,10 +45,10 @@ Regenerate: `python tools/sweep.py reduce noise --results 'C:\Users\Aftab\.sih14
 
 | cell | key_length | trials | session s (total) | session s (mean) | detect s (mean) | ms/position |
 | --- | --- | --- | --- | --- | --- | --- |
-| clean | 384 | 30 | 59.85 | 1.995 | 0.0298 | 5.195 |
-| p0025 | 384 | 30 | 60.99 | 2.033 | 0.0234 | 5.294 |
-| p005 | 384 | 30 | 61.77 | 2.059 | 0.0232 | 5.362 |
-| p010 | 384 | 30 | 61.64 | 2.055 | 0.0206 | 5.351 |
+| clean | 384 | 30 | 59.78 | 1.993 | 0.0296 | 5.189 |
+| p0025 | 384 | 30 | 61.32 | 2.044 | 0.0235 | 5.323 |
+| p005 | 384 | 30 | 60.33 | 2.011 | 0.0228 | 5.237 |
+| p010 | 384 | 30 | 60.97 | 2.032 | 0.0210 | 5.292 |
 
 Regenerate: `python tools/sweep.py reduce noise --results 'C:\Users\Aftab\.sih141\results'`
 

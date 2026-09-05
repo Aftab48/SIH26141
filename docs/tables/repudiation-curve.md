@@ -2,10 +2,9 @@
 
 **Provenance.**
 
-- commit: `6cb0f57750c0`
-- **the working tree was dirty for at least one run**, so the commit above does not fully describe the code that ran
+- commit: `f94d9feb73be`
 - worker counts: [20]
-- produced by: `python 'C:\Users\Aftab\Desktop\local websites\sih-141\tools\sweep.py' run repudiation-curve --workers 20`
+- produced by: `python tools/sweep.py run repudiation-curve --workers 20`
 
 ### Run outcomes, by cell and count ordering
 
@@ -66,20 +65,20 @@ Regenerate: `python tools/sweep.py reduce repudiation-curve --results 'C:\Users\
 
 | cell | key_length | trials | session s (total) | session s (mean) | detect s (mean) | ms/position |
 | --- | --- | --- | --- | --- | --- | --- |
-| l24 | 24 | 400 | 57.84 | 0.145 | 0.0026 | 6.025 |
-| l48 | 48 | 400 | 134.76 | 0.337 | 0.0047 | 7.019 |
-| l96 | 96 | 400 | 276.37 | 0.691 | 0.0086 | 7.197 |
-| l132 | 132 | 400 | 366.38 | 0.916 | 0.0110 | 6.939 |
-| l138 | 138 | 400 | 379.55 | 0.949 | 0.0109 | 6.876 |
-| l192 | 192 | 400 | 526.97 | 1.317 | 0.0142 | 6.862 |
-| l300 | 300 | 400 | 836.45 | 2.091 | 0.0208 | 6.970 |
-| l384 | 384 | 400 | 1041.64 | 2.604 | 0.0259 | 6.782 |
-| l600 | 600 | 400 | 1608.17 | 4.020 | 0.0368 | 6.701 |
-| l768 | 768 | 400 | 1967.82 | 4.920 | 0.0451 | 6.406 |
-| l192after | 192 | 400 | 501.01 | 1.253 | 0.0134 | 6.524 |
-| unsym192 | 192 | 400 | 494.69 | 1.237 | 0.0132 | 6.441 |
-| unsym384 | 384 | 400 | 945.59 | 2.364 | 0.0236 | 6.156 |
-| unsym768 | 768 | 400 | 1756.69 | 4.392 | 0.0389 | 5.718 |
+| l24 | 24 | 400 | 51.16 | 0.128 | 0.0023 | 5.329 |
+| l48 | 48 | 400 | 120.80 | 0.302 | 0.0041 | 6.291 |
+| l96 | 96 | 400 | 251.54 | 0.629 | 0.0077 | 6.551 |
+| l132 | 132 | 400 | 353.74 | 0.884 | 0.0103 | 6.700 |
+| l138 | 138 | 400 | 377.34 | 0.943 | 0.0107 | 6.836 |
+| l192 | 192 | 400 | 528.50 | 1.321 | 0.0144 | 6.881 |
+| l300 | 300 | 400 | 779.97 | 1.950 | 0.0190 | 6.500 |
+| l384 | 384 | 400 | 827.84 | 2.070 | 0.0205 | 5.390 |
+| l600 | 600 | 400 | 1295.90 | 3.240 | 0.0292 | 5.400 |
+| l768 | 768 | 400 | 1783.71 | 4.459 | 0.0395 | 5.806 |
+| l192after | 192 | 400 | 446.90 | 1.117 | 0.0119 | 5.819 |
+| unsym192 | 192 | 400 | 461.81 | 1.155 | 0.0121 | 6.013 |
+| unsym384 | 384 | 400 | 905.06 | 2.263 | 0.0224 | 5.892 |
+| unsym768 | 768 | 400 | 1763.20 | 4.408 | 0.0385 | 5.740 |
 
 Regenerate: `python tools/sweep.py reduce repudiation-curve --results 'C:\Users\Aftab\.sih141\results'`
 

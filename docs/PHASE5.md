@@ -184,14 +184,14 @@ default `~/.sih141/results` is outside the repository, and every `reduce` below 
 | experiment | cells | trials/cell | records | wall clock | question it answers |
 | --- | --- | --- | --- | --- | --- |
 | `smoke` | 1 | 4 | 4 | 1.2 s | does the harness work |
-| `honest` | 3 | 30 | 90 | 14.7 s | the false-alarm arm, at three key lengths |
+| `honest` | 3 | 30 | 90 | 15.0 s | the false-alarm arm, at three key lengths |
 | `noise` | 4 | 30 | 120 | 15.6 s | what a noiseless null costs on a noisy link |
-| `scaling` | 4 | 20 | 80 | 117.0 s | cost against key length, through the real runner |
-| `roc` | 15 | 40 | 600 | 89.2 s | detection against a swept false-positive budget |
-| `repudiation-curve` | 14 | 400 | 5600 | 555.6 s | can a signer repudiate, against key length |
-| `forgery-curve` | 15 | 400 | 6000 | 605.2 s | can a declaration be forged, against key length |
+| `scaling` | 4 | 20 | 80 | 113.4 s | cost against key length, through the real runner |
+| `roc` | 15 | 40 | 600 | 84.5 s | detection against a swept false-positive budget |
+| `repudiation-curve` | 14 | 400 | 5600 | 507.4 s | can a signer repudiate, against key length |
+| `forgery-curve` | 15 | 400 | 6000 | 619.7 s | can a declaration be forged, against key length |
 
-Every manifest records commit `6cb0f57`, twenty workers, all five BLAS thread limits reading `1`
+Every manifest records commit `f94d9fe`, twenty workers, all five BLAS thread limits reading `1`
 in a worker's own environment, and an empty `global_rng_touched` list. Every cell holds exactly
 the trial count its manifest asked for; the reduction checks that against the manifest rather
 than against the highest index present, so a run cut short by its last trials is caught.
@@ -207,24 +207,30 @@ minute on this machine, and 52 s of that is ROC re-scoring its 600 retained tran
 budgets each. So the tables can be redrawn as often as anyone wants to check them, which is the
 point of `run` and `reduce` being separate commands.
 
-### The provenance caveat, stated where nobody can miss it
+### Provenance, and what re-running the whole sweep proved
 
-**Every manifest in this store records `dirty: true`, and every table below prints the warning.**
-Eight files were modified or untracked in the working tree when the sweep ran — the harness
-reconciliation, the two experiment families' fixes, and this document's own repairs — so commit
-`6cb0f57` does not fully describe the code that produced these records.
+An earlier store recorded `dirty: true` on every manifest: eight files were modified or
+untracked when that sweep ran, so its commit did not describe the code that produced it. The
+numbers were right and no reviewer could have pinned them to a commit, which under D9 is one
+step short of publishable. So the store was deleted and the seven lines above were run again
+against a committed tree.
 
-That is a defect in the *provenance*, not in the numbers. A record is a pure function of
-`(experiment, cell, index)` and the code, and the code is not going to change between now and the
-commit. So the fix is one action and one command:
+**Every manifest now records `f94d9fe` with `dirty: false`**, and the re-run answered a question
+the first one could not. This was not a resume or a re-reduce: 12,494 trials were computed from
+scratch, in fresh worker processes, on a machine in a different state -- across the 51 cells
+both runs share, per-cell wall clock moved by a median of 6.1% and by as much as 20.5%
+(`l384`, 1041.64 s against 827.84 s). Against the committed tables, what changed:
 
-1. commit the working tree,
-2. delete `~/.sih141/results`,
-3. re-run the seven lines above.
+| quantity | change |
+| --- | --- |
+| every measured rate, every confidence interval, every proven bound | **none** |
+| both charts, `roc.svg` and `repudiation-curve.svg` | **byte-identical** |
+| wall-clock and per-trial timing columns | moved, as they must |
 
-It costs twenty-three minutes and every record will come back byte-identical. Until that happens,
-read these tables as correct arithmetic over a store a reviewer cannot pin to a commit — which,
-under D9, is exactly one step short of publishable.
+The charts are the check worth reading, because they plot the rates and the bounds and nothing
+else: a single moved result would have moved a coordinate. So the determinism argument in §4
+is no longer only an assertion about seeds and a test at four workers -- the entire production
+sweep has now been computed twice, hours apart, and agrees everywhere it claims to.
 
 ### What the integration audit re-ran, and what it found
 

@@ -271,10 +271,11 @@ actually refuses, and the fold fails.
 Full suite: **3800 passed, 0 failed, 0 skipped** — up from `3750` with the Phase 5 experiment
 families, `3588` with the harness alone, `3460` at the end of Phase 6, `3036` at the end of Phase 4,
 `2174` at the end of Phase 3 and `1421` at the end of Phase 2. The load-bearing figure is
-`3800 / 3800`; the wall clock is not, and Phase 5 is the reason. The last run took `2290 s` (38:10)
-against about `1512 s` (25:12) for the same suite earlier, on the same machine — the difference is
-what else the machine was doing, measured in [`docs/PHASE5.md`](docs/PHASE5.md) §11.2 as a 49% move
-in single-threaded throughput between two runs of one command.
+`3800 / 3800`; the wall clock is not, and Phase 5 is the reason. Three runs of the identical suite
+on this machine took `1512 s` (25:12), `2290 s` (38:10) and `1634 s` (27:14) — a spread of 51%
+with the pass count identical every time. The variable is what else the machine was doing,
+measured in [`docs/PHASE5.md`](docs/PHASE5.md) §11.2 as a 49% move in single-threaded throughput
+between two runs of one command. Quote the count, never the clock.
 
 ## What Phase 5 found
 

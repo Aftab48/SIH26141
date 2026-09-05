@@ -2,13 +2,13 @@
 
 **SIH26141** — Quantum-Inspired Cyber Threat Detection for Digital Signature Security
 
-Generated `2026-09-05 11:07 UTC` by `tools/metrics.py`. Every figure is computed from the
+Generated `2026-09-05 14:10 UTC` by `tools/metrics.py`. Every figure is computed from the
 repository — do not edit by hand, re-run the script.
 
 ## Test suite
 
 ```
-3794 passed in 2283.29s (0:38:03)
+3800 passed in 1634.06s (0:27:14)
 ```
 
 - Doctests collected from package modules: **481**
@@ -43,7 +43,7 @@ repository — do not edit by hand, re-run the script.
 | `sih141/attacks/forgery.py` | 1679 | 474 | 985 | 26 | 29 | 3 |
 | `sih141/attacks/impersonation.py` | 2019 | 560 | 1149 | 48 | 55 | 5 |
 | `sih141/attacks/isolation.py` | 2145 | 462 | 1355 | 34 | 33 | 6 |
-| `sih141/attacks/replay.py` | 2324 | 682 | 1313 | 51 | 36 | 3 |
+| `sih141/attacks/replay.py` | 2328 | 682 | 1317 | 51 | 36 | 3 |
 | `sih141/attacks/starvation.py` | 1678 | 333 | 1115 | 21 | 27 | 4 |
 | `sih141/attacks/statistics.py` | 570 | 158 | 323 | 3 | 14 | 1 |
 | `sih141/detect/__init__.py` | 572 | 263 | 259 | 8 | 2 | 1 |
@@ -59,8 +59,8 @@ repository — do not edit by hand, re-run the script.
 | `sih141/eval/records.py` | 781 | 219 | 473 | 0 | 16 | 2 |
 | `sih141/eval/reduce.py` | 1131 | 406 | 584 | 24 | 13 | 1 |
 | `sih141/eval/roc.py` | 2526 | 1140 | 1070 | 59 | 33 | 2 |
-| `sih141/eval/runner.py` | 662 | 194 | 380 | 0 | 12 | 2 |
-| `sih141/eval/security.py` | 3138 | 1228 | 1512 | 42 | 46 | 3 |
+| `sih141/eval/runner.py` | 675 | 193 | 393 | 0 | 12 | 2 |
+| `sih141/eval/security.py` | 3137 | 1227 | 1512 | 42 | 46 | 3 |
 | `sih141/eval/seeds.py` | 363 | 58 | 246 | 0 | 6 | 1 |
 | `sih141/eval/store.py` | 448 | 82 | 299 | 0 | 16 | 1 |
 | `sih141/web/__init__.py` | 145 | 34 | 96 | 0 | 0 | 0 |
@@ -70,10 +70,10 @@ repository — do not edit by hand, re-run the script.
 | `sih141/web/driver.py` | 1250 | 512 | 562 | 40 | 12 | 3 |
 | `sih141/web/limits.py` | 1070 | 277 | 578 | 78 | 14 | 2 |
 | `sih141/web/payload.py` | 696 | 277 | 341 | 10 | 9 | 0 |
-| **total** | **74573** | **20062** | **43996** | **1587** | **1150** | **134** |
+| **total** | **74589** | **20060** | **44013** | **1587** | **1150** | **134** |
 
-Tests: **47722 lines** across **41 files**, **2311 test functions** defined.
-Test-lines to code-lines ratio: **2.38 : 1**
+Tests: **47933 lines** across **42 files**, **2318 test functions** defined.
+Test-lines to code-lines ratio: **2.39 : 1**
 
 ## Live security parameters
 
@@ -99,26 +99,27 @@ actually computes today — not what a document once claimed.
 
 | File | Words |
 | --- | ---: |
-| `README.md` | 6284 |
-| `JOURNAL.md` | 92152 |
+| `README.md` | 6289 |
+| `JOURNAL.md` | 92394 |
 | `docs/METRICS.md` | 1440 |
 | `docs/PHASE1.md` | 4078 |
 | `docs/PHASE2.md` | 10056 |
 | `docs/PHASE3.md` | 15026 |
 | `docs/PHASE4.md` | 9654 |
-| `docs/PHASE5.md` | 12536 |
+| `docs/PHASE5.md` | 12636 |
 | `docs/PHASE6.md` | 12333 |
 | `docs/QDS.md` | 5356 |
-| **total** | **168915** |
+| **total** | **169262** |
 
-Working-journal entries: **238** (temporary; deleted at the end of Phase 7).
+Working-journal entries: **239** (temporary; deleted at the end of Phase 7).
 
 ## Repository
 
-- Commits: **27**
+- Commits: **28**
 
 | Commit | Subject |
 | --- | --- |
+| `f94d9fe` | Close the Phase 5 audit: nine defects fixed, the sweep run end to end |
 | `6cb0f57` | Add the Phase 5 experiment families: security curves and ROC |
 | `98db568` | Add the Phase 5 evaluation harness: a resumable parallel sweep, determinism proven |
 | `d09878f` | Configure pyright so its output is short enough to read: 519 errors to six |
@@ -143,4 +144,3 @@ Working-journal entries: **238** (temporary; deleted at the end of Phase 7).
 | `cf35087` | Close Phase 2: fix stale claims and verify at full scale |
 | `8182fc4` | runway doc update |
 | `cf32fc0` | Harden checkpoint against concurrent-agent races |
-| `64185f9` | Add pooled matched-count floor and close split-coin repudiation |
