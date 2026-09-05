@@ -1,9 +1,12 @@
 """What one trial leaves behind, and the wall between truth and evidence.
 
-A full-scale transcript is 26.7 MB unchecked and 37.2 MB at
-``check_fraction = 0.25`` (0.226 and 0.330 KB per position at ``L = 115200``,
+A full-scale transcript is 25.4 MiB unchecked and 37.2 MiB at
+``check_fraction = 0.25`` (0.226 and 0.330 KiB per position at ``L = 115200``,
 both measured), so a two-hundred-trial cell in full would be five to seven
-gigabytes and a sweep across several cells would be tens. The harness therefore stores a
+gibibytes and a sweep across several cells would be tens. Mebibytes, because the
+per-position figure is ``len(json) / 1024``; quoting one in binary units and the
+other in decimal is how the pair came to read 26.7 and 37.2 for what is the same
+measurement twice. The harness therefore stores a
 **reduced record**: the detector's verdict, the handful of transcript fields the
 tables need, the seeds, the parameters and the wall clock. Full transcripts are
 retained only behind an explicit flag, for a named handful of worked examples.
@@ -389,7 +392,7 @@ def transcript_summary(
     stats : TranscriptStatistics or None, optional
         Keyword-only. Layer one's extraction of the same run, for the per-link
         block. Passing the one the detector was given avoids a second parse of
-        the transcript's JSON, which is 26.7 MB at ``L = 115200``; ``None``
+        the transcript's JSON, which is 25.4 MiB at ``L = 115200``; ``None``
         builds one, which is correct and slower.
 
     Returns
@@ -583,7 +586,7 @@ class TrialRecord:
         wall_clock : Mapping or None, optional
             Keyword-only. Seconds by phase.
         retain_transcript : bool, optional
-            Keyword-only. Keep the whole transcript. About 26.7 MB at
+            Keyword-only. Keep the whole transcript. About 25.4 MiB at
             ``L = 115200``, so ``False`` by default and reserved for named
             worked examples.
         stats : TranscriptStatistics or None, optional

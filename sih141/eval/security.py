@@ -234,9 +234,17 @@ from .experiments import (
     SCENARIOS,
     Cell,
     Experiment,
+    claim,
 )
 from .records import GroundTruth, TrialRecord
-from .reduce import CONFIDENCE, Table, group_records
+from .reduce import (
+    CONFIDENCE,
+    Table,
+    escape_xml,
+    group_records,
+    measured_rate,
+    refused_run,
+)
 from .seeds import TrialSeeds
 
 __all__ = [
@@ -1743,6 +1751,41 @@ def _forgery_cells() -> tuple[Cell, ...]:
     return tuple(cells)
 
 
+_SINGLETON: dict[str, Experiment] = {}
+"""dict: This family's experiments, built once and reused ever after.
+
+Lazy rather than module-level constants, because a :class:`Cell` validates its
+scenario against :data:`~sih141.eval.experiments.SCENARIOS` on construction and
+this family's scenarios are not there until :func:`register` has put them
+there. Reused rather than rebuilt so that :func:`register` can decide by
+*identity* whether a slot is this family's or somebody else's: a rebuilt
+experiment is equal but distinct, and the collision check would fire on the
+second call and make ``register`` non-idempotent.
+"""
+
+
+def _built(name: str, build: Any) -> Experiment:
+    """Return this family's experiment ``name``, building it at most once.
+
+    Parameters
+    ----------
+    name : str
+        Experiment name, and the cache key.
+    build : callable
+        Zero-argument builder, called only on a miss.
+
+    Returns
+    -------
+    Experiment
+        The same object on every call, so :func:`register` is idempotent.
+    """
+    made = _SINGLETON.get(name)
+    if made is None:
+        made = build()
+        _SINGLETON[name] = made
+    return made
+
+
 def _repudiation_experiment() -> Experiment:
     """Build the repudiation experiment.
 
@@ -1829,31 +1872,6 @@ def repudiated_from_verdicts(record: TrialRecord) -> bool:
         and verdicts.get(str(Party.CHARLIE)) == "rejected"
         and not bool(summary["forwarding_altered_signature"])
         and bool(summary["session_coherent"])
-    )
-
-
-def _measured(successes: int, trials: int) -> str:
-    """Format a measured rate with its interval, or say there is no measurement.
-
-    Parameters
-    ----------
-    successes : int
-        Numerator.
-    trials : int
-        Denominator.
-
-    Returns
-    -------
-    str
-        ``k/n = p [lo, hi]``, or ``no trials`` -- never ``0.000``, which reads
-        as a measurement that found nothing rather than as the absence of one.
-    """
-    if trials <= 0:
-        return "no trials"
-    interval = wilson_interval(successes, trials, confidence=CONFIDENCE)
-    return (
-        f"{successes}/{trials} = {successes / trials:.4f} "
-        f"[{interval.low:.4f}, {interval.high:.4f}]"
     )
 
 
@@ -1993,9 +2011,7 @@ def repudiation_curve_table(
         engaged = [r for r in group if r.truth.attacked]
         idle = len(group) - len(engaged)
         repudiations = sum(1 for r in engaged if repudiated_from_verdicts(r))
-        refusals = sum(
-            1 for r in engaged if bool(r.transcript_summary["aborted"])
-        )
+        refusals = sum(1 for r in engaged if refused_run(r))
         bob_accepted = sum(
             1 for r in engaged if _verdict(r, Party.BOB) == "accepted"
         )
@@ -2033,7 +2049,7 @@ def repudiation_curve_table(
                 len(group),
                 len(engaged),
                 idle,
-                _measured(repudiations, len(engaged)),
+                measured_rate(repudiations, len(engaged), places=4),
                 refusals,
                 bob_accepted,
                 f"{mean_flips:.1f}",
@@ -2569,9 +2585,10 @@ def forgery_table(
         )
         outside = hypotheses == ["outside-forgery"]
         if outside:
-            bob_cell: Any = _measured(
+            bob_cell: Any = measured_rate(
                 sum(1 for r in engaged if _verdict(r, Party.BOB) == "accepted"),
                 len(engaged),
+                places=4,
             )
             exact = f"{forgery_probability(params):.4e}"
             proven = _format_log10(outside_forgery_bound_log10(params))
@@ -2587,7 +2604,7 @@ def forgery_table(
                 timing,
                 len(group),
                 len(engaged),
-                _measured(accepted, len(engaged)),
+                measured_rate(accepted, len(engaged), places=4),
                 rejected,
                 refused,
                 idle,
@@ -2657,6 +2674,7 @@ def repudiation_reduction(
     *,
     command: str = "",
     cell_order: Sequence[str] | None = None,
+    expected: Mapping[str, int] | None = None,
 ) -> list[Table]:
     """Return the repudiation experiment's own tables.
 
@@ -2668,6 +2686,13 @@ def repudiation_reduction(
         Keyword-only. The regenerating command, stamped on both tables.
     cell_order : Sequence of str or None, optional
         Keyword-only. Row order.
+    expected : Mapping or None, optional
+        Keyword-only. Per-cell trial counts the sweep asked for, part of the
+        :data:`~sih141.eval.reduce.EXTRA_REDUCTIONS` contract. This family
+        builds no completeness footnote of its own -- the outcome table
+        :func:`~sih141.eval.reduce.reduce_experiment` prepends carries the
+        check -- so it is accepted and unused rather than dropped from the
+        signature, which would make the call fail.
 
     Returns
     -------
@@ -2689,6 +2714,7 @@ def forgery_reduction(
     *,
     command: str = "",
     cell_order: Sequence[str] | None = None,
+    expected: Mapping[str, int] | None = None,
 ) -> list[Table]:
     """Return the forgery experiment's own tables.
 
@@ -2700,6 +2726,9 @@ def forgery_reduction(
         Keyword-only. The regenerating command.
     cell_order : Sequence of str or None, optional
         Keyword-only. Row order.
+    expected : Mapping or None, optional
+        Keyword-only. Accepted and unused; see
+        :func:`repudiation_reduction`.
 
     Returns
     -------
@@ -2993,7 +3022,7 @@ def _render_curve(points: Sequence[Mapping[str, Any]], command: str) -> str:
     if command:
         parts.append(
             f'<text x="{_CHART_LEFT}" y="{_CHART_HEIGHT - 12}" font-size="10" '
-            f'fill="#666666">Regenerate: {_escape(command)}</text>'
+            f'fill="#666666">Regenerate: {escape_xml(command)}</text>'
         )
     else:
         parts.append(
@@ -3003,33 +3032,6 @@ def _render_curve(points: Sequence[Mapping[str, Any]], command: str) -> str:
         )
     parts.append("</svg>")
     return "".join(parts)
-
-
-def _escape(text: str) -> str:
-    """Escape the five XML characters, so a command with an ampersand survives.
-
-    Parameters
-    ----------
-    text : str
-        Arbitrary text.
-
-    Returns
-    -------
-    str
-
-    Examples
-    --------
-    >>> from sih141.eval.security import _escape
-    >>> _escape('a & b < c > "d"')
-    'a &amp; b &lt; c &gt; &quot;d&quot;'
-    """
-    return (
-        text.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-        .replace("'", "&apos;")
-    )
 
 
 # --------------------------------------------------------------------------- #
@@ -3059,7 +3061,21 @@ def register(
     Raises
     ------
     RuntimeError
-        If a scenario name is taken by something else.
+        If any name -- scenario, probe options, experiment, reduction or chart
+        renderer -- is taken by something else.
+
+    Notes
+    -----
+    Every registry this function writes to goes through
+    :func:`~sih141.eval.experiments.claim`, which raises in *both* directions.
+    An earlier version of this function guarded only the scenario names and
+    used ``setdefault`` or an ``is None`` test for the experiments, the
+    reductions and the chart, and assigned the probe options outright. Those
+    are the two silent halves of a collision: yielding leaves this family
+    registered nowhere, so its cells never run and the sweep looks like a
+    family nobody wrote, and overwriting takes the other family's key. The
+    scenario direction had a test and the other four did not, which is why
+    they disagreed with the ROC family's guard for as long as they did.
 
     Examples
     --------
@@ -3069,31 +3085,53 @@ def register(
     Traceback (most recent call last):
         ...
     RuntimeError: scenario 'security-tilt' is already registered...
+
+    An experiment name held by another family raises too, rather than leaving
+    this family's two experiments unregistered:
+
+    >>> register(scenarios={}, experiments={"forgery-curve": "someone else's"})
+    Traceback (most recent call last):
+        ...
+    RuntimeError: experiment 'forgery-curve' is already registered...
     """
     target_scenarios = SCENARIOS if scenarios is None else scenarios
     target_experiments = EXPERIMENTS if experiments is None else experiments
     for name, function in SECURITY_SCENARIOS.items():
-        existing = target_scenarios.get(name)
-        if existing is not None and existing is not function:
-            raise RuntimeError(
-                f"scenario {name!r} is already registered to something else "
-                f"({existing!r}). Two families sharing a scenario key would "
-                f"give whichever imported last."
-            )
-        target_scenarios[name] = function
-    if target_experiments.get("repudiation-curve") is None:
-        target_experiments["repudiation-curve"] = _repudiation_experiment()
-    if target_experiments.get("forgery-curve") is None:
-        target_experiments["forgery-curve"] = _forgery_experiment()
+        claim(target_scenarios, name, function, "scenario")
     for name, options in SECURITY_PROBE_OPTIONS.items():
-        SCENARIO_PROBE_OPTIONS[name] = dict(options)
-    reduce_module.EXTRA_REDUCTIONS.setdefault(
-        "repudiation-curve", repudiation_reduction
+        claim(SCENARIO_PROBE_OPTIONS, name, options, "probe options")
+    # After the scenarios, never before: building the cells validates each
+    # one's scenario against the live registry.
+    claim(
+        target_experiments,
+        "repudiation-curve",
+        _built("repudiation-curve", _repudiation_experiment),
+        "experiment",
     )
-    reduce_module.EXTRA_REDUCTIONS.setdefault(
-        "forgery-curve", forgery_reduction
+    claim(
+        target_experiments,
+        "forgery-curve",
+        _built("forgery-curve", _forgery_experiment),
+        "experiment",
     )
-    reduce_module.EXTRA_CHARTS.setdefault("repudiation-curve", security_charts)
+    claim(
+        reduce_module.EXTRA_REDUCTIONS,
+        "repudiation-curve",
+        repudiation_reduction,
+        "reduction",
+    )
+    claim(
+        reduce_module.EXTRA_REDUCTIONS,
+        "forgery-curve",
+        forgery_reduction,
+        "reduction",
+    )
+    claim(
+        reduce_module.EXTRA_CHARTS,
+        "repudiation-curve",
+        security_charts,
+        "chart renderer",
+    )
 
 
 register()

@@ -258,10 +258,72 @@ Phase 3 constraint 4 and it is caught by a *type* rather than by a number that h
 out right — `NoVerdictCount` refuses `+` with anything but another `NoVerdictCount`, so
 `rejected + refused` and `sum(...)` both raise.
 
-Full suite: **3750 passed, 0 failed, 0 skipped** — up from `3588` with the Phase 5 harness alone,
-`3460` at the end of Phase 6, `3036` at the end of Phase 4, `2174` at the end of Phase 3 and `1421`
-at the end of Phase 2. Wall clock about `1512 s` (25:12) on this machine; the load-bearing figure
-is `3750 / 3750`.
+Phase 5 adds five, and **one of them was green**, which is the finding rather than the check.
+Making a worker read numpy's global RNG turns the suite red and the runner exits `2` with a
+`D3 VIOLATION` naming the trials. Making the seed depend on completion order fails five tests and
+two doctests. But **folding an abort into the rejection column of the Phase 5 results table left
+328 tests and doctests passing** — the type-level guard above is defeated by the one `int()` call
+that prints the count, and every fixture that reached that table was an honest cell with no
+refusals to fold. The check existed and could not fail, which is the same shape as the four
+dashboard defects Phase 6 shipped behind green tests. It is closed now, against a fixture that
+actually refuses, and the fold fails.
+
+Full suite: **3800 passed, 0 failed, 0 skipped** — up from `3750` with the Phase 5 experiment
+families, `3588` with the harness alone, `3460` at the end of Phase 6, `3036` at the end of Phase 4,
+`2174` at the end of Phase 3 and `1421` at the end of Phase 2. The load-bearing figure is
+`3800 / 3800`; the wall clock is not, and Phase 5 is the reason. The last run took `2290 s` (38:10)
+against about `1512 s` (25:12) for the same suite earlier, on the same machine — the difference is
+what else the machine was doing, measured in [`docs/PHASE5.md`](docs/PHASE5.md) §11.2 as a 49% move
+in single-threaded throughput between two runs of one command.
+
+## What Phase 5 found
+
+The evaluation. 12,494 trials, seven experiments, 23.3 minutes at twenty workers, zero failures.
+Full account in [`docs/PHASE5.md`](docs/PHASE5.md); every table there prints the command that
+regenerates it from seeds on disk, which is convention **D9**.
+
+**The count ordering answers a different question, and the numbers are far apart.** At `L = 96`,
+400 runs of the identical recipient forgery: before forwarding, `0 accepted / 0 rejected / 400 no
+verdict` — the substituted declaration leaves Charlie's pooled matched count undefined, so Bob accepts and
+Charlie alone reaches no verdict, and the attack is a *denial of transfer*. After forwarding, `120 accepted / 280 rejected / 0
+refused` — an acceptance rate of `0.3000` against a closed form of `0.29663`, which is a *forgery
+rate*. Pooling the two publishes `120/800 = 15%`, describing neither. Any sentence saying "the
+recipient forgery rate is X" without naming the ordering is wrong.
+
+**The measurement and the closed form agree on every row where the closed form applies — 21 for
+21.** Eleven on the repudiation side and ten on the forgery side, the exact in-model probability
+inside the 99% Wilson interval every time. Two independent routes to the same number, one a
+simulation of 400 runs and one a closed form over the parameters.
+
+The rows where it does *not* apply are the ordering result again, and they are worth stating rather
+than quietly excluding. The five before-forwarding recipient-forgery rows measure `0/400`
+acceptances because Charlie reached no verdict at all; the closed form is an acceptance probability
+for a run that reaches one, so four of those five sit outside the measured interval. That is the
+model not describing the experiment, not the model being wrong — and the fifth falls inside only
+because at `L = 1200` the closed form has dropped below what 400 trials can resolve.
+
+**Demo-scale runs cannot demonstrate non-repudiation, and this is the limitation to read first.**
+At `L = 768` a signer genuinely trying to repudiate measures `0/400`, upper limit `0.0163`. The
+exact probability is `5.845e-04` — twenty-eight times finer than 400 trials can resolve. The proven
+a-priori bound is `9.212e-01` — fifty-six times looser than the measurement. The claim itself
+lives at `1.4e-09` and `L = 115200`, unreachable by both. The mechanism is demonstrated; the
+guarantee is not.
+
+**Under a noiseless null the detector's ROC is flat at 1.0 across thirty decades of budget** — all
+eight attacked arms at 100% from `eps = 5e-1` to `1e-30` (`40/40` on seven of them and `22/22` on
+the selective starver, whose other 18 runs are honest and score as such), with full impersonation
+reported as `undetectable-by-construction`. That is a separation so large that `eps` is not the binding
+constraint. Under the link's **true** error rate the curve has a shape and the detector gives
+ground: a depolariser at exactly the tolerated level measures `0/40` at `eps = 1e-9`. That is a
+result about the protocol's observability, and D7 forbids moving a threshold to improve it.
+
+**Two published numbers did not survive being re-run, and both are corrected in place.** Three
+transcript-size figures were up to 21% wrong and had come from a check fraction of 0.42 rather than
+0.25 — they survived because the doctest beside them looked the constant up in its own dict rather
+than measuring anything. And the parallel speedup moved from `7.04×` to `10.27×` between two runs
+of the same command, because the single-worker baseline moved by 49% while the twenty-worker wall
+clock held to 2.2%. The wall clock is reproducible; the ratio is not, and it is now published with
+both measurements.
 
 ## Roadmap
 
@@ -272,29 +334,38 @@ is `3750 / 3750`.
 | 2 | QDS protocol — key distribution, signing, verification, transferability | ✅ Complete |
 | 3 | Attack suite — the four adversaries above, plus count starvation and realistic channel noise | ✅ Complete |
 | 4 | Detection engine — QBER, CHSH, mismatch statistics, **derived** thresholds and a family-wise bound | ✅ Complete |
-| 5 | Evaluation — forgery probability vs. key length, ROC, FAR/FRR, benchmarks | 🟨 Harness and experiments complete, sweep not run |
+| 5 | Evaluation — forgery probability vs. key length, ROC, FAR/FRR, benchmarks | ✅ Complete |
 | 6 | Web dashboard — live attack/detection demo | ✅ Complete |
 | 7 | Submission docs — mathematical modelling and security analysis | ⬜ |
 
-> **Phase 6 was built before Phase 5 runs.** The numbers are the phase order; the work order is
+> **Phase 6 was built before Phase 5 ran.** The numbers are the phase order; the work order was
 > 4 → 6 → 5 → 7. Phase 6 depends only on `Detection.to_dict()`, which Phase 4 froze, so it was
 > not waiting on anything — while Phase 5's production sweep is a long unattended run whose
-> results only Phase 7 consumes. Building the dashboard first means the thing a reviewer
-> actually looks at exists early, and the sweep can then run without blocking anyone. Phase 7
-> is last either way, because it publishes Phase 5's numbers.
+> results only Phase 7 consumes. Phase 7 is last either way, because it publishes Phase 5's
+> numbers.
 >
-> **The dashboard therefore reports no evaluation results, and says so on the screen.** It
-> demonstrates a live run; it does not present a study. The one table of measured rates on the
-> page is labelled *"not a Phase 5 result — a Phase 4 calibration"*.
+> **The dashboard reports no evaluation results, and says so on the screen.** It demonstrates a
+> live run; it does not present a study. The one table of measured rates on the page is labelled
+> *"not a Phase 5 result — a Phase 4 calibration"*.
 >
-> **Phase 5's harness is in.** `sih141/eval` plus `tools/sweep.py run` and `tools/sweep.py
-> reduce` — a resumable parallel runner, one file per trial, a run manifest recording the
-> commit and the exact command, and a reduction that regenerates every table from the files
-> without re-running a thing. Determinism is proven rather than asserted: identical results at
-> one worker and at twenty, in any completion order. The production sweep has not been run.
-> [docs/PHASE5.md](docs/PHASE5.md) has the seed rule, the measured performance of this machine,
-> and the two figures in the plan it corrected — one honest full-scale session is **235 s**, and
-> twenty workers give **7.04×**, not the 15× the plan assumed.
+> **Phase 5 is complete.** The production sweep ran **12,494 trials across seven experiments in
+> 23.3 minutes** at twenty workers, zero failures, and every table in
+> [docs/PHASE5.md](docs/PHASE5.md) carries the one command that regenerates it from seeds on disk
+> (D9). Reduced tables are in [`docs/tables/`](docs/tables) and the two charts in
+> [`docs/figures/`](docs/figures).
+>
+> The headline is a **limitation**, and it is a doctest rather than prose. At `L = 768`, 400 trials
+> of a signer genuinely trying to repudiate measure `0/400` with a 99% upper limit of `0.0163`; the
+> exact in-model probability is `5.845e-04`, twenty-eight times finer than the sample can resolve;
+> the proven bound is `9.212e-01`, fifty-six times looser than the measurement. The region the
+> claim lives in — `1.4e-09` at `L = 115200` — is unreachable by both. **Demo-scale runs cannot
+> demonstrate non-repudiation**, and the table says so from its own rows.
+>
+> The strongest positive result is that **the count ordering is a column, never an average**. At
+> `L = 96`, 400 runs of the identical recipient forgery give `0 accepted / 0 rejected / 400 no
+> verdict` before forwarding and `120 accepted / 280 rejected / 0 refused` after it. One arm is a
+> denial of transfer, the other a forgery rate of `0.3000` against a closed form of `0.29663`.
+> Pooling them publishes 15%, describing neither.
 
 > **Note on scope.** The published problem statement ends with an unfilled placeholder where
 > the organization's deliverables table should be (*"Add 'Delivery Table (Expected
@@ -352,6 +423,22 @@ it found and closed: [`docs/PHASE6.md`](docs/PHASE6.md).
 python -m pytest
 ```
 
+## Running the evaluation
+
+The sweep happens once; the tables are redrawn from what it left on disk, as often as anyone wants
+to check them. Results go to `~/.sih141/results`, outside the repository.
+
+```bash
+python tools/sweep.py run repudiation-curve --workers 20     # ~9 min
+python tools/sweep.py reduce repudiation-curve --out docs/tables --charts docs/figures
+```
+
+`run` is resumable: re-running the identical line after an interruption costs only the trials that
+were in flight. The seven production runs together are 12,494 trials in about 23 minutes at twenty
+workers and 239 MiB of disk; all seven reductions plus both charts take about a minute and re-run
+nothing. `python tools/sweep.py perf` measures the machine rather than the protocol.
+[`docs/PHASE5.md`](docs/PHASE5.md) §5 lists the seven commands.
+
 ## Layout
 
 ```
@@ -403,6 +490,22 @@ sih141/detect/     the detection engine (Phase 4)
   detector.py      the composite rule, the allocation of the budget over the three
                    families, and the union bound that recombines them
 
+sih141/eval/       the evaluation harness (Phase 5)
+  seeds.py         the seed rule: blake2b over (experiment, cell, role, index) and
+                   nothing else, which is what makes a parallel sweep publishable
+  experiments.py   the cell and experiment registry, and the one function a new
+                   scenario has to be
+  records.py       the reduced per-trial record, with ground truth kept in a field
+                   the detector has already returned before it is attached
+  store.py         one file per trial, written atomically, so a sweep resumes
+  runner.py        the process pool, BLAS pinned in the parent before it exists
+  manifest.py      commit, dirty flag, exact command line, seed rule, machine
+  reduce.py        records to tables — and every way a table can quietly lie,
+                   closed off in a type or a test
+  security.py      the repudiation and forgery curves
+  roc.py           the ROC family: eps swept at reduce time over retained transcripts
+  perf.py          this machine, measured — throughput, speedup, memory, the edges
+
 sih141/web/        the dashboard (Phase 6) — one FastAPI process, both halves
   __main__.py      the one command: python -m sih141.web
   api.py           create_app(), six endpoints, the concurrency gate
@@ -413,8 +516,11 @@ sih141/web/        the dashboard (Phase 6) — one FastAPI process, both halves
   payload.py       the transcript facts the screen needs
   static/          the frontend — 26 vendored files, nothing fetched from a network
 
+tools/             sweep.py (run / reduce / perf), metrics.py, journal.py
 tests/             pytest suite
 docs/              engineering notes per phase
+  tables/          Phase 5 results, regenerated by tools/sweep.py reduce
+  figures/         the two Phase 5 charts, each printing its own command
 ```
 
 ## Design decisions

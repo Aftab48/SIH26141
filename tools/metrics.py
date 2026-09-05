@@ -128,7 +128,14 @@ def main() -> int:
     if ns.no_tests:
         add("_Skipped (`--no-tests`)._")
     else:
-        res = run([sys.executable, "-m", "pytest", "--tb=no", "-p", "no:cacheprovider"])
+        # Two hours, not the default thirty minutes. The suite is ~3,800 tests
+        # and takes 25-40 minutes on an idle machine, but a busy one runs the
+        # protocol at roughly half speed (docs/PHASE5.md 11.2 measures the
+        # single-threaded rate moving by 49% between two runs of one command).
+        # A timeout here does not fail loudly: it writes "<no summary line>"
+        # into METRICS.md, which has already shipped once.
+        res = run([sys.executable, "-m", "pytest", "--tb=no", "-p", "no:cacheprovider"],
+                  timeout=7200)
         summary = next((l.strip() for l in reversed(res.splitlines())
                         if re.search(r"\d+ (passed|failed|error)", l)), "<no summary line>")
         add("```")
@@ -136,7 +143,7 @@ def main() -> int:
         add("```")
         add("")
         collected = run([sys.executable, "-m", "pytest", "--collect-only",
-                         "-p", "no:cacheprovider"])
+                         "-p", "no:cacheprovider"], timeout=3600)
         doctests = len(re.findall(r"^sih141[/\\]", collected, re.M))
         add(f"- Doctests collected from package modules: **{doctests}**")
         add("- `--doctest-modules` is enabled over `testpaths = [\"tests\", \"sih141\"]`, so every")

@@ -518,15 +518,26 @@ def test_a_missing_trial_index_is_named_in_the_table(all_records) -> None:
     file. The reduction therefore checks the index sequence for gaps, and
     this proves the check fires rather than always printing the reassuring
     line.
+
+    The note now comes from :func:`~sih141.eval.reduce.completeness_note`, so
+    the intact case says what it could and could not check: without a store to
+    read manifests from, this table can only see interior gaps, and a cell
+    short by its *last* trials looks intact here. That half of the check lives
+    on the outcome table, which is built with the store in hand. The wording
+    is asserted because the difference between "nothing is missing" and "I
+    could only check for one of the two ways things go missing" is the whole
+    point of the change.
     """
-    intact = roc_table(all_records, eps_values=(1e-9,))
-    assert any("No trial index is missing" in note for note in intact.notes)
+    ladder = (1e-9,)
+    intact = roc_table(all_records, eps_values=ladder)
+    assert any("only interior gaps were" in note for note in intact.notes)
+    assert not any("No trial index is missing" in note for note in intact.notes)
 
     gapped = [r for r in all_records if not (r.cell == "honest" and r.index == 1)]
-    holed = roc_table(gapped, eps_values=(1e-9,))
-    complaint = [note for note in holed.notes if "MISSING TRIALS" in note]
+    holed = roc_table(gapped, eps_values=ladder)
+    complaint = [note for note in holed.notes if "INCOMPLETE" in note]
     assert len(complaint) == 1
-    assert "honest: [1]" in complaint[0]
+    assert "honest is missing index [1]" in complaint[0]
 
 
 def test_the_measured_interval_is_the_wilson_interval() -> None:

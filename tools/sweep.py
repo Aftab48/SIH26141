@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import sys
 from pathlib import Path
 from typing import Any, Sequence
@@ -64,6 +65,7 @@ from sih141.eval.perf import (  # noqa: E402
     detector_latency,
     measure_memory,
     measure_scaling,
+    measure_small_end,
     speedup_table,
 )
 from sih141.eval.reduce import EXTRA_CHARTS, reduce_experiment  # noqa: E402
@@ -164,7 +166,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--retain-transcripts",
         action="store_true",
         help=(
-            "keep the full transcript on every record: 26.7 MB per trial at "
+            "keep the full transcript on every record: 25.4 MiB per trial at "
             "L=115200, so for a named handful of worked examples only"
         ),
     )
@@ -232,6 +234,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--memory",
         action="store_true",
         help="peak resident set against key length, read from an OS counter",
+    )
+    perf.add_argument(
+        "--small-end",
+        action="store_true",
+        help=(
+            "probe the key lengths too small to carry a security claim: "
+            "floors, honest-run aborts, and which families are evaluable"
+        ),
+    )
+    perf.add_argument(
+        "--small-end-lengths",
+        type=_int_list,
+        default=[3, 6, 12, 24, 96, 180, 183, 384],
+        help="key lengths for --small-end (default 3,6,12,24,96,180,183,384)",
     )
     perf.add_argument("--probe", action="store_true", help="report what workers see")
     perf.add_argument(
@@ -386,9 +402,13 @@ def command_reduce(args: argparse.Namespace) -> int:
     """
     store = ResultStore(args.results)
     cells = None if args.cells is None else [c.strip() for c in args.cells.split(",")]
+    # shlex.quote, exactly as `command_line` does on the run side. D9's claim is
+    # that a reviewer can re-run the printed command, and an unquoted path with
+    # a space in it prints a command that argparse rejects with "unrecognized
+    # arguments" -- a table that looks reproducible and is not.
     regenerate = (
         f"python tools/sweep.py reduce {args.experiment} "
-        f"--results {args.results}"
+        f"--results {shlex.quote(str(args.results))}"
     )
     tables = reduce_experiment(
         store, args.experiment, command=regenerate, cells=cells
@@ -475,7 +495,9 @@ def _write_charts(
         order = registered.cell_names
     destination.mkdir(parents=True, exist_ok=True)
     for name, body in renderer(
-        records, command=f"{command} --charts {destination}", cell_order=order
+        records,
+        command=f"{command} --charts {shlex.quote(str(destination))}",
+        cell_order=order,
     ).items():
         path = destination / name
         path.write_text(body, encoding="utf-8")
@@ -598,6 +620,7 @@ def command_perf(args: argparse.Namespace) -> int:
             args.session_scaling,
             args.detector_latency,
             args.memory,
+            args.small_end,
             args.probe,
         )
     )
@@ -609,7 +632,7 @@ def command_perf(args: argparse.Namespace) -> int:
         rows = measure_scaling(args.key_lengths)
         report["session_scaling"] = rows
         if not args.json:
-            print("| L | seconds | ms/position | positions/s | KB/position |")
+            print("| L | seconds | ms/position | positions/s | KiB/position |")
             print("| --- | --- | --- | --- | --- |")
             for row in rows:
                 print(
@@ -624,7 +647,7 @@ def command_perf(args: argparse.Namespace) -> int:
         rows = [detector_latency(L, seed=11 + L) for L in args.key_lengths]
         report["detector_latency"] = rows
         if not args.json:
-            print("| L | JSON bytes | detect s (min) | detect s (mean) | MB/s |")
+            print("| L | JSON bytes | detect s (min) | detect s (mean) | MiB/s |")
             print("| --- | --- | --- | --- | --- |")
             for row in rows:
                 print(
@@ -638,12 +661,45 @@ def command_perf(args: argparse.Namespace) -> int:
         rows = measure_memory(sorted(args.key_lengths))
         report["memory"] = rows
         if not args.json:
-            print("| L | peak RSS MB | rise MB | transcript MB |")
+            print("| L | peak RSS MiB | rise MiB | transcript MiB |")
             print("| --- | --- | --- | --- |")
             for row in rows:
                 print(
                     f"| {row['key_length']} | {row['peak_rss_mb']:.1f} | "
                     f"{row['delta_mb']:+.1f} | {row['json_mb']:.2f} |"
+                )
+            print()
+
+    if args.small_end or nothing_asked:
+        rows = measure_small_end(args.small_end_lengths)
+        report["small_end"] = rows
+        if not args.json:
+            print(
+                "| L | signing length | m_min | M_min | aborts / trials | "
+                "security claim | families withheld |"
+            )
+            print("| --- | --- | --- | --- | --- | --- | --- |")
+            for row in rows:
+                if row["refused"]:
+                    # A refused parameter set is a ROW. A length missing from
+                    # the table reads as one nobody tried.
+                    print(
+                        f"| {row['key_length']} | parameter set **refused** "
+                        f"| - | - | - | - | - |"
+                    )
+                    continue
+                lo, hi = row["withheld_min"], row["withheld_max"]
+                span = str(lo) if lo == hi else f"{lo}-{hi}"
+                claim = (
+                    "varies"
+                    if row["security_claim_varies"]
+                    else ("yes" if row["security_claim"] else "no")
+                )
+                print(
+                    f"| {row['key_length']} | {row['signing_length']} | "
+                    f"{row['m_min']} | {row['M_min']} | "
+                    f"{row['aborts']} / {row['trials']} | "
+                    f"{claim} | {span} |"
                 )
             print()
 

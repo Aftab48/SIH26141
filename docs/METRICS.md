@@ -2,16 +2,16 @@
 
 **SIH26141** — Quantum-Inspired Cyber Threat Detection for Digital Signature Security
 
-Generated `2026-09-03 16:49 UTC` by `tools/metrics.py`. Every figure is computed from the
+Generated `2026-09-05 11:07 UTC` by `tools/metrics.py`. Every figure is computed from the
 repository — do not edit by hand, re-run the script.
 
 ## Test suite
 
 ```
-3048 passed in 1276.85s (0:21:16)
+3794 passed in 2283.29s (0:38:03)
 ```
 
-- Doctests collected from package modules: **356**
+- Doctests collected from package modules: **481**
 - `--doctest-modules` is enabled over `testpaths = ["tests", "sih141"]`, so every
   numeric claim written in a docstring is an executable test. Documentation that
   lies fails the suite.
@@ -52,10 +52,28 @@ repository — do not edit by hand, re-run the script.
 | `sih141/detect/thresholds_channel.py` | 2905 | 591 | 1865 | 81 | 34 | 3 |
 | `sih141/detect/thresholds_rate.py` | 3216 | 753 | 2003 | 73 | 43 | 4 |
 | `sih141/detect/thresholds_structural.py` | 3138 | 668 | 2024 | 51 | 43 | 8 |
-| **total** | **57761** | **13812** | **35677** | **1269** | **910** | **109** |
+| `sih141/eval/__init__.py` | 286 | 200 | 76 | 0 | 0 | 0 |
+| `sih141/eval/experiments.py` | 888 | 277 | 492 | 3 | 16 | 2 |
+| `sih141/eval/manifest.py` | 516 | 191 | 269 | 0 | 11 | 1 |
+| `sih141/eval/perf.py` | 1113 | 425 | 527 | 10 | 11 | 1 |
+| `sih141/eval/records.py` | 781 | 219 | 473 | 0 | 16 | 2 |
+| `sih141/eval/reduce.py` | 1131 | 406 | 584 | 24 | 13 | 1 |
+| `sih141/eval/roc.py` | 2526 | 1140 | 1070 | 59 | 33 | 2 |
+| `sih141/eval/runner.py` | 662 | 194 | 380 | 0 | 12 | 2 |
+| `sih141/eval/security.py` | 3138 | 1228 | 1512 | 42 | 46 | 3 |
+| `sih141/eval/seeds.py` | 363 | 58 | 246 | 0 | 6 | 1 |
+| `sih141/eval/store.py` | 448 | 82 | 299 | 0 | 16 | 1 |
+| `sih141/web/__init__.py` | 145 | 34 | 96 | 0 | 0 | 0 |
+| `sih141/web/__main__.py` | 329 | 97 | 175 | 10 | 4 | 0 |
+| `sih141/web/api.py` | 887 | 316 | 432 | 35 | 16 | 3 |
+| `sih141/web/catalogue.py` | 583 | 317 | 207 | 7 | 5 | 1 |
+| `sih141/web/driver.py` | 1250 | 512 | 562 | 40 | 12 | 3 |
+| `sih141/web/limits.py` | 1070 | 277 | 578 | 78 | 14 | 2 |
+| `sih141/web/payload.py` | 696 | 277 | 341 | 10 | 9 | 0 |
+| **total** | **74573** | **20062** | **43996** | **1587** | **1150** | **134** |
 
-Tests: **38204 lines** across **33 files**, **1873 test functions** defined.
-Test-lines to code-lines ratio: **2.77 : 1**
+Tests: **47722 lines** across **41 files**, **2311 test functions** defined.
+Test-lines to code-lines ratio: **2.38 : 1**
 
 ## Live security parameters
 
@@ -81,24 +99,34 @@ actually computes today — not what a document once claimed.
 
 | File | Words |
 | --- | ---: |
-| `README.md` | 4460 |
-| `JOURNAL.md` | 56470 |
-| `docs/METRICS.md` | 1052 |
+| `README.md` | 6284 |
+| `JOURNAL.md` | 92152 |
+| `docs/METRICS.md` | 1440 |
 | `docs/PHASE1.md` | 4078 |
 | `docs/PHASE2.md` | 10056 |
 | `docs/PHASE3.md` | 15026 |
 | `docs/PHASE4.md` | 9654 |
-| `docs/QDS.md` | 4644 |
-| **total** | **105440** |
+| `docs/PHASE5.md` | 12536 |
+| `docs/PHASE6.md` | 12333 |
+| `docs/QDS.md` | 5356 |
+| **total** | **168915** |
 
-Working-journal entries: **152** (temporary; deleted at the end of Phase 7).
+Working-journal entries: **238** (temporary; deleted at the end of Phase 7).
 
 ## Repository
 
-- Commits: **19**
+- Commits: **27**
 
 | Commit | Subject |
 | --- | --- |
+| `6cb0f57` | Add the Phase 5 experiment families: security curves and ROC |
+| `98db568` | Add the Phase 5 evaluation harness: a resumable parallel sweep, determinism proven |
+| `d09878f` | Configure pyright so its output is short enough to read: 519 errors to six |
+| `95799b4` | Close the Phase 6 audit: twelve defects fixed, a thirteenth found |
+| `abea2e8` | Close Phase 6: the dashboard runs, four defects found by driving it |
+| `328b8ca` | Refuse non-finite input without crashing the refusal |
+| `57a91ed` | Add the Phase 6 dashboard: API, frontend and their test suites |
+| `efc2f22` | Fix the four open audit findings; correct a profiler-inflated timing |
 | `505b71f` | Close Phase 4: three sound audits, two prose defects fixed |
 | `2e75d91` | Close routes H and I; audit 22 thresholds; reconcile the families |
 | `c61ee52` | Derive 22 thresholds and compose them with a family-wise bound |
@@ -116,5 +144,3 @@ Working-journal entries: **152** (temporary; deleted at the end of Phase 7).
 | `8182fc4` | runway doc update |
 | `cf32fc0` | Harden checkpoint against concurrent-agent races |
 | `64185f9` | Add pooled matched-count floor and close split-coin repudiation |
-| `e17328b` | Fix non-repudiation bound and add matched-count floor |
-| `34aebea` | Add Phase 1 quantum core and Phase 2 QDS protocol |

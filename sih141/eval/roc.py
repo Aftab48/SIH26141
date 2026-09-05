@@ -50,15 +50,16 @@ at run level the set of budgets a run fires at must be an up-set, and
 
 So the cells retain their transcripts and the ladder is applied by the
 reduction. Measured at ``L = 384``, ``check_fraction = 0.25``: a session is
-798 ms, its JSON is 125 KB, re-reading that JSON is 7 ms and one
+798 ms, its JSON is 125 KiB, re-reading that JSON is 7 ms and one
 :func:`~sih141.detect.detector.detect` call is 2.6 ms. Fifteen budgets is 5% of
 one session, and the reduction pays it instead of the sweep -- which buys
 something better than the saving: **the ladder is not frozen at run time.** A
 reviewer who wants an operating point between two of ours re-reduces; nobody
-re-runs. What it costs is disk and a slower reduction: 154 KB per record, 90 MB
-for the production family, and about 35 s to redraw every table (measured: one
+re-runs. What it costs is disk and a slower reduction: 154 KiB per record,
+90 MiB for the production family (measured on the production store: 153.8 and
+90.1), and about 35 s to redraw every table (measured: one
 ladder pass over 60 records is 3.05 s). If this family is ever taken to
-``L = 115200``, where a transcript is 38 MB, that trade reverses and the ladder
+``L = 115200``, where a transcript is 37 MiB, that trade reverses and the ladder
 belongs on the record instead.
 
 .. _roc-crosscheck:
@@ -106,9 +107,10 @@ False
 False
 
 Every cell keeps its transcript, because the ladder is applied afterwards. A
-whole record is 154 KB measured -- the 125 KB transcript plus the verdict, the
-summary and JSON escaping -- so the production family is about **90 MB** on
-disk:
+whole record is 154 KiB measured -- the 125 KiB transcript plus the verdict,
+the summary and JSON escaping -- so the production family is about **90 MiB**
+on disk. Kibibytes throughout, because every other size in this package is
+``len(...) / 1024``:
 
 >>> all(cell.retain_transcript for cell in roc.cells)
 True
@@ -124,7 +126,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Final, Sequence
+from typing import Any, Final, Mapping, Sequence
 
 from sih141.attacks.forgery import OutsideForger, RecipientForger
 from sih141.attacks.impersonation import (
@@ -155,9 +157,19 @@ from .experiments import (
     SCENARIOS,
     Cell,
     Experiment,
+    claim,
 )
 from .records import UNDETECTABLE_BY_CONSTRUCTION, GroundTruth, TrialRecord
-from .reduce import CONFIDENCE, NOT_EVALUATED, Table, group_records
+from .reduce import (
+    CONFIDENCE,
+    NOT_EVALUATED,
+    Table,
+    completeness_note,
+    escape_xml,
+    group_records,
+    measured_rate,
+    refused_run,
+)
 from .seeds import TrialSeeds
 
 __all__ = [
@@ -1073,7 +1085,7 @@ def score_ladder(
     # Parsed once, then handed to every budget. detect() re-reads JSON text on
     # every call, and at L = 384 that parse is 7 ms against a 3 ms detection --
     # so a fifteen-rung ladder would spend two thirds of its time reading the
-    # same 125 KB fifteen times. The detector's own doctest pins that the three
+    # same 125 KiB fifteen times. The detector's own doctest pins that the three
     # doors agree byte for byte, so this is the same computation and not a
     # shortcut past one.
     stats = TranscriptStatistics.from_json(text)
@@ -1386,28 +1398,6 @@ class RocPoint:
         return None if self.clean == 0 else self.false_alarms / self.clean
 
 
-def _measured(successes: int, trials: int) -> str:
-    """Format a measured rate with its interval, or say there is none.
-
-    Parameters
-    ----------
-    successes, trials : int
-        Numerator and denominator.
-
-    Returns
-    -------
-    str
-        ``k/n = p [lo, hi]``, or ``no trials``.
-    """
-    if trials <= 0:
-        return "no trials"
-    interval = wilson_interval(successes, trials, confidence=CONFIDENCE)
-    return (
-        f"{successes}/{trials} = {successes / trials:.3f} "
-        f"[{interval.low:.3f}, {interval.high:.3f}]"
-    )
-
-
 def _median_matched(group: Sequence[TrialRecord]) -> int | None:
     """Return the group's median matched count over both verifiers.
 
@@ -1496,12 +1486,15 @@ def roc_points(
         detectable = all(r.truth.detectable for r in group)
         attacked = [r for r in group if r.truth.attacked]
         clean = [r for r in group if not r.truth.attacked]
-        refusals = sum(
-            1
-            for r in group
-            if any(v == "refused" for v in r.transcript_summary["verdicts"].values())
-            or len(r.transcript_summary["verdicts"]) < 2
-        )
+        # Through the shared predicate, so this family and the standard
+        # detection table cannot drift apart on what a refusal is. The second
+        # clause this used to carry -- fewer than two recorded verdicts --
+        # is a *not-asked* party in the outcome table's taxonomy, which that
+        # table is explicit is "a third thing again from a refusal"; it was
+        # dead on every record ever produced (all 12,494 of the production
+        # sweep carry exactly two) and folding it in here contradicted the
+        # table three sections above.
+        refusals = sum(1 for r in group if refused_run(r))
         matched = _median_matched(group)
         cut = float(group[0].params["s_a"])
         for position, eps in enumerate(eps_values):
@@ -1547,42 +1540,51 @@ def roc_points(
     return tuple(out)
 
 
-def _missing_note(records: Sequence[TrialRecord]) -> str:
-    """Name any trial index absent from a cell, or say none is.
+def _missing_note(
+    records: Sequence[TrialRecord],
+    expected: Mapping[str, int] | None = None,
+) -> str:
+    """Say whether every trial the sweep asked for is on disk.
 
     Parameters
     ----------
     records : Sequence of TrialRecord
         All records for the experiment.
+    expected : Mapping or None, optional
+        Per-cell trial counts from the store's manifests, handed down the
+        :data:`~sih141.eval.reduce.EXTRA_REDUCTIONS` contract. ``None`` or
+        empty means the caller had no manifest to check against, and the note
+        then says only what it could check.
 
     Returns
     -------
     str
         A footnote. A trial whose scenario raised leaves **no file on disk**,
         so a reduction that only counted what it found would publish a rate
-        over a denominator that had quietly shrunk. This looks for gaps in the
-        index sequence and says so.
+        over a denominator that had quietly shrunk.
+
+    Notes
+    -----
+    This delegates to :func:`~sih141.eval.reduce.completeness_note` and is kept
+    only because this family's ROC table wants the footnote on its own table
+    rather than only on the outcome table.
+
+    It used to be a second implementation, and the difference mattered: it
+    looked for gaps *below the highest index present*, which catches a scenario
+    that raised and misses the case an interrupted sweep actually leaves -- a
+    short tail. A cell asked for 400 trials with 380 on disk reported "no trial
+    index is missing from any cell", which is false reassurance rather than
+    silence. The shared version checks the count against the manifest as well.
+
+    It then made the opposite mistake for one release: called with no expected
+    counts at all, it printed "No manifest recorded a trial count for this
+    store" onto a grid whose own outcome table, three sections up the same
+    file, said "Complete: every cell has all the trials its manifest asked
+    for". Both cannot be true of one store, and a reader has no way to tell
+    which. The counts now come down the reduction hook, so the two notes are
+    computed from the same mapping.
     """
-    gaps: list[str] = []
-    by_cell: dict[str, set[int]] = {}
-    for record in records:
-        by_cell.setdefault(record.cell, set()).add(record.index)
-    for cell in sorted(by_cell):
-        seen = by_cell[cell]
-        absent = sorted(set(range(max(seen) + 1)) - seen)
-        if absent:
-            gaps.append(f"{cell}: {absent}")
-    if not gaps:
-        return (
-            "No trial index is missing from any cell: every index from 0 to "
-            "the highest present is on disk. A trial whose scenario raised "
-            "would leave no file, so this is checked rather than assumed."
-        )
-    return (
-        "**MISSING TRIALS** -- these indices are absent from disk and the "
-        "denominators above are smaller than the sweep asked for: "
-        + "; ".join(gaps)
-    )
+    return completeness_note(records, dict(expected or {}))
 
 
 # --------------------------------------------------------------------------- #
@@ -1664,6 +1666,7 @@ def roc_table(
     command: str = "",
     cell_order: Sequence[str] | None = None,
     eps_values: Sequence[float] = EPS_LADDER,
+    expected: Mapping[str, int] | None = None,
 ) -> Table:
     """The ROC grid: one row per cell, ordering and budget.
 
@@ -1677,6 +1680,10 @@ def roc_table(
         Keyword-only. Row order.
     eps_values : Sequence of float, optional
         Keyword-only. The ladder.
+    expected : Mapping or None, optional
+        Keyword-only. Per-cell trial counts the sweep asked for, so the
+        completeness footnote can check the count and not only the index
+        sequence. See :func:`_missing_note`.
 
     Returns
     -------
@@ -1717,10 +1724,10 @@ def roc_table(
             (
                 UNDETECTABLE_BY_CONSTRUCTION
                 if not point.detectable
-                else _measured(point.detected, point.attacked)
+                else measured_rate(point.detected, point.attacked)
             ),
             point.clean,
-            _measured(point.false_alarms, point.clean),
+            measured_rate(point.false_alarms, point.clean),
             point.refusals,
             (
                 "yes"
@@ -1767,7 +1774,7 @@ def roc_table(
         ),
         rows=rows,
         command=command,
-        notes=tuple(_roc_notes(points) + [_missing_note(records)]),
+        notes=tuple(_roc_notes(points) + [_missing_note(records, expected)]),
     )
 
 
@@ -1875,7 +1882,7 @@ def roc_envelope_table(
                 return UNDETECTABLE_BY_CONSTRUCTION
             if point is None:
                 return f"{NOT_EVALUATED} (budget not on the ladder)"
-            return _measured(point.detected, point.attacked)
+            return measured_rate(point.detected, point.attacked)
 
         rows.append(
             (
@@ -1905,6 +1912,12 @@ def roc_envelope_table(
         f"The `at eps=1e-09` column is the one Phase 4 section 5 published, "
         f"at the same n = {ROC_TRIALS} and the same key length, so the two "
         "are directly comparable.",
+        "ABORTS: every rate here is over `attacked` or `clean`, and a run "
+        "where a verifier reached no verdict stays in whichever of the two it "
+        "belongs to -- a refusal is not a rejection and it is not a miss. The "
+        "grid above carries the per-cell `refusals` count, and the "
+        "recipient-forgery rows are the case worth reading there: one "
+        "ordering is a denial of transfer and the other a forgery rate.",
     ]
     if violations:
         notes.append(
@@ -2027,7 +2040,7 @@ def roc_prototype_table(
                     if undetectable
                     else ""
                 ),
-                f"{_measured(clean_alarms, clean_runs)} observed",
+                f"{measured_rate(clean_alarms, clean_runs)} observed",
                 f"{max(bounds):.4e} proven, per run, under the honest null"
                 if bounds
                 else NOT_EVALUATED,
@@ -2069,6 +2082,13 @@ def roc_prototype_table(
             "own error rate is admitted into the null, an adversary at or near "
             "that level is inside the noise the protocol already tolerates. "
             "That is a result about the protocol's observability.",
+            "DENOMINATORS AND ABORTS: `false alarms (measured)` is over the "
+            "clean runs of the arms in that row's null -- the untargeted runs "
+            "of a selective cell included, since such a run is byte-identical "
+            "to an honest one -- and the count is printed rather than implied. "
+            "None of those runs reached a no-verdict; where an arm does refuse "
+            "it is counted in the grid's own `refusals` column and is added to "
+            "neither denominator.",
         ),
     )
 
@@ -2291,7 +2311,7 @@ def roc_chart_svg(
         if not group[0].detectable:
             parts.append(
                 f'<text x="{plot_right + 16}" y="{legend_y + 4}" fill="#777777" '
-                f'font-size="11">{_escape(label)}: '
+                f'font-size="11">{escape_xml(label)}: '
                 f"{UNDETECTABLE_BY_CONSTRUCTION}</text>"
             )
             legend_y += 18
@@ -2300,7 +2320,7 @@ def roc_chart_svg(
         if not plotted:
             parts.append(
                 f'<text x="{plot_right + 16}" y="{legend_y + 4}" fill="#777777" '
-                f'font-size="11">{_escape(label)}: no attacked runs</text>'
+                f'font-size="11">{escape_xml(label)}: no attacked runs</text>'
             )
             legend_y += 18
             continue
@@ -2335,7 +2355,7 @@ def roc_chart_svg(
         )
         parts.append(
             f'<text x="{plot_right + 46}" y="{legend_y + 4}" fill="{colour}" '
-            f'font-size="11">{_escape(label)} '
+            f'font-size="11">{escape_xml(label)} '
             f"(n={plotted[0].attacked})</text>"
         )
         legend_y += 18
@@ -2344,32 +2364,11 @@ def roc_chart_svg(
     parts.append(
         f'<text x="{_CHART_LEFT}" y="{_CHART_HEIGHT - 12}" fill="#777777" '
         f'font-size="10">Regenerate: '
-        f'{_escape(command or "NO COMMAND RECORDED -- not reproducible (D9)")}'
+        f'{escape_xml(command or "NO COMMAND RECORDED -- not reproducible (D9)")}'
         "</text>"
     )
     parts.append("</svg>")
     return "\n".join(parts)
-
-
-def _escape(text: str) -> str:
-    """Escape the five XML metacharacters.
-
-    Parameters
-    ----------
-    text : str
-        Raw text.
-
-    Returns
-    -------
-    str
-    """
-    return (
-        text.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-        .replace("'", "&apos;")
-    )
 
 
 # --------------------------------------------------------------------------- #
@@ -2382,6 +2381,7 @@ def roc_reduction(
     *,
     command: str = "",
     cell_order: Sequence[str] | None = None,
+    expected: Mapping[str, int] | None = None,
 ) -> list[Table]:
     """Turn ROC result files into the published tables.
 
@@ -2397,6 +2397,10 @@ def roc_reduction(
         Keyword-only. Stamped on each table.
     cell_order : Sequence of str or None, optional
         Keyword-only.
+    expected : Mapping or None, optional
+        Keyword-only. Per-cell trial counts the sweep asked for, handed down
+        by :func:`~sih141.eval.reduce.reduce_experiment` so the grid's
+        completeness footnote checks the same mapping the outcome table does.
 
     Returns
     -------
@@ -2419,7 +2423,12 @@ def roc_reduction(
             "published: " + "; ".join(problems[:5])
         )
     return [
-        roc_table(records, command=command, cell_order=cell_order),
+        roc_table(
+            records,
+            command=command,
+            cell_order=cell_order,
+            expected=expected,
+        ),
         roc_envelope_table(records, command=command, cell_order=cell_order),
         roc_prototype_table(records, command=command, cell_order=cell_order),
     ]
@@ -2504,52 +2513,14 @@ def register(
     target_scenarios = SCENARIOS if scenarios is None else scenarios
     target_experiments = EXPERIMENTS if experiments is None else experiments
     for name, function in ROC_SCENARIOS.items():
-        _claim(target_scenarios, name, function, "scenario")
+        claim(target_scenarios, name, function, "scenario")
     for name, options in ROC_PROBE_OPTIONS.items():
-        _claim(SCENARIO_PROBE_OPTIONS, name, options, "probe options")
+        claim(SCENARIO_PROBE_OPTIONS, name, options, "probe options")
     # After the scenarios, never before: building the cells validates each
     # one's scenario against the live registry.
-    _claim(target_experiments, "roc", _singleton_experiment(), "experiment")
-    _claim(reduce_module.EXTRA_REDUCTIONS, "roc", roc_reduction, "reduction")
-    _claim(reduce_module.EXTRA_CHARTS, "roc", roc_charts, "chart renderer")
-
-
-def _claim(registry: dict[str, Any], name: str, value: Any, what: str) -> None:
-    """Put ``value`` in ``registry`` under ``name``, refusing to displace another.
-
-    Parameters
-    ----------
-    registry : dict
-        A shared Phase 5 registry.
-    name : str
-        The key this family claims.
-    value : object
-        What it claims the key for.
-    what : str
-        Noun for the error message.
-
-    Raises
-    ------
-    RuntimeError
-        If the key is already held by something that is not ``value``.
-
-    Notes
-    -----
-    Symmetric on purpose, and it is the second half that is easy to get wrong:
-    a guard that refuses to *overwrite* but silently *yields* -- ``setdefault``,
-    or ``if key not in registry`` -- leaves the losing family registered
-    nowhere and its cells never run, which looks from the outside exactly like
-    a family nobody wrote. Both directions are a collision and both raise.
-    """
-    existing = registry.get(name)
-    if existing is not None and existing is not value:
-        raise RuntimeError(
-            f"{what} {name!r} is already registered to something else "
-            f"({existing!r}). Two Phase 5 families sharing a registry key "
-            f"would give whichever imported last, silently, and the other's "
-            f"cells would run under the wrong label or not at all."
-        )
-    registry[name] = value
+    claim(target_experiments, "roc", _singleton_experiment(), "experiment")
+    claim(reduce_module.EXTRA_REDUCTIONS, "roc", roc_reduction, "reduction")
+    claim(reduce_module.EXTRA_CHARTS, "roc", roc_charts, "chart renderer")
 
 
 register()

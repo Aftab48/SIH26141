@@ -102,6 +102,7 @@ __all__ = [
     "SCENARIO_PROBE_OPTIONS",
     "Scenario",
     "all_cells",
+    "claim",
     "experiment",
     "honest_scenario",
     "depolarising_scenario",
@@ -157,8 +158,9 @@ class Cell:
         impersonation under (AUTH). The reduction prints
         ``undetectable-by-construction`` for such a row rather than a zero.
     retain_transcript : bool
-        Keep the whole transcript on every record. About 26.7 MB per trial at
-        ``L = 115200``, so reserved for named worked examples.
+        Keep the whole transcript on every record. About 25.4 MiB per trial
+        at ``L = 115200`` unchecked and 37.2 MiB at ``check_fraction = 0.25``,
+        so reserved for named worked examples.
     notes : str
         Footnote for the row.
 
@@ -519,6 +521,74 @@ Examples
 >>> SCENARIO_PROBE_OPTIONS["depolarising"]
 {'strength': 0.25}
 """
+
+
+def claim(registry: dict[str, Any], name: str, value: Any, what: str) -> None:
+    """Put ``value`` in ``registry`` under ``name``, refusing to displace another.
+
+    The one guard every Phase 5 family uses for every registry it writes to --
+    :data:`SCENARIOS`, :data:`SCENARIO_PROBE_OPTIONS`, :data:`EXPERIMENTS`,
+    ``reduce.EXTRA_REDUCTIONS`` and ``reduce.EXTRA_CHARTS``. It takes the
+    registry as an argument rather than importing it, so a family can claim a
+    key in a module this one does not import.
+
+    Parameters
+    ----------
+    registry : dict
+        A shared Phase 5 registry.
+    name : str
+        The key this family claims.
+    value : object
+        What it claims the key for.
+    what : str
+        Noun for the error message, e.g. ``"scenario"``.
+
+    Raises
+    ------
+    RuntimeError
+        If the key is already held by something that is not ``value``.
+
+    Notes
+    -----
+    Symmetric on purpose, and it is the second half that is easy to get wrong.
+    A guard that refuses to *overwrite* but silently *yields* -- ``setdefault``,
+    or ``if key not in registry`` -- leaves the losing family registered
+    nowhere and its cells never run, which looks from the outside exactly like
+    a family nobody wrote. A guard that silently overwrites gives whichever
+    family imported last. Both directions are a collision and both raise.
+
+    Re-claiming a key for the identical object is a no-op, which is what makes
+    a family's ``register()`` idempotent under a repeated import.
+
+    Examples
+    --------
+    Claiming a free key, then re-claiming it for the same object:
+
+    >>> from sih141.eval.experiments import claim
+    >>> registry: dict[str, object] = {}
+    >>> claim(registry, "mine", len, "scenario")
+    >>> claim(registry, "mine", len, "scenario")
+    >>> registry
+    {'mine': <built-in function len>}
+
+    Both directions of collision raise, and the registry is left alone:
+
+    >>> claim(registry, "mine", sorted, "scenario")
+    Traceback (most recent call last):
+        ...
+    RuntimeError: scenario 'mine' is already registered to something else...
+    >>> registry["mine"] is len
+    True
+    """
+    existing = registry.get(name)
+    if existing is not None and existing is not value:
+        raise RuntimeError(
+            f"{what} {name!r} is already registered to something else "
+            f"({existing!r}). Two Phase 5 families sharing a registry key "
+            f"would give whichever imported last, silently, and the other's "
+            f"cells would run under the wrong label or not at all."
+        )
+    registry[name] = value
 
 
 def run_trial(

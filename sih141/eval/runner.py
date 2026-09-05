@@ -195,6 +195,19 @@ def global_rng_fingerprint() -> str:
     ``touched_global_rng``, and the sweep would say so. A test that merely
     grepped the sources for ``np.random.`` would pass on a call made three
     libraries down.
+
+    WHAT IT DOES NOT SEE, stated because the flag is easy to over-read. It
+    digests the two *global* states, so it catches a draw from them and
+    nothing else. A scenario that builds its own entropy-seeded generator --
+    ``numpy.random.default_rng()`` with no argument, which is what
+    ``resolve_rng(None)`` returns -- never touches either global, leaves this
+    digest unchanged, and is still irreproducible. Confirmed by execution: a
+    thousand draws from a fresh unseeded ``default_rng`` move nothing here,
+    while one ``numpy.random.random()`` moves it. So ``touched_global_rng ==
+    False`` means the two globals were untouched; it is not by itself a proof
+    that a trial is reproducible. The proof of that is the determinism check
+    -- the same seeds giving byte-identical records at one worker and at
+    twenty -- and an unseeded generator fails that loudly.
     """
     import random as _random
 
@@ -268,7 +281,7 @@ class TrialOutcome:
     """What a worker reports back once a trial is on disk.
 
     The record itself is **not** sent back: at ``L = 115200`` with transcripts
-    retained it would be 26.7 MB through a pipe, per trial. The worker writes
+    retained it would be 25.4 MiB through a pipe, per trial. The worker writes
     the file and returns this.
 
     Attributes

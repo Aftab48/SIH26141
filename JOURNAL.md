@@ -8,7 +8,7 @@
 > on the maintainer's explicit instruction. The permanent record is
 > `docs/METRICS.md` and the `docs/PHASE*.md` notes.
 
-**215 entries** — 54 finding · 49 note · 44 decision · 37 fix · 28 issue · 3 deadend
+**239 entries** — 61 finding · 60 note · 46 decision · 41 fix · 28 issue · 3 deadend
 
 
 ## Phase 0 — Scaffold
@@ -7451,6 +7451,848 @@ longer need an edit per family.
 COST, MEASURED: 555 core-seconds for the production sweep (600 trials), under two minutes at 20
 workers, 90 MB of retained transcripts, about 45 s to reduce. The production sweep has NOT been
 run; three cells were taken to n=40 to confirm the experiment is correct at a real sample size.
+
+### `[+]` Reconcile the three families: one registry guard, one rate formatter, one escape
+
+*fix · phase5-integrator · 2026-09-05T07:20:55Z*
+
+The three Phase 5 families were written in parallel and grew four disagreeing
+seams. Consolidated, with one real defect found.
+
+THE DEFECT. The ROC family wrote `_claim`: a registry guard that raises when a
+key is held by somebody else, in BOTH directions, with a docstring naming the
+failure mode. The security family guarded only its scenario names that way and
+used `setdefault` for its reductions and its chart, `if get(...) is None` for
+its two experiments, and a bare assignment for its probe options. Those are the
+two silent halves of a collision: yielding leaves the family registered NOWHERE
+(cells never run, which from outside looks exactly like a family nobody wrote),
+overwriting takes the other family's key.
+
+It was not biting, because the names do not collide today. It had a green test
+covering the one direction that was correct -- `register(scenarios={...})`
+raises -- and no test at all on the four that were not. Reproduced before
+fixing: `security.register(scenarios={}, experiments={'repudiation-curve': 'x'})`
+returned None and registered nothing.
+
+WHAT MOVED. `claim` -> experiments.py, next to the registries it guards, used by
+both families for all five registries. `measured_rate` -> reduce.py (was three
+copies: reduce._rate_cell, roc._measured, security._measured, differing only in
+decimal places, now a `places` parameter so every printed table is byte
+identical). `escape_xml` -> reduce.py (two byte-identical copies).
+
+WHAT DID NOT NEED FIXING, and it is why this was not a Phase 3 repeat: CONFIDENCE
+is defined once in reduce.py and wilson_interval comes from
+sih141.detect.statistics in all three families. No second Wilson implementation
+exists in sih141/eval.
+
+CONSTRAINT THE FIX INTRODUCED: `claim` compares by identity, so a family that
+rebuilds its Experiment on each call raises on its own second register(). ROC
+already cached; security now does too, via `_built`.
+
+tests/test_eval_reconciliation.py, 24 tests, mirrors the Phase 4 file of the
+same shape. The one that matters for the next family walks the package AST and
+fails on any two modules defining the same function body -- it would have caught
+`_escape` the day the second copy was written. It found a name I had not
+accounted for on its first run (`register`, one per family, divergent by
+design), which is the check demonstrating it can fail.
+
+### `[-]` progress: step 1 of 6 done
+
+*note · phase5-integrator · 2026-09-05T07:21:03Z*
+
+STEP 1 OF 6 DONE: the three families now sit on one harness. One real defect
+(security.register silently yielded a taken experiment/reduction/chart key
+instead of raising), three duplicated helpers consolidated into
+experiments.claim / reduce.measured_rate / reduce.escape_xml. Printed output is
+byte identical -- the precision difference became a `places` parameter.
+tests/test_eval_reconciliation.py is new: 24 tests, including an AST duplicate
+hunt over the package that fails if a fourth family copies a helper in.
+3774 tests now (was 3750). pyright clean on all four touched modules.
+
+NEXT, STEP 2: build the run plan from each family's reported
+estimated_core_seconds (repudiation 5967 + forgery 8063 + roc 555 = 14585 core
+seconds before the harness's own four experiments) against the measured speedup
+curve in perf.measured_speedup_curve, NOT 20x. Then step 3, the reduced-scale
+end-to-end sweep over every experiment.
+
+### `[+]` Two defects the reduced-scale sweep found: an unrunnable command and a blind completeness check
+
+*fix · phase5-integrator · 2026-09-05T07:41:14Z*
+
+Two defects, both found by DRIVING the thing rather than reading it, and both of
+the shape Phase 6 shipped four of: a green test on a string, no test on a result.
+
+DEFECT 1: THE REGENERATING COMMAND DID NOT REGENERATE.
+`tools/sweep.py run` builds its recorded command with manifest.command_line,
+which shlex-quotes. `tools/sweep.py reduce` interpolated --results raw:
+
+    regenerate = f"python tools/sweep.py reduce {args.experiment} --results {args.results}"
+
+Reduce from a directory with a space in its name and the table prints a command
+that argparse rejects: "error: unrecognized arguments: with space". D9's entire
+claim is that a reviewer can re-run the printed command. Fixed with shlex.quote
+on both --results and --charts. The test runs the printed string verbatim
+through shlex.split and a subprocess and requires the same table back; it fails
+on the unquoted version. Asserting the string is present would not have.
+
+DEFECT 2: THE COMPLETENESS CHECK COULD NOT SEE AN INTERRUPTION.
+The ROC family had a missing-trials note; no other experiment had one. Worse,
+the one that existed looked for gaps BELOW THE HIGHEST INDEX PRESENT. An
+interruption removes the HIGHEST indices, so a cell asked for 400 trials with
+380 on disk reported, affirmatively:
+
+    "No trial index is missing from any cell: every index from 0 to the highest
+     present is on disk."
+
+Verified by deleting the top index of a roc cell: the cell went from 2 records
+to 1 and the note still said nothing was missing. Every rate in the table is
+then over a denominator that quietly shrank, with a line asserting it had not.
+That is false reassurance, which is worse than silence, and it is the same
+species as Phase 3 constraint 1.
+
+Fixed: reduce.completeness_note compares record counts against the trial count
+the MANIFEST recorded (reduce.expected_trials), not against the registry default
+and not against max(index). It rides on the outcome table, so every experiment
+gets it, not just the one family. roc._missing_note now delegates; without a
+store it can only do the interior-gap half, and its note now says so instead of
+claiming completeness.
+
+Measured on three stores: 37 of 280 scattered -> INCOMPLETE naming eleven cells;
+one cell short by its top index -> INCOMPLETE, "channel-bob has 1 of 2 trials";
+the intact store -> "Complete: every cell has all the trials its manifest asked
+for". This is also the answer to the handover question "how do I tell a finished
+run from an interrupted one".
+
+### `[-]` progress: steps 3 and 4 of 6 done
+
+*note · phase5-integrator · 2026-09-05T07:41:37Z*
+
+STEPS 3 AND 4 OF 6 DONE. Step 3: all seven experiments run and reduce end to
+end at 2 trials/cell (78.7 s run, 10.4 s reduce, 7 markdown files, 2 SVG charts,
+no human in the loop). Reading the output found two defects, both now fixed and
+journalled: an unrunnable regenerate command, and a completeness check blind to
+the tail truncation an interruption leaves. Step 4: killed the runner's whole
+process tree 14 s into a 280-trial sweep; the restart ran exactly the 125
+missing trials, rewrote none of the 155 survivors, and produced byte-identical
+records and line-identical tables.
+
+NEXT, STEP 2 and 5: build the run plan from measured per-cell cost (I now have
+real per-trial seconds for every cell from the reduced sweep) against the
+measured speedup curve, then run the production sweep at 20 workers.
+
+### `[*]` Resumability verified by killing the runner, not by asserting it
+
+*finding · phase5-integrator · 2026-09-05T07:41:37Z*
+
+Not asserted -- done, with a real kill.
+
+METHOD. repudiation-curve, 20 trials/cell, 14 cells = 280 trials, 8 workers.
+Control: one uninterrupted run into store A. Then the identical command into
+store B, killed 14 s in with `taskkill /F /T` on the whole process tree (killing
+only the parent leaves the pool's workers running and still writing, which is
+not the crash being modelled). Then restart with the identical command.
+
+RESULT, all six checks:
+  1. 155 of 280 records survived the kill; EVERY ONE parses as whole JSON. No
+     partial record on disk -- the atomic write holds under a tree kill.
+  2. The restart ran 125 and skipped 155. 125 = 280 - 155 exactly, and the set
+     of files afterwards equals the control's set exactly.
+  3. Zero of the 155 pre-existing records were rewritten. Checked by mtime_ns,
+     so a rewrite with identical content would still have been caught.
+  4. The runner's own line -- "ran 125, skipped 155, failed 0" -- is the truth,
+     compared against the filesystem rather than trusted.
+  5. All 280 records are byte-identical to the uninterrupted run once wall clock
+     is excluded. Same seeds, same answers, across a process kill.
+  6. Every reduced table is identical line for line.
+
+TWO THINGS THAT LOOKED LIKE FAILURES AND ARE NOT, both worth knowing before the
+long run:
+
+  * The resumed store's reduction carries an extra provenance line: "1
+    manifest(s) have no finish time: a run was interrupted and these cells may
+    be partial". This is PERMANENT -- the killed run's manifest stays on disk
+    forever -- and it is correct. It is a record of history, not of current
+    state. The test now asserts it is ABSENT from the clean store and PRESENT
+    in the resumed one, rather than filtering it away.
+    To tell "interrupted and finished" from "interrupted and still short", read
+    the completeness line on the outcome table, which is a statement about what
+    is on disk NOW: after the resume it reads "Complete: every cell has all the
+    trials its manifest asked for".
+
+  * The per-trial cost table differs by ~0.01 s per cell. That is wall clock,
+    it is excluded from the record fingerprint by design, and it is the only
+    table that differs. The comparison now excludes that one table and requires
+    every other line to match to the character.
+
+COST OF AN INTERRUPTION: the 14 s of work done before the kill was not repeated.
+Resume took 32.8 s against 45.1 s cold, and 45.1 - 32.8 = 12.3 s, which is the
+work already banked. Nothing is redone.
+
+### `[D]` The run plan: 2.48 core-hours, 21 minutes at 20 workers, and no cut is worth making
+
+*decision · phase5-integrator · 2026-09-05T07:44:02Z*
+
+Built from MEASURED per-cell cost, not from the three families' reported
+estimates, because I had a cheaper way to measure the thing itself: the
+reduced-scale sweep of step 3 ran every cell of every experiment on this
+machine and the reduction already reports session seconds per trial. Scaled to
+the production trial count, that is a per-cell number rather than a per-family
+one.
+
+THE ANSWER: 2.48 core-hours single-threaded, about 21 minutes wall at 20
+workers. 12,494 trials over 56 cells in 7 experiments.
+
+  experiment          cells  trials   core-s   core-h  family said  ratio
+  repudiation-curve      14    5600   4743.4     1.32        5967  0.79x
+  forgery-curve          15    6000   6478.1     1.80        8063  0.80x
+  roc                    15     600    903.0     0.25         555  1.63x
+  scaling                 4      80   1008.7     0.28           -      -
+  noise                   4     120    124.0     0.03           -      -
+  honest                  3      90     97.6     0.03           -      -
+  smoke                   1       4      0.9     0.00           -      -
+  TOTAL                        12494  13354.8     3.71
+
+A UNIT TRAP IN THAT TABLE, and it is why the headline is 2.48 and not 3.71.
+Those core-seconds were measured INSIDE an 8-worker sweep, so they already
+carry 8-worker contention: perf.measured_speedup_curve puts mean trial time at
+1.700 s at one worker and 2.546 s at eight, a factor of 1.498. Dividing
+8-worker core-seconds by a speedup defined against single-threaded wall clock
+mixes the two and overstates the total. Corrected: 13355 / 1.498 = 8915
+single-thread core-seconds = 2.48 core-h, and 8915 / 7.038 = 21.1 min at 20
+workers. Checked a second way, forward instead of backward: scale the 8-worker
+figure up to 20-worker per-trial time (4.302/2.546) for 22564 in-worker seconds,
+divide by the MEASURED occupancy of 17.74 rather than by 20, and get 21.2 min.
+The two routes agree, so the number is not an artefact of one arithmetic.
+
+WALL CLOCK AGAINST WORKERS, at the speedup this CPU actually achieves:
+  1 worker  1.000x  2h 29m      14 workers 5.947x  0h 25m
+  4 workers 3.421x  0h 44m      20 workers 7.038x  0h 21m
+  8 workers 5.073x  0h 29m
+Eight workers costs 8 extra minutes and leaves the machine usable. That is a
+real option here in a way it is not for a fourteen-hour run.
+
+DO NOT CUT ANYTHING, and the arithmetic says so rather than my taste. The four
+dearest cells (bob1200 before/after, unsym768, bob768after) are 37% of the
+sweep. Halving their trials saves 2502 core-seconds -- SIX MINUTES of wall clock
+at 20 workers -- and widens the 99% upper limit on those rows' 0/n results from
+0.0163 to 0.0321. The security family's headline limitation is precisely that a
+measured 0/400 at L=768 resolves only to 0.0163 while the truth is 5.845e-04;
+halving the sample doubles the gap that finding is about, to save six minutes.
+There is no cut worth making at this total. Presenting it as a decision anyway,
+since it is the human's: the full sweep is 21 minutes and every cut is a bad
+trade.
+
+WHERE THE FAMILIES' ESTIMATES LANDED. The two security families were 25%
+conservative (0.79x, 0.80x -- mine are cheaper). ROC was 1.63x optimistic, which
+is consistent with its own caveat: its 555 was single-threaded and it flagged a
+14% penalty under load, and it is the one experiment that retains transcripts,
+so it pays a serialisation cost the others do not. Nobody was wrong by an order
+of magnitude, which is the useful thing to know about the estimates.
+
+### `[*]` Determinism confirmed on the production data: 8 workers and 20 workers agree on every shared record
+
+*finding · phase5-integrator · 2026-09-05T07:53:37Z*
+
+Determinism was proven at the harness level by the agent who built it. This is
+the same property confirmed on the PRODUCTION data, which is a different claim:
+not "the runner is deterministic in a test" but "the numbers about to be
+published do not depend on how they were scheduled".
+
+The reduced-scale integration sweep ran every cell at 2 trials on 8 workers into
+a scratch store. The production sweep ran the same experiments at their full
+trial counts on 20 workers into ~/.sih141/results. Trials 0 and 1 of every cell
+therefore exist in both stores, under the same (experiment, cell, index) and so
+the same seed.
+
+74 records present in both. 74 identical once wall clock is excluded. Zero
+differing.
+
+Different worker count, different pool, different trial count, different command
+line, different day. Same seed, same record. That is D9's corollary -- the one
+that makes a parallel sweep publishable at all -- observed on the data that will
+actually be published rather than on a fixture.
+
+### `[-]` RUNBOOK: the production sweep, and how to tell a finished run from an interrupted one
+
+*note · phase5-integrator · 2026-09-05T07:54:33Z*
+
+THE COMMAND. Seven experiments, one at a time, into the default results root:
+
+  cd "C:\Users\Aftab\Desktop\local websites\sih-141"
+  python tools/sweep.py run smoke             --workers 20
+  python tools/sweep.py run honest            --workers 20
+  python tools/sweep.py run noise             --workers 20
+  python tools/sweep.py run scaling           --workers 20
+  python tools/sweep.py run roc               --workers 20
+  python tools/sweep.py run repudiation-curve --workers 20
+  python tools/sweep.py run forgery-curve     --workers 20
+
+No --trials: each experiment's own production count is the default (400, 400,
+40, 30, 30, 20, 4). No --results: the default is C:\Users\Aftab\.sih141\results,
+outside the repo, and every reduce command below assumes it.
+
+THEN THE TABLES, which re-run nothing and take about a minute:
+
+  python tools/sweep.py reduce smoke             --out docs/tables
+  python tools/sweep.py reduce honest            --out docs/tables
+  python tools/sweep.py reduce noise             --out docs/tables
+  python tools/sweep.py reduce scaling           --out docs/tables
+  python tools/sweep.py reduce roc               --out docs/tables --charts docs/figures
+  python tools/sweep.py reduce repudiation-curve --out docs/tables --charts docs/figures
+  python tools/sweep.py reduce forgery-curve     --out docs/tables
+
+COMMIT FIRST. The manifest records the commit and a dirty flag, and every table
+prints "the working tree was dirty for at least one run" when that flag is set.
+A sweep run against uncommitted code has provenance that does not describe the
+code that ran, which is the thing D9 exists to prevent. Commit, then sweep.
+
+HOW TO TELL A FINISHED RUN FROM AN INTERRUPTED ONE. Three signals, and they
+answer different questions:
+
+  1. THE RUNNER'S LAST LINE, e.g. "ran 5600, skipped 0, failed 0 in 1893.4 s".
+     Verified against the filesystem in step 4 -- it is the truth, not a guess.
+     "failed" above zero means a trial raised; the manifest's `errors` list
+     names them.
+
+  2. THE COMPLETENESS LINE, the first footnote under the outcome table. This is
+     a statement about what is on disk NOW:
+         "Complete: every cell has all the trials its manifest asked for..."
+     versus
+         "**INCOMPLETE** -- ... l96 has 313 of 400 trials; ..."
+     THIS is the one to read. It checks the record count against the trial count
+     the manifest asked for, so it catches a cell that is short by its LAST
+     trials, which is exactly what an interruption leaves and what the previous
+     check could not see.
+
+  3. THE PROVENANCE LINE "N manifest(s) have no finish time". This is a
+     statement about HISTORY, not about current state, and it is PERMANENT: the
+     killed run's manifest stays on disk forever. After a successful resume you
+     will see this line AND "Complete:". That combination means "it was
+     interrupted and then finished", and it is fine. The line on its own is not
+     a reason to re-run anything.
+
+TO RESUME. Re-run the identical command. Nothing else. Records already on disk
+are skipped, not recomputed, and are not rewritten; the trials that run produce
+byte-identical records to an uninterrupted run because a seed is a pure function
+of (experiment, cell, index). Verified by killing the process tree mid-sweep --
+see the finding "Resumability verified by killing the runner, not by asserting
+it".
+
+TO RUN IN PIECES. `--cells a,b,c` restricts a run, and resume makes it safe to
+come back for the rest later. The reduction is a pure function of the records it
+finds, so it does not care that they arrived in four batches.
+
+IF THE MACHINE MUST STAY USABLE. `--workers 8` costs about eight extra minutes
+on this sweep and leaves twelve logical threads free. On a 21-minute job that is
+a real option; the 20-worker figure buys 7.04x against eight workers' 5.07x, so
+the last twelve workers are working at a third of the efficiency of the first
+eight.
+
+DISK. About 100 MB, nearly all of it the ROC family, which is the one experiment
+that retains full transcripts (153.9 KB per record x 600). Everything else
+stores a reduced record.
+
+### `[*]` Production sweep: 12,494 trials in 23.6 minutes at 20 workers, zero failures, 8.88x measured
+
+*finding · phase5-integrator · 2026-09-05T08:16:29Z*
+
+COMMAND. Seven `python tools/sweep.py run <experiment> --workers 20` in
+sequence, no --trials and no --results, into C:\Users\Aftab\.sih141\results.
+
+RESULT. 12,494 trials. 1413.2 s = 23.6 minutes of wall clock. ZERO failures and
+ZERO retries: every manifest reports trials_failed 0 with an empty errors list,
+and every experiment's reduction reports "Complete: every cell has all the
+trials its manifest asked for".
+
+  experiment          trials   wall s   in-worker s   occupancy   failed
+  forgery-curve         6000    605.2       11978.6       19.79        0
+  repudiation-curve     5600    555.6       11001.7       19.80        0
+  scaling                 80    117.0        2253.9       19.26        0
+  roc                    600     89.2        1701.8       19.08        0
+  noise                  120     15.6         247.2       15.82        0
+  honest                  90     14.7         207.7       14.09        0
+  smoke                    4      1.2           0.9        0.78        0
+  TOTAL                12494   1398.5       27391.8       19.59
+
+OCCUPANCY 19.59 OF 20, and on the two families that dominate the sweep it is
+19.79 and 19.80. The pool is not idling; on a ten-minute experiment the startup
+cost that made `smoke` read 0.78 is invisible.
+
+ACHIEVED SPEEDUP: 8.88x, MEASURED, not inferred. The `noise` experiment (120
+trials, four cells all at L=384, so homogeneous and not secretly a measurement
+of load imbalance) run into fresh stores on a quiet machine: 153.13 s at one
+worker, 17.24 s at twenty. Efficiency 0.444, per-trial inflation 1.611x. The
+cross-check closes: 149.9 single-thread core-seconds / 8.88 = 16.9 s against
+17.2 s measured.
+
+That is BETTER than the 7.038x in perf.measured_speedup_curve, which was
+measured at L=768. The difference is the contention penalty, 1.61x here against
+2.53x there -- a longer session has a larger working set and pays more for
+shared L3. So 7.038x is a fair conservative planning figure and 8.88x is what
+this workload actually gets.
+
+THE PLAN PREDICTED 21.1 MINUTES AND IT TOOK 23.6. The 12% is not mysterious and
+should not be dressed up: I ran the eval test suites (about 8 minutes of pytest)
+CONCURRENTLY with the sweep, which is precisely the contamination this project
+already recorded once when tracemalloc inflated every timing by 3x. Quote 23.6
+minutes as an upper bound measured under load, and expect a quiet machine to
+land nearer 21.
+
+PROVENANCE CAVEAT, AND IT MATTERS. Every manifest in this store records
+dirty=True, because the reconciliation of step 1 is uncommitted. Every table
+therefore prints "the working tree was dirty for at least one run". Under D9
+that is not a publishable provenance. The human should commit, delete
+C:\Users\Aftab\.sih141\results, and re-run -- 24 minutes, and the records will be
+byte-identical because a seed is a pure function of (experiment, cell, index).
+This store is the integration proof and the cost measurement, not the artefact.
+
+### `[*]` Both families' headline results reproduce at n=400, and the closed form is inside the interval at every rung
+
+*finding · phase5-integrator · 2026-09-05T08:16:47Z*
+
+The two experiment families each named a headline result before the production
+sweep ran. Both reproduce at n=400, and in both cases the independent closed
+form lands inside the measurement's interval at EVERY rung -- which is the
+cross-check that matters, since the closed form and the measurement share no
+code path.
+
+REPUDIATION. The security family's headline limitation reproduces exactly:
+at L=768, measured 0/400 = 0.0000 [0.0000, 0.0163]; exact in-model 5.845e-04;
+proven enforced bound 9.212e-01. The proof is 57x looser than the sample can
+resolve and the truth is 28x tighter than it. Demo-scale runs cannot demonstrate
+non-repudiation, and the table says so itself.
+
+The closed form is inside the 99% Wilson interval at all ten ladder rungs:
+  L=24  measured 0.2716 [0.2180, 0.3327]  exact 0.2498
+  L=48           0.1654 [0.1231, 0.2187]        0.1569
+  L=96           0.0875 [0.0575, 0.1309]        0.0660
+  L=132          0.0450 [0.0249, 0.0799]        0.0364
+  L=138          0.0200 [0.0083, 0.0474]        0.0327
+  L=192          0.0350 [0.0179, 0.0673]        0.0295
+  L=300          0.0150 [0.0055, 0.0403]        0.0116
+  L=384          0.0050 [0.0010, 0.0252]        0.0071
+  L=600          0.0025 [0.0003, 0.0209]        0.0019
+  L=768          0.0000 [0.0000, 0.0163]        0.00058
+Ten for ten. The positive controls fire at 400/400 = 1.0000 at all three key
+lengths, so the zero at L=768 is a mounted attack that failed, not an attack
+that was never mounted.
+
+README'S "about 3.5% at L=600" IS CONFIRMED WRONG at production scale. Measured
+at L=600 is 0.25%; the closed form is 0.19%. 3.27% is the figure for L=138, and
+it appears in this table on the l138 row. That is the sixth wrong prose number
+this project has found, and it is now a measurement rather than an argument.
+
+FORGERY, AND THE COUNT ORDERING IS NOT A FORMALITY. At L=96, 400 runs of the
+identical attack against identical code:
+  before forwarding: 0 accepted, 0 rejected, 400 NO VERDICT
+  after forwarding : 120 accepted (0.3000 [0.2446, 0.3619]), 280 rejected, 0 refused
+The exact closed form is 0.29663, inside the after-forwarding interval. Pooling
+the two orderings publishes 120/800 = 15%, a number describing neither run: one
+arm is a denial of transfer and the other is a forgery rate. Every closed form
+is inside its interval on all ten measurable forgery rows.
+
+ROC. The Phase 4 anchor reproduces from the production seed set: 3.3964e-10 on
+the checked honest cells and 2.7818e-10 on the unchecked one, the two numbers
+docs/PHASE4.md prints. The tol-p35 curve reproduces the reported shape rung for
+rung -- 40, 40, 39, 30, 18, 11, 3, 1, 0 as eps tightens from 5e-1 to 1e-8 -- and
+the prototype comparison now stands on 0/98 observed false alarms under the
+noiseless null rather than 0/64.
+
+### `[-]` progress: steps 2 and 5 of 6 done
+
+*note · phase5-integrator · 2026-09-05T08:16:58Z*
+
+STEPS 2 AND 5 OF 6 DONE. Run plan: 2.48 core-hours, projected 21.1 min at 20
+workers, no cut worth making (halving the four dearest cells saves six minutes
+and doubles the upper limit on the rows the headline limitation is about).
+Production sweep executed: 12,494 trials, 23.6 min, ZERO failures, occupancy
+19.59/20, achieved speedup 8.88x measured directly at 1 vs 20 workers. Results
+in C:\Users\Aftab\.sih141\results; all seven experiments reduce and every one
+reports "Complete". Both families' headline numbers reproduce and the closed
+form is inside the 99% interval at every rung of both ladders.
+
+NEXT, STEP 6: full suite is running now. One caveat to carry into the handover:
+every manifest says dirty=True because the step-1 reconciliation is uncommitted,
+so this store is the integration proof, not the publishable artefact -- the human
+should commit, delete the store and re-run (24 min, byte-identical records).
+
+### `[-]` progress: step 6 of 6 done, phase 5 integration complete
+
+*note · phase5-integrator · 2026-09-05T08:58:08Z*
+
+ALL SIX STEPS DONE. Suite green at 3787 passed in 38:04, exit 0, pyright clean
+on every touched file. Production sweep sits in C:\Users\Aftab\.sih141\results:
+12,494 trials, 23.6 min, zero failures, every experiment reducing to "Complete".
+
+WHAT IS LEFT FOR THE HUMAN, and it is the only thing: commit the reconciliation,
+delete C:\Users\Aftab\.sih141\results, and re-run the seven `run` commands. Every
+manifest in the current store says dirty=True because step 1 is uncommitted, so
+under D9 this store is the integration proof and the cost measurement rather than
+the publishable artefact. The re-run costs 24 minutes and produces byte-identical
+records, because a seed is a pure function of (experiment, cell, index) -- which
+is itself now confirmed on production data, not just in a test.
+
+### `[-]` Full suite green: 3787 passed in 38:04, and why the first run was thrown away
+
+*note · phase5-integrator · 2026-09-05T08:58:08Z*
+
+3787 passed in 2284.13s (0:38:04)
+    EXIT=0
+
+Command: `python -m pytest`, no flags, from the repo root. 3750 -> 3787, and the
+37 are 34 in tests/test_eval_reconciliation.py plus three new doctests.
+
+THE FIRST RUN OF THIS WAS DISCARDED AND THAT IS THE POINT. I started the suite,
+then edited sih141/eval/reduce.py and appended a test while it ran. pytest
+collects at start and holds imported modules, so that run would have been green
+against a tree that no longer existed -- some subprocess tests picking up the new
+code, everything else the old. A green suite over a moving tree is not evidence
+of anything. Killed it, froze the tree, ran it once from the top.
+
+38:04 AGAINST THE 26:54 IN README, and the difference should not be dressed up
+as the new tests. They add subprocess work -- several of the reconciliation
+tests spawn a real `tools/sweep.py` -- but not twelve minutes of it. The larger
+part is thermal: this ran immediately after a 24-minute twenty-worker sweep and
+a one-versus-twenty speedup measurement, on a laptop part that throttles. If a
+successor sees a suite time between 27 and 40 minutes, that is the range on this
+machine and not a regression to hunt.
+
+pyright: 0 errors on every file touched -- tools/sweep.py, sih141/eval/reduce.py,
+roc.py, security.py, experiments.py, tests/test_eval_reconciliation.py.
+
+### `[+]` Correction: the results store is 250 MB, not the 100 MB the runbook estimated
+
+*fix · phase5-integrator · 2026-09-05T08:58:29Z*
+
+The RUNBOOK entry says "about 100 MB, nearly all of it the ROC family". That was
+an estimate from the ROC family's own 153.9 KB/record figure and it is wrong by
+2.5x. Measured on the completed store:
+
+  results store: 250.3 MB, 12,494 records
+    roc                 94.7 MB   (600 records, retains full transcripts)
+    forgery-curve       81.6 MB   (6000 records, reduced only)
+    repudiation-curve   70.6 MB   (5600 records, reduced only)
+    noise                1.4 MB
+    honest               1.0 MB
+    scaling              0.9 MB
+    smoke                0.0 MB
+
+The error was assuming the retained-transcript family dominates. It does not:
+ROC is 38% of the bytes on 5% of the records, and the two 400-trial families are
+together 61% of the store on REDUCED records alone. A reduced record is about 13
+KB, so six thousand of them is 80 MB whatever the transcript flag says.
+
+Budget 300 MB, and note that a re-run after committing does not reuse the old
+store -- it replaces it, so peak disk is one store, not two, provided the old one
+is deleted first rather than moved aside.
+
+### `[-]` progress: step 0 of 7 done - production store verified
+
+*note · integration · 2026-09-05T09:03:37Z*
+
+Production store located and verified as production, not the reduced integration run:
+C:\Users\Aftab\.sih141\results, seven experiments, 12,494 records, one manifest each at commit
+6cb0f57, trials/cell 400 (repudiation-curve, forgery-curve), 40 (roc), 30 (honest, noise),
+20 (scaling), 4 (smoke); every cell has exactly its manifest's requested count, zero failures,
+zero skipped. The reduced 2-trial store is gone. All seven reductions re-run from that store into
+docs/tables (7 files) and docs/figures (2 SVGs); roc reduce is the slow one at 51.9 s.
+
+CAVEAT CARRIED FORWARD, not a blocker: every manifest records git dirty=true, because the sweep
+stage's reconciliation fixes are still uncommitted (8 files). Every table prints the dirty-tree
+warning. Numbers are reproducible; the provenance stamp is not clean until the human commits and
+re-runs, which the determinism property says will be byte-identical.
+
+Next: step 1, the per-number D9 audit.
+
+### `[*]` Two published number sets fail D9's reproduce-now test; two constraint-1 gaps fixed
+
+*finding · integration · 2026-09-05T09:36:11Z*
+
+Steps 1-3 of the integration audit are done and they found four defects, all now fixed in the
+tree. THE HEADLINE IS THAT TWO PUBLISHED NUMBER SETS FAILED D9'S THIRD TEST -- the command runs,
+but does not reproduce the figure.
+
+(1) MEASURED_TRANSCRIPT_KB's three small entries were 0.408/0.371/0.339 KiB per position at
+check_fraction 0.25; running `perf --session-scaling --key-lengths 96,192,768` now gives
+0.337/0.330/0.325, and seed spread is under 0.001, so the gap is 21%, 12% and 4%. 0.408 is what
+L=96 gives at a check fraction near 0.42, so the figures came from a different configuration.
+The two full-scale entries are exact: measured 0.3304 and 0.2262 against published 0.330 and
+0.226. Corrected, six new entries added, and the module docstring now RE-MEASURES two lengths at
+both check fractions instead of looking the dict up -- proven to bite by restoring 0.408 and
+watching the suite go red. The curve is also not monotone: it dips to 0.325 at L=768 and returns
+to 0.330 at full scale, so "falls towards 0.33 as the header amortises" was wrong too.
+
+(2) The parallel speedup does not reproduce. Same committed command, 120 trials at L=768:
+published 1 worker 204.81 s / 20 workers 29.10 s / 7.04x; measured now 305.47 s / 29.75 s /
+10.27x. The 20-worker point holds to 2.2%; the SINGLE-WORKER BASELINE moved 49%. Eight
+consecutive single sessions at L=768 give 1.746 s on the first and about 2.48 s thereafter, and
+the machine is currently running a browser, two chat apps and two game launchers at 10% load.
+So the ratio's denominator is the fragile half, and 7.04x is not a stable published number.
+
+(3) Constraint 1 gap on the SHARED detection table, which every one of the seven experiments
+carries: it printed `flagged on attacked 400/400 = 1.000` with no refusals column and no abort
+note. On forgery-curve's bob*before rows every one of those 400 runs is a Charlie no-verdict --
+a denial of transfer read as a caught forgery. Added a `refusals` column and the note; added
+`refused_run` in reduce.py as the single predicate, and pointed roc.py at it, which also drops
+roc's extra "fewer than two verdicts counts as a refusal" clause -- that is a not-asked party in
+the outcome table's own taxonomy, and it was dead on all 12,494 records.
+
+(4) The ROC grid footnote said "No manifest recorded a trial count for this store" while the
+outcome table in the same file said "Complete: every cell has all the trials its manifest asked
+for". A manifest did record 40. The EXTRA_REDUCTIONS hook now carries `expected` so both notes
+are computed from one mapping.
+
+Next: step 4, the three mutation checks.
+
+### `[*]` Mutation check: an abort counted as a rejection left the suite green
+
+*finding · integration · 2026-09-05T09:54:45Z*
+
+Step 4, the mutation checks, one at a time. Three asked for, five run.
+
+M1, a worker reads numpy's global RNG (one np.random.random() inside run_trial): RED. Two tests
+fail and the CLI itself exits 2 with "D3 VIOLATION -- these trials moved a global random state
+and are not reproducible from their seeds: tiny#0, tiny#1, tiny#2". The tool refuses, not just
+the suite.
+
+M2, the seed derivation depends on completion order (a per-process counter appended to the
+material): RED. Five tests fail -- the by-hand seed recomputation, the separate-interpreter
+check, the one-worker-versus-four-worker fingerprint comparison, the completion-order test and
+the rendered-table comparison -- plus two doctests in seeds.py.
+
+M3, count an abort as a rejection in one table: **GREEN, AND THAT IS THE DEFECT.** Folding
+tally.refused into tally.rejected in outcome_table and printing zero left 328 tests and doctests
+passing. The constraint was enforced by OutcomeTally's types, outcome_table defeated the types
+with one int() call, and every fixture that reached the table was an honest cell with no
+refusals to fold -- so nothing was observing the thing that would change. Written up as the same
+shape as the Phase 6 projector-mode defect: the check existed and could not fail.
+
+Closed with three tests over a fixture that actually refuses (a recipient forger at L=96 under
+the shipped ordering, Bob accepted / Charlie refused, 0.2 s): the outcome table's four verdict
+columns are recomputed from the record's own verdicts and compared, the detection table's new
+refusals column is asserted to equal its run count on that row, and the predicate is asserted
+False on an honest run so it can answer no. Re-applying M3 now fails
+test_a_refusal_is_not_added_into_the_rejected_column.
+
+M3b, the same fold in the security family's forgery_table: RED already --
+test_the_forgery_table_columns_sum_to_the_denominator catches it.
+M3c, refusals set to zero in the ROC grid: RED already --
+test_refusals_are_counted_apart_and_added_to_nothing catches it.
+So the gap was exactly the two SHARED tables, which is the worst place for it: they appear in
+all seven experiment files.
+
+Also this step: the degenerate small-end table in docs/PHASE5.md section 7 had NO committed
+command -- its figures came from an ad-hoc probe, which under D9 is the same as having none.
+Added measure_small_end() and `python tools/sweep.py perf --small-end`. Regenerating it showed
+the "families withheld" column had published one draw as a property: L=96 reads 1-4 across five
+trials, not 4; L=180 reads 0-2, not 2; L=183 reads 0-4, not 1. The column is now a range, which
+is what the section's own prose already said it should be.
+
+Next: step 5, full suite, then step 6, write docs/PHASE5.md.
+
+### `[-]` progress: steps 6 and 7 drafted, every published claim re-verified
+
+*note · integration · 2026-09-05T10:06:59Z*
+
+Steps 5-7 in progress. docs/PHASE5.md is rewritten and now runs to fifteen sections: the harness
+and determinism proof (1-4) kept, then the production sweep and its provenance (5), how to read a
+table here (6), the four results sections (7 repudiation, 8 forgery, 9 ROC, 10 honest and noise),
+the machine (11 throughput and speedup, 12 memory and the small end), every limitation (13), and
+the two how-it-works sections (14-15). Every table carries the command that regenerates it.
+
+Claims verified computationally rather than quoted from the family reports, before publishing:
+the closed form is inside the 99% Wilson interval at all ten repudiation rungs and all four
+outside-forgery rungs; dominance_noise_level at DEFAULT_PARAMS and eps=1e-9 is 0.012118593, below
+2*s_a = 0.03125; no proven bound exceeds its own budget on any of the ROC grid's 225 rows, with
+slack 1.13x-2.82x at eps=5e-1 and 2.38x-6.82x at 1e-30; structural:evidence-abort loses its
+admissible cut at eps = 4.879e-19, bisected on a retained transcript, which is above 2**-64 =
+5.421e-20; the scaling experiment's in-worker seconds over its manifest wall clock give an
+occupancy of 19.02 of 20 workers; and five table cells recomputed from the raw records by a route
+the reduction does not use (repudiation l600 numerator, forgery bob96after verdicts, the Wilson
+interval for 1/400 by hand, and the roc honest bounds) all agree.
+
+README.md and docs/QDS.md updated: Phase 5 marked complete, a "What Phase 5 found" section added,
+and QDS's "a real Alice repudiates ~3.5% at L=600" replaced by the measurement (1/400 = 0.0025
+[0.0003, 0.0209], closed form 1.936e-03; 3.27% is L=138). QDS's speedup paragraph now carries both
+measurements rather than 7.04x alone.
+
+Next: full suite tail, then regenerate docs/METRICS.md.
+
+### `[-]` progress: step 6 done, every zero row proven to have acted
+
+*note · integration · 2026-09-05T10:15:15Z*
+
+docs/PHASE5.md is written, fifteen sections, every table with its regenerating command. README.md
+marks Phase 5 complete and carries a "What Phase 5 found" section; docs/QDS.md's Phase 5 block is
+marked complete and its three wrong figures are corrected.
+
+Extra verifications done directly on the production records rather than taken from the family
+reports, and all of them are now in the document:
+
+EVERY ARM REPORTING A ZERO IS PROVEN TO HAVE ACTED, which is the Phase 4 replay-arm failure mode.
+repudiation l768: the tilt replaced 42-88 states per run on all 400 runs, mean 63.5; l600, 29-71.
+forgery bob96before: 51-80 positions substituted per run; bob1200before, 758-847. roc tol-p05:
+27-50 hops touched; tol-p20, 128-180; tol-p35, 241-301, all reporting 0/40 at eps=1e-9.
+
+DENOMINATOR INVARIANT: attacked + clean == runs == 40 on all fifteen roc cells, recounted from the
+raw truth blocks. starvation-selective is 22 attacked and 18 clean, so scoring the cell by intent
+would have published 22/40 = 0.550 against the true 22/22 = 1.000.
+
+CHART GEOMETRY INVERTED rather than grepped. The repudiation chart's log axis has 1e0 at y=56.0 and
+1e-1 at y=120.3; reading each circle's cy back through that scale recovers 0.2716, 0.1651, 0.0873,
+0.0450, 0.0200, 0.0349, 0.0150, 0.0050 and 0.0025 -- the nine non-zero rungs, every one within 1%.
+The tenth rung is 0/400 and is drawn as a bar to the axis floor with its label, not dropped. The
+roc chart carries 165 circles = 11 arms x 15 budgets, correctly excluding the four cells with no
+attacked runs, and lists impersonation-full as text rather than as a line along zero.
+
+MS/POSITION RANGE CORRECTED IN THE DRAFT: I had written 5.010-7.244 from the scaling table alone.
+Across all seven files it is 2.415 (smoke) to 10.407 (roc replay, which pays one cached capture
+session per worker over that worker's two trials). Published with both ends and the reason.
+
+Next: full suite tail, then regenerate docs/METRICS.md.
+
+### `[D]` Repair the check, not just the number: four D9 failures and what closed each
+
+*decision · integration · 2026-09-05T10:20:27Z*
+
+Decision, and it is the shape of every repair in this pass: WHERE A PUBLISHED NUMBER FAILED D9'S
+THIRD TEST, THE REPAIR IS A CHECK THAT COULD HAVE CAUGHT IT, NOT JUST A CORRECTED NUMBER.
+
+Three of the four failures had a green test standing beside them, and in each case the test was
+asserting the wrong thing.
+
+MEASURED_TRANSCRIPT_KB's doctest read the constant back out of its own dict, which proves the
+literal is still there and nothing about the literal being right. Replaced with a doctest that
+BUILDS two transcripts at both check fractions and compares the byte count -- about a second --
+and proven to bite by restoring 0.408 and watching the suite go red.
+
+The degenerate small-end table had no command at all, so there was nothing to fail. Added
+measure_small_end() and `perf --small-end`. Running it showed its "families withheld" column had
+published one draw as a property of the key length; it is a range now (1-4 at L=96, 0-2 at L=180,
+0-4 at L=183), with a test that mutates the probe back to first-trial-only and fails.
+
+The abort-as-rejection mutation passed green over 328 tests because every fixture that reached the
+two shared tables was an honest cell with nothing to fold. Closed with a fixture that actually
+refuses -- a recipient forger at L=96, Bob accepted and Charlie refused, 0.2 s -- and the verdict
+columns recomputed from the record rather than from the tally the table used.
+
+The fourth, the speedup, is different in kind and cannot be repaired by a test: 7.04x became
+10.27x because the single-worker baseline moved 49% while the twenty-worker wall clock held to
+2.2%. A ratio whose denominator is the machine's momentary single-core clock is not a publishable
+number, so it is published as both measurements with the diagnosis: on the re-run, one worker and
+four workers cost the same 2.53 s per trial, which is what a collapsed baseline looks like.
+
+One repair I deliberately did NOT make. The detection table's new refusals column reads 400 on
+BOTH forgery orderings at L=96, which is true and does not discriminate: before forwarding it is
+Charlie who reaches no verdict and after forwarding it is Bob, while Charlie returns a real 120/400
+acceptance. Rather than invent a per-party column on the shared table, the column is named
+`refusals (any party)` and its note carries that worked example, pointing at the family's own
+per-party table for the discriminating statistic. A column that invites the confusion it was added
+to prevent is worse than no column.
+
+### `[*]` "Twenty for twenty" was wrong: the closed form does not describe the before-forwarding rows
+
+*finding · integration · 2026-09-05T10:22:04Z*
+
+Caught one of my own numbers before publishing it, and it is worth recording because the shape is
+the one this phase keeps hitting: a summary statistic that is arithmetically defensible and
+describes a different experiment from the one it sits next to.
+
+I had written "the measurement and the closed form agree at twenty rungs out of twenty", taken from
+the experiment families' reports. Checking it by parsing the two published tables and testing
+lo <= exact <= hi row by row gives a different picture. Repudiation is ELEVEN rows carrying both
+columns, not ten -- the l192after ordering control carries one too -- and all eleven are inside.
+Forgery has FIFTEEN rows carrying both and only ELEVEN are inside.
+
+The four outside are bob96before, bob192before, bob384before and bob768before, and they are not a
+disagreement between model and measurement. recipient_forgery_probability is the probability that
+Charlie ACCEPTS, which presupposes he reaches a verdict; under the before-forwarding ordering he
+reaches none on any of the 400 runs, so the closed form is not describing that experiment at all.
+The fifth before row, bob1200before, falls INSIDE -- but only because 1.4002e-02 has already
+dropped below the 0.0163 that 400 trials can resolve, so its agreement is a coincidence of sample
+size rather than a validation. Quoting "15 for 15" or "11 for 15" would both have been misleading.
+
+Published as: 21 for 21 across the rows where the closed form's event can occur -- eleven
+repudiation rows and the ten forgery rows under an ordering that produces a verdict -- with the
+five before-forwarding rows named and explained rather than excluded. That is the same discipline
+as the abort column: the rows that do not fit have to be visible, or the summary is a claim about a
+sample somebody quietly chose.
+
+### `[-]` progress: steps 1-4 and 6 done, suite running inside metrics.py
+
+*note · integration · 2026-09-05T10:26:17Z*
+
+Steps 1-4, 6 and most of 7 are done; step 5 (full suite) is running now, inside tools/metrics.py so
+one suite run serves both the green-suite requirement and the METRICS.md regeneration.
+
+WHAT IS NOW TRUE. Every one of the seven printed regenerate commands was run against the final
+post-fix tree and reproduces its table byte for byte (sha256 of the newline-normalised text
+recorded); both charts reproduce identically apart from the --charts path they embed. docs/PHASE5.md
+is fifteen sections with every table carrying its command; README.md and docs/QDS.md mark Phase 5
+complete and carry the corrected figures.
+
+CODE CHANGED, all of it repair rather than feature: reduce.py gained refused_run() and a
+`refusals (any party)` column plus its note on the shared detection table, and passes `expected`
+down the EXTRA_REDUCTIONS hook; roc.py delegates its refusal count to the shared predicate and its
+completeness note to the shared checker with the manifest counts; security.py's two reductions
+accept the new keyword; perf.py's MEASURED_TRANSCRIPT_KB is corrected and now re-measured by
+doctest, MEASURED_MEMORY and MEASURED_SPEEDUP_KEY_LENGTH carry the reproduction, the module's 15x
+speedup doctest is a measured range, and measure_small_end() is new; sweep.py gained --small-end;
+metrics.py's pytest timeout went from 30 min to 2 h because a busy machine runs the suite at half
+speed and a timeout there writes "<no summary line>" into METRICS.md rather than failing.
+Five new tests in test_eval_harness.py, three of them proven to fail by mutation.
+
+STILL TO DO: read the suite tail out of METRICS.md, then confirm METRICS.md itself looks right.
+The one thing only the human can do is commit and re-run the sweep, because every manifest records
+dirty=true and no table can carry a clean provenance until then.
+
+### `[+]` Kibibytes and kilobytes were mixed across six files; the transcript pair read 39% apart instead of 46%
+
+*fix · integration · 2026-09-05T11:07:23Z*
+
+Step 5 first pass: 3794 passed in 2282.46s (0:38:02), exit 0, on the tree as it stood then. Then I
+found and fixed a unit inconsistency running through five more files and re-ran, so the number
+above is superseded by the second run.
+
+THE UNIT PROBLEM, because it is the same defect four more times. kb_per_position is
+len(json)/1024, so every size derived from it is a KIBIBYTE. Five modules quoted the full-scale
+unchecked transcript as "26.7 MB", which is the same byte count in DECIMAL megabytes, sitting in
+sentences next to binary-derived figures: records.py's module docstring had "26.7 MB unchecked and
+37.2 MB checked" where the second is MiB and the first is MB, so the pair read as a 39% gap when
+the true gap is 46%. Also experiments.py, runner.py, tools/sweep.py's --retain-transcripts help,
+perf.py's detector-latency docstring, and the CLI's own "KB/position" column header. roc.py was
+internally inconsistent on its own: 90 MB for the family (binary) beside 38 MB for a full-scale
+transcript (decimal). All now MiB/KiB, measured against the production store: a ROC record is
+153.8 KiB and the family is 90.1 MiB on disk.
+
+Not a big error in magnitude -- 4.8% -- but it is the exact shape of the transcript-size defect
+this pass already caught, and the reason it survives is the same: a unit is not a number, so no
+doctest was ever going to notice.
+
+Next: read the second run's tail out of docs/METRICS.md and report.
+
+### `[-]` progress: all seven steps done - 3794 passed, 38:03, exit 0
+
+*note · integration · 2026-09-05T11:46:19Z*
+
+Step 5 and step 7 done; all seven steps complete. FINAL SUITE: 3794 passed in 2283.29s (0:38:03),
+exit 0, on the finished tree, with 481 doctests collected from package modules. docs/METRICS.md
+regenerated from that run. Nothing committed and nothing pushed.
+
+WHAT IS NOW TRUE. docs/PHASE5.md is fifteen sections and every table carries the one command that
+regenerates it; all seven of those commands were run verbatim against the final tree and reproduce
+their tables byte for byte, and both charts reproduce coordinate for coordinate. README.md marks
+Phase 5 complete, carries a "What Phase 5 found" section and a "Running the evaluation" section,
+and lists sih141/eval in the layout. docs/QDS.md marks Phase 5 complete and its three wrong figures
+are corrected. docs/tables holds seven reduced files and docs/figures the two charts; neither is
+committed yet.
+
+THE ONE THING ONLY THE HUMAN CAN DO, and it is the last open item under D9: every manifest in
+C:\Users\Aftab\.sih141\results records dirty=true, so no table can carry a clean provenance until
+the tree is committed, the store deleted and the seven run lines re-executed. Twenty-three minutes,
+and every record comes back byte-identical because a record is a pure function of
+(experiment, cell, index) and the code. docs/PHASE5.md section 5 spells this out under its own
+heading so it cannot be missed, and section 13 lists it as limitation 8.
 
 
 ## Phase 6 — Dashboard

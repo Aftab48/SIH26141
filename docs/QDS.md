@@ -514,7 +514,7 @@ threshold **derived** rather than tuned: QBER, CHSH, mismatch counts, replay led
 discriminator that separates recipient forgery from channel noise (Charlie's matched count does
 this at 240σ at production parameters).
 
-### Phase 5 — Evaluation
+### Phase 5 — Evaluation *(complete — see [PHASE5.md](PHASE5.md))*
 
 Forgery probability against key length, ROC curves, false-accept and false-reject rates,
 performance benchmarks. Full-scale statistical runs live here, and they are embarrassingly
@@ -542,29 +542,43 @@ seed and on nothing else.
 > they came from. Regenerate with
 > `python tools/sweep.py perf --session-scaling --key-lengths 115200`.
 >
-> **The parallel figure in this section was wrong and is now measured.** It read "about **51
-> minutes** at 20 workers on this CPU's realistic 15× effective speedup". The 15× was an
-> estimate. Measured on 120 sessions per point at `L = 768`, the achieved wall-clock speedup at
-> 20 workers is **7.04×**, so 200 trials is about **1.9 hours**, not 51 minutes. The pool is not
-> idling — 17.7 of the 20 workers are busy on average — but each worker runs 2.5× slower than a
-> lone one, and the slowdown starts at eight workers, before any E-core is reached. The full
-> curve, the three causes ruled out and the one that remains are in
-> [PHASE5.md](PHASE5.md) §6. Regenerate with
+> **The parallel figure in this section was wrong, and its replacement does not reproduce
+> either.** It read "about **51 minutes** at 20 workers on this CPU's realistic 15× effective
+> speedup". The 15× was an estimate and both measurements agree it is wrong. But the two
+> measurements do not agree with each other: 120 sessions per point at `L = 768` gave **7.04×**
+> on the first run and **10.27×** when the identical command was re-run during Phase 5
+> integration. The twenty-worker wall clock held to 2.2% across the two (29.10 s and 29.75 s);
+> the **single-worker baseline moved by 49%**, and the speedup is a ratio with that baseline
+> underneath it. So 200 trials at `DEFAULT_PARAMS` is between **1.3 and 1.9 hours** on this
+> machine depending on what else it is doing, and no single speedup number should be quoted from
+> this project. The pool is not idling — 17.6 of 20 workers busy on average, and the production
+> sweep independently shows 19.02 of 20 — the cores are simply slower when they are all awake,
+> and it starts at eight workers, before any E-core is reached. Both curves, and the causes ruled
+> out, are in [PHASE5.md](PHASE5.md) §11.2. Regenerate with
 > `python tools/sweep.py perf --speedup --speedup-cell l768 --trials 120 --workers 1,4,8,14,20`.
 >
 > **Transcript size depends on the check fraction as much as on `L`.** At `check_fraction = 0`,
-> which is what `DEFAULT_PARAMS` uses, a full-scale transcript is **0.226 KB per position —
-> 26.7 MB**. At `check_fraction = 0.25` the same length is **0.330 KB per position, 37.2 MB**,
+> which is what `DEFAULT_PARAMS` uses, a full-scale transcript is **0.226 KiB per position —
+> 25.4 MiB**. At `check_fraction = 0.25` the same length is **0.330 KiB per position, 37.2 MiB**,
 > because every check round publishes a channel sample. Both are measured; quoting either
-> without its check fraction is how a correct number becomes a wrong one.
+> without its check fraction is how a correct number becomes a wrong one — and mixing kibibytes
+> with decimal megabytes in the same sentence is how the second figure once read 26.7. The
+> smaller lengths are 0.337, 0.330 and 0.325 KiB per position at `L = 96, 192, 768` with a
+> quarter of positions checked; the curve dips around `L = 768` and comes back, so it is not the
+> monotone amortisation an earlier draft described.
 >
 > **Detector latency is not a constant few milliseconds.** It is 1.54 s on a full-scale
 > transcript against 2.9 ms on a 96-position one, because it is dominated by parsing the JSON,
 > so it scales with `L` like everything else. Still under one percent of the session that
 > produced the transcript.
 
-**Phase 6 is built first.** The work order is 4 → 6 → 5 → 7; see the roadmap note in
+**Phase 6 was built first.** The work order was 4 → 6 → 5 → 7; see the roadmap note in
 `README.md` for why. Nothing in Phase 6 depends on the numbers this phase produces.
+
+> **Results.** The production sweep ran 12,494 trials across seven experiments in 23.3 minutes at
+> twenty workers, zero failures. Every figure is in [PHASE5.md](PHASE5.md) beside the one command
+> that regenerates it; the reduced tables are in [`tables/`](tables) and the charts in
+> [`figures/`](figures).
 
 ### Phase 6 — The dashboard
 
@@ -588,8 +602,14 @@ We state these rather than hoping nobody looks. Each one is worse if a judge fin
 
 - **Demo-scale runs cannot demonstrate non-repudiation.** Both floors are inert below `L ≈ 1200`,
   and the enforced bound is 0.994 at demo parameters, 0.943 at `L=600`, still 0.48 at `L=4800`.
-  A real Alice genuinely repudiates ~3.5% of the time at `L=600`. Demo runs show the
-  **mechanism**, not the guarantee, and the UI must say so.
+  This section used to say "a real Alice genuinely repudiates ~3.5% of the time at `L=600`", and
+  Phase 5 measured it: at `L=600` the best symmetric tilt achieves `1.936e-03` in model and
+  **`1/400 = 0.0025 [0.0003, 0.0209]`** over 400 trials. 3.27% is the figure for `L ≈ 138`, and it
+  is on the `l138` row of [PHASE5.md](PHASE5.md) §7. Worse for the claim: at `L = 768` the
+  measurement is `0/400`, whose 99% upper limit `0.0163` is twenty-eight times coarser than the
+  exact probability and fifty-six times tighter than the proven bound `0.9212`, so **neither the
+  proof nor the measurement reaches the other**. Demo runs show the **mechanism**, not the
+  guarantee, and the UI must say so.
 - **Full impersonation succeeds with probability 1** if the channel from Alice is not
   authenticated. Inherent to this family of schemes; stated as a precondition.
 - **A recipient can force aborts** by under-reporting his matched count. Denial of service, not

@@ -622,7 +622,7 @@ class ReplayCapture:
     records: dict[Party, RecipientRecord]
 
 
-_CAPTURE_CACHE: dict[tuple[int, int, int], ReplayCapture] = {}
+_CAPTURE_CACHE: dict[tuple[ProtocolParams, int, int], ReplayCapture] = {}
 
 
 def replay_capture(
@@ -633,8 +633,12 @@ def replay_capture(
 ) -> ReplayCapture:
     """Run one honest round to completion and freeze it as an adversary's loot.
 
-    Cached on ``(key_length, message_bit, seed)``, so a whole suite pays for one
-    distribution. The result is immutable and every record in it is frozen, so
+    Cached on ``(params, message_bit, seed)``, so a whole suite pays for one
+    distribution. The key is the WHOLE parameter set and not just its length:
+    the capture is built from ``params``, so two lengths that agree while their
+    check fractions differ are different loot, and keying on the length alone
+    returned whichever ran first -- an answer that depended on which worker
+    process reached it, which is exactly what D3 exists to rule out. The result is immutable and every record in it is frozen, so
     sharing it between adversaries cannot let one contaminate another.
 
     Parameters
@@ -679,7 +683,7 @@ def replay_capture(
         )
     seed_value = _as_nonnegative_int(seed, "seed")
 
-    cache_key = (params.key_length, int(message_bit), seed_value)
+    cache_key = (params, int(message_bit), seed_value)
     cached = _CAPTURE_CACHE.get(cache_key)
     if cached is not None:
         return cached

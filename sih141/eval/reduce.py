@@ -81,7 +81,8 @@ however many workers wrote them:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, replace
 from typing import Any, Final, Iterable, Mapping, Sequence
 
 from sih141.detect.statistics import wilson_interval
@@ -97,10 +98,15 @@ __all__ = [
     "EXTRA_REDUCTIONS",
     "NOT_EVALUATED",
     "Table",
+    "completeness_note",
     "detection_table",
+    "escape_xml",
+    "expected_trials",
     "group_records",
+    "measured_rate",
     "outcome_table",
     "reduce_experiment",
+    "refused_run",
     "tally_from_record",
     "timing_table",
 ]
@@ -109,8 +115,12 @@ EXTRA_REDUCTIONS: Final[dict[str, Any]] = {}
 """dict: Per-experiment reductions, appended after the three standard tables.
 
 An experiment family that needs a table of its own registers here, keyed by
-experiment name, with a callable taking ``(records, *, command, cell_order)``
-and returning a list of :class:`Table`. :func:`reduce_experiment` consults it,
+experiment name, with a callable taking
+``(records, *, command, cell_order, expected)`` and returning a list of
+:class:`Table`. ``expected`` is :func:`expected_trials` for this store -- the
+per-cell trial count the sweep was *asked* for -- because a family building its
+own completeness footnote without it can only check for interior gaps, and the
+note it then writes has to say so. :func:`reduce_experiment` consults it,
 so ``python tools/sweep.py reduce <name>`` picks the extra tables up with no
 change to the command line and no second reduction path for a reviewer to miss.
 
@@ -453,8 +463,14 @@ def outcome_table(
     )
 
 
-def _rate_cell(successes: int, trials: int) -> str:
+def measured_rate(successes: int, trials: int, *, places: int = 3) -> str:
     """Format a measured rate with its interval, or say why there is none.
+
+    The one formatter every Phase 5 table uses for a measured rate. Three
+    copies of it existed when the families were written in parallel, differing
+    only in ``places``; that is a parameter now, because the thing worth
+    single-sourcing is the empty-denominator rule and the interval, not the
+    column width.
 
     Parameters
     ----------
@@ -462,6 +478,10 @@ def _rate_cell(successes: int, trials: int) -> str:
         Numerator.
     trials : int
         Denominator.
+    places : int, optional
+        Keyword-only. Decimal places for the rate and both endpoints. Three by
+        default; the security curves pass four, where the rates being compared
+        against a closed form are small.
 
     Returns
     -------
@@ -469,14 +489,251 @@ def _rate_cell(successes: int, trials: int) -> str:
         ``k/n = p [lo, hi]``, or ``no trials`` when ``n`` is zero -- never
         ``0.0``, which would read as a measurement that found nothing rather
         than as an absence of measurement.
+
+    Examples
+    --------
+    >>> from sih141.eval.reduce import measured_rate
+    >>> measured_rate(0, 40)
+    '0/40 = 0.000 [0.000, 0.142]'
+
+    An empty denominator is an absence, not a zero:
+
+    >>> measured_rate(0, 0)
+    'no trials'
+
+    ``places`` moves the width and nothing else -- the same sample, printed
+    finer:
+
+    >>> measured_rate(1, 400, places=4)
+    '1/400 = 0.0025 [0.0003, 0.0209]'
     """
     if trials <= 0:
         return "no trials"
     interval = wilson_interval(successes, trials, confidence=CONFIDENCE)
     rate = successes / trials
     return (
-        f"{successes}/{trials} = {rate:.3f} "
-        f"[{interval.low:.3f}, {interval.high:.3f}]"
+        f"{successes}/{trials} = {rate:.{places}f} "
+        f"[{interval.low:.{places}f}, {interval.high:.{places}f}]"
+    )
+
+
+def refused_run(record: TrialRecord) -> bool:
+    """Say whether any verifier reached no verdict on this run.
+
+    The single route every Phase 5 table counts refusals by. Phase 3
+    constraint 1 -- a no-verdict is not a rejection -- is only enforceable if
+    every table agrees on what a refusal *is*, and the tempting shortcut,
+    ``transcript_summary["aborted"]``, is a different question: it is true of a
+    run that aborted for any reason, including one where the question was
+    never put to a verifier at all.
+
+    Parameters
+    ----------
+    record : TrialRecord
+        One trial.
+
+    Returns
+    -------
+    bool
+        True when at least one verifier's recorded verdict is ``refused``.
+
+    Examples
+    --------
+    >>> from sih141.eval.reduce import refused_run
+    >>> class Fake:
+    ...     def __init__(self, verdicts):
+    ...         self.transcript_summary = {"verdicts": verdicts}
+    >>> refused_run(Fake({"Bob": "accepted", "Charlie": "refused"}))
+    True
+    >>> refused_run(Fake({"Bob": "accepted", "Charlie": "rejected"}))
+    False
+
+    A rejection is not a refusal, and neither is a party who was never asked:
+
+    >>> refused_run(Fake({"Bob": "rejected", "Charlie": "not_asked"}))
+    False
+    """
+    verdicts = record.transcript_summary.get("verdicts") or {}
+    return any(str(v) == "refused" for v in verdicts.values())
+
+
+def expected_trials(
+    store: ResultStore, experiment_name: str
+) -> dict[str, int]:
+    """Return how many trials per cell the sweep was actually asked for.
+
+    Read from the manifests the runs wrote, not from the registry, because the
+    registry says what the *default* is and a manifest says what *this store*
+    was asked for. Where a store has several manifests -- which is what a
+    resumed sweep leaves -- the largest request wins, since a cell asked for
+    400 trials once is short at 380 however many smaller runs also touched it.
+
+    Parameters
+    ----------
+    store : ResultStore
+        Where results live.
+    experiment_name : str
+        Which experiment.
+
+    Returns
+    -------
+    dict
+        Cell name to expected trial count. Empty when no manifest records a
+        count, in which case completeness cannot be checked against anything
+        and :func:`completeness_note` says so rather than guessing.
+    """
+    wanted: dict[str, int] = {}
+    for path in store.manifests(experiment_name):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        count = payload.get("trials")
+        if not isinstance(count, int) or count <= 0:
+            continue
+        for cell in payload.get("cells") or ():
+            wanted[str(cell)] = max(wanted.get(str(cell), 0), count)
+    return wanted
+
+
+def completeness_note(
+    records: Sequence[TrialRecord], expected: Mapping[str, int]
+) -> str:
+    """Say whether every trial the sweep asked for is on disk.
+
+    The single most likely way the human's long run goes quietly wrong. Every
+    rate in every table is computed over the records that are present, which is
+    arithmetically correct and still a false claim if the denominator shrank
+    without saying so: a cell that was asked for 400 trials and has 380 prints
+    ``k/380`` and looks finished.
+
+    Two ways a trial goes missing, and they need different checks:
+
+    - **An interior gap.** A trial whose scenario raised leaves no file at all,
+      so index 7 can be absent with 8 and 9 present.
+    - **A short tail.** An interrupted run leaves the *highest* indices
+      missing, and that is the common case rather than the exotic one. A check
+      that only looks for gaps below the highest index present reports a short
+      cell as complete -- which is false reassurance, and worse than saying
+      nothing.
+
+    Parameters
+    ----------
+    records : Sequence of TrialRecord
+        Every record being reduced.
+    expected : Mapping
+        Cell name to the trial count the sweep asked for, from
+        :func:`expected_trials`. An empty mapping means no manifest recorded a
+        count, and the note says only what it could check.
+
+    Returns
+    -------
+    str
+        A footnote for the outcome table. Loud when something is missing.
+
+    Examples
+    --------
+    A cell short by its last trial is caught, and the note names the shortfall
+    rather than the index, because after an interruption the indices present
+    are scattered:
+
+    >>> from sih141.eval.reduce import completeness_note
+    >>> class Fake:
+    ...     def __init__(self, cell, index):
+    ...         self.cell, self.index = cell, index
+    >>> got = [Fake("a", 0), Fake("a", 1), Fake("b", 0)]
+    >>> print(completeness_note(got, {"a": 2, "b": 2}))
+    ... # doctest: +NORMALIZE_WHITESPACE
+    **INCOMPLETE** -- the denominators above are smaller than the sweep asked
+    for, so every rate here is over a shrunken sample: b has 1 of 2 trials.
+
+    With nothing missing it says so, and says what it checked against:
+
+    >>> print(completeness_note(got, {"a": 2, "b": 1}))
+    ... # doctest: +NORMALIZE_WHITESPACE
+    Complete: every cell has all the trials its manifest asked for, and no
+    trial index is missing below the highest present. A trial whose scenario
+    raised would leave no file, so this is checked rather than assumed.
+
+    With no manifest to check against it does not claim completeness:
+
+    >>> print(completeness_note(got, {}))
+    ... # doctest: +NORMALIZE_WHITESPACE
+    No manifest recorded a trial count for this store, so completeness could
+    not be checked; only interior gaps were, and there are none. The row
+    counts above may be short of what was asked for.
+    """
+    by_cell: dict[str, set[int]] = {}
+    for record in records:
+        by_cell.setdefault(record.cell, set()).add(record.index)
+
+    short: list[str] = []
+    gaps: list[str] = []
+    for cell in sorted(by_cell):
+        seen = by_cell[cell]
+        absent = sorted(set(range(max(seen) + 1)) - seen)
+        if absent:
+            gaps.append(f"{cell} is missing index {absent}")
+        want = expected.get(cell)
+        if want is not None and len(seen) < want:
+            short.append(f"{cell} has {len(seen)} of {want} trials")
+    for cell in sorted(expected):
+        if cell not in by_cell:
+            short.append(f"{cell} has no records at all")
+
+    if short or gaps:
+        return (
+            "**INCOMPLETE** -- the denominators above are smaller than the "
+            "sweep asked for, so every rate here is over a shrunken sample: "
+            + "; ".join(short + gaps)
+            + "."
+        )
+    if not expected:
+        return (
+            "No manifest recorded a trial count for this store, so "
+            "completeness could not be checked; only interior gaps were, and "
+            "there are none. The row counts above may be short of what was "
+            "asked for."
+        )
+    return (
+        "Complete: every cell has all the trials its manifest asked for, and "
+        "no trial index is missing below the highest present. A trial whose "
+        "scenario raised would leave no file, so this is checked rather than "
+        "assumed."
+    )
+
+
+def escape_xml(text: str) -> str:
+    """Escape the five XML metacharacters, for a chart renderer.
+
+    Shared by every family's SVG chart, so an experiment name carrying an
+    ampersand cannot produce a document one renderer escapes and another does
+    not.
+
+    Parameters
+    ----------
+    text : str
+        Raw text.
+
+    Returns
+    -------
+    str
+        ``text`` with ``&``, ``<``, ``>``, ``"`` and ``'`` replaced by their
+        entities. The ampersand goes first, or the entities the later
+        replacements introduce would be escaped a second time.
+
+    Examples
+    --------
+    >>> from sih141.eval.reduce import escape_xml
+    >>> escape_xml('a & b <c> "d"')
+    'a &amp; b &lt;c&gt; &quot;d&quot;'
+    """
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&apos;")
     )
 
 
@@ -535,9 +792,11 @@ def detection_table(
     ...     table.columns[:5]
     ...     row = table.rows[0]
     ...     row[0], row[2], row[3], row[4]
-    ...     row[9].startswith("not evaluated")
+    ...     table.columns[7], row[7]
+    ...     row[10].startswith("not evaluated")
     ('cell', 'count_exchange_timing', 'hypothesis', 'runs', 'attacked')
     ('tiny', 'honest', 2, 0)
+    ('refusals (any party)', 0)
     True
     """
     if not records:
@@ -562,6 +821,12 @@ def detection_table(
             for r in group
             if r.detection.get("false_positive_bound") is not None
         ]
+        # Phase 3 constraint 1, on the one table every experiment gets. A
+        # refusal is not a rejection, and a `flagged 400/400` row over a cell
+        # where every verifier reached no verdict is a denial of transfer
+        # dressed as a caught attack. The count is its own column and is added
+        # to neither denominator: the detector returned on every run.
+        refusals = sum(1 for r in group if refused_run(r))
         for record in group:
             withheld_here.update(str(w) for w in record.detection.get("withheld", ()))
         withheld_seen.update(withheld_here)
@@ -574,9 +839,9 @@ def detection_table(
         flagged_cell: Any = (
             UNDETECTABLE_BY_CONSTRUCTION
             if not detectable
-            else _rate_cell(sum(1 for r in attacked if r.flagged), len(attacked))
+            else measured_rate(sum(1 for r in attacked if r.flagged), len(attacked))
         )
-        clean_cell = _rate_cell(sum(1 for r in clean if r.flagged), len(clean))
+        clean_cell = measured_rate(sum(1 for r in clean if r.flagged), len(clean))
 
         nulls = {r.null_is_noiseless for r in group}
         null_cell = (
@@ -591,6 +856,7 @@ def detection_table(
                 len(attacked),
                 flagged_cell,
                 clean_cell,
+                refusals,
                 f"{max(bounds):.3e}" if bounds else NOT_EVALUATED,
                 null_cell,
                 f"{NOT_EVALUATED} ({len(withheld_here)})" if withheld_here else "-",
@@ -607,6 +873,18 @@ def detection_table(
         "`attacked` counts runs whose adversary engaged, read off the "
         "adversary's own log. An untargeted run is byte-identical to an "
         "honest one and is scored as one.",
+        "`refusals (any party)` counts runs where AT LEAST ONE verifier "
+        "reached no verdict. It is shown beside the rates and added to "
+        "neither denominator: a refusal is not a rejection, and it is not a "
+        "miss either -- the detector scored every run in both denominators, "
+        "refusal or not. A row whose count equals its `runs` did not "
+        "necessarily deny transfer, and this is where an experiment's own "
+        "per-party table earns its place: at L = 96 the recipient forger "
+        "refuses on all 400 runs under either ordering, but before forwarding "
+        "it is CHARLIE who reaches no verdict (a denial of transfer) and "
+        "after forwarding it is BOB, while Charlie returns a real 120/400 "
+        "acceptance. Same count, opposite reading, which is why the column is "
+        "named for what it actually counts.",
         "`null_is_noiseless` says whether the detector was given a noiseless "
         "null. On a genuinely noisy link that null is not the truth, honest "
         "runs depart from it, and the mismatch members fire correctly -- so a "
@@ -633,6 +911,7 @@ def detection_table(
             "attacked",
             "flagged on attacked (measured)",
             "flagged on clean (measured)",
+            "refusals (any party)",
             "max proven FP bound",
             "null_is_noiseless",
             "withheld families",
@@ -739,6 +1018,16 @@ def timing_table(
             "sum of `session s (total)` exceeds the sweep's own wall clock by "
             "roughly the achieved speedup. That comparison is the check on "
             "the runner: if it does not, one of the two numbers is wrong.",
+            "**`ms/position` HERE IS NOT THE PROTOCOL'S COST.** It carries the "
+            "contention of whatever worker count produced these records -- see "
+            "`worker counts` in the provenance above. Measured on this machine, "
+            "a trial takes 1.61x longer at twenty workers than at one at "
+            "L = 384, and 2.53x at L = 768, because the cores share an all-core "
+            "turbo budget and an L3. The single-threaded reference is "
+            "`sih141.eval.perf.REFERENCE_MS_PER_POSITION`; regenerate it with "
+            "`python tools/sweep.py perf`. Multiplying the figure below by a "
+            "key length to project a production run overstates it by that "
+            "factor.",
             "Timings are excluded from a record's fingerprint, so they cannot "
             "affect the reproducibility claim -- and every other table here "
             "is byte-identical at one worker and at twenty.",
@@ -807,12 +1096,36 @@ def reduce_experiment(
     registered = EXPERIMENTS.get(experiment_name)
     if registered is not None:
         order = registered.cell_names
+    expected = {
+        cell: count
+        for cell, count in expected_trials(store, experiment_name).items()
+        if wanted is None or cell in wanted
+    }
+    complete = completeness_note(records, expected)
+    outcomes = outcome_table(records, command=command, cell_order=order)
+    # Prepended, not appended: if the sample is short, that is the first thing
+    # a reader needs and not a footnote after three about the denominators.
+    outcomes = replace(outcomes, notes=(complete, *outcomes.notes))
     tables = [
-        outcome_table(records, command=command, cell_order=order),
+        outcomes,
         detection_table(records, command=command, cell_order=order),
         timing_table(records, command=command, cell_order=order),
     ]
     extra = EXTRA_REDUCTIONS.get(experiment_name)
     if extra is not None:
-        tables.extend(extra(records, command=command, cell_order=order))
+        # `expected` goes through so a family's own completeness footnote can
+        # check the count against the manifest rather than only looking for
+        # interior gaps. Without it the ROC grid printed "No manifest recorded
+        # a trial count for this store" while the outcome table three sections
+        # above said "Complete: every cell has all the trials its manifest
+        # asked for" -- one of the two was false about the same store, in the
+        # same file.
+        tables.extend(
+            extra(
+                records,
+                command=command,
+                cell_order=order,
+                expected=expected,
+            )
+        )
     return tables

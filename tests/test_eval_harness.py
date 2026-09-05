@@ -62,6 +62,7 @@ from sih141.eval.reduce import (
     group_records,
     outcome_table,
     reduce_experiment,
+    refused_run,
     tally_from_record,
     timing_table,
 )
@@ -1009,7 +1010,11 @@ def test_a_withheld_family_is_reported_as_unevaluated(tmp_path: Path) -> None:
     records = list(store.read_experiment("smoke"))
     assert any(record.detection["withheld"] for record in records)
     table = detection_table(records)
-    assert table.rows[0][9].startswith(NOT_EVALUATED)
+    # Indexed by NAME, not position: this assertion used to be `rows[0][9]`
+    # and a column added ahead of it moved the answer silently.
+    assert table.rows[0][
+        table.columns.index("withheld families")
+    ].startswith(NOT_EVALUATED)
     assert any("withheld" in note for note in table.notes)
     # No cell anywhere in the table claims a withheld family passed, and the
     # count in the cell is the number of families actually withheld in that
@@ -1019,7 +1024,10 @@ def test_a_withheld_family_is_reported_as_unevaluated(tmp_path: Path) -> None:
     withheld_here = set()
     for record in records:
         withheld_here.update(record.detection["withheld"])
-    assert table.rows[0][9] == f"{NOT_EVALUATED} ({len(withheld_here)})"
+    assert (
+        table.rows[0][table.columns.index("withheld families")]
+        == f"{NOT_EVALUATED} ({len(withheld_here)})"
+    )
     assert any(
         "channel" in note and "chsh" in note for note in table.notes
     )
@@ -1038,8 +1046,11 @@ def test_a_rate_with_no_trials_says_so_rather_than_printing_zero(
         experiment("smoke"), store, trials=2, workers=1, in_process=True, quiet=True
     )
     table = detection_table(list(store.read_experiment("smoke")))
-    assert table.rows[0][4] == 0  # no attacked runs in an honest cell
-    assert table.rows[0][5] == "no trials"
+    assert table.rows[0][table.columns.index("attacked")] == 0
+    assert (
+        table.rows[0][table.columns.index("flagged on attacked (measured)")]
+        == "no trials"
+    )
 
 
 def test_the_null_is_a_column_on_every_detection_row(tmp_path: Path) -> None:
@@ -1050,7 +1061,7 @@ def test_the_null_is_a_column_on_every_detection_row(tmp_path: Path) -> None:
     )
     table = detection_table(list(store.read_experiment("smoke")))
     assert "null_is_noiseless" in table.columns
-    assert table.rows[0][8] == "yes"
+    assert table.rows[0][table.columns.index("null_is_noiseless")] == "yes"
     for record in store.read_experiment("smoke"):
         assert record.null_is_noiseless is True
         assert record.detection["channel_error_rate"] == 0.0
@@ -1084,7 +1095,8 @@ def test_a_noisy_cell_reports_its_null_honestly(tmp_path: Path) -> None:
     finally:
         del EXPERIMENTS[truthful.name]
     assert record.null_is_noiseless is False
-    assert detection_table([record]).rows[0][8] == "no"
+    noisy = detection_table([record])
+    assert noisy.rows[0][noisy.columns.index("null_is_noiseless")] == "no"
 
 
 def test_timing_table_is_arithmetically_right(tmp_path: Path) -> None:
@@ -1563,3 +1575,148 @@ def test_an_unregistered_cell_still_appears_in_a_table(tmp_path: Path) -> None:
     cells = [row[0] for row in outcome_table(list(store.read_experiment("smoke")),
                                              cell_order=("tiny",)).rows]
     assert cells == ["tiny", "retired"]
+
+
+def _refusing_record() -> TrialRecord:
+    """Return one trial on which a verifier reached no verdict.
+
+    Every fixture in this file until now was an honest cell, where the refused
+    column is zero and a table that folded refusals into rejections would print
+    exactly the same numbers. That is what let the fold go unnoticed. A
+    recipient forger under the shipped ordering leaves the pooled matched count
+    undefined and Charlie aborts, at ``L = 96`` in about a fifth of a second.
+
+    Returns
+    -------
+    TrialRecord
+        Bob accepted, Charlie refused.
+    """
+    import sih141.eval.security  # noqa: F401  -- registers the scenario
+
+    exp = Experiment(
+        name="refusalfixture",
+        trials=1,
+        cells=(
+            Cell(
+                name="bob",
+                params=ProtocolParams(key_length=96, check_fraction=0.0),
+                scenario="security-recipient-forgery",
+                scenario_options={"count_exchange_timing": "before-forwarding"},
+                truth_hypothesis="recipient-forgery",
+            ),
+        ),
+    )
+    EXPERIMENTS[exp.name] = exp
+    try:
+        return run_trial(exp, "bob", 0)
+    finally:
+        del EXPERIMENTS[exp.name]
+
+
+def test_a_refusal_is_not_added_into_the_rejected_column() -> None:
+    """Phase 3 constraint 1, measured on a run that actually refuses.
+
+    This is the observation that would differ if the property were false, and
+    for one release nothing was making it: the constraint was enforced by
+    ``OutcomeTally``'s types, ``outcome_table`` defeated the types with one
+    ``int()`` call, and every fixture that reached the table was an honest cell
+    with no refusals to fold. Adding ``refused`` into ``rejected`` and printing
+    a zero left 328 tests and doctests green.
+
+    So the counts come from the records' own verdicts, by a different route
+    from the one the table uses, and the two are compared.
+    """
+    record = _refusing_record()
+    verdicts = record.transcript_summary["verdicts"]
+    assert sorted(verdicts.values()) == ["accepted", "refused"], verdicts
+
+    table = outcome_table([record])
+    row = table.rows[0]
+    column = {name: row[i] for i, name in enumerate(table.columns)}
+
+    # Recomputed from the record, not from the tally the table used.
+    wanted = {
+        state: sum(1 for v in verdicts.values() if v == state)
+        for state in ("accepted", "rejected", "refused", "not_asked")
+    }
+    assert column["refused"] == wanted["refused"] == 1
+    assert column["rejected"] == wanted["rejected"] == 0
+    assert column["accepted"] == wanted["accepted"] == 1
+    assert column["parties"] == sum(wanted.values()) == 2
+
+
+def test_the_detection_table_shows_refusals_beside_its_rates() -> None:
+    """A flagged rate over runs that all refused is a denial, not a catch.
+
+    ``forgery-curve``'s before-forwarding rows read ``400/400 = 1.000`` while
+    every one of those runs was a Charlie no-verdict. The rate is correct; the
+    reading it invites is not, and the column is what separates them.
+    """
+    record = _refusing_record()
+    table = detection_table([record])
+    column = {name: table.rows[0][i] for i, name in enumerate(table.columns)}
+
+    assert refused_run(record) is True
+    assert column["refusals (any party)"] == 1 == column["runs"]
+    assert column["flagged on attacked (measured)"].startswith("1/1")
+    assert any("refusal is not a rejection" in note for note in table.notes)
+
+
+def test_an_honest_run_is_not_counted_as_a_refusal() -> None:
+    """The refusal predicate has to be able to answer no, or it is decorative."""
+    honest = run_trial(experiment("smoke"), "tiny", 0)
+    assert refused_run(honest) is False
+    table = detection_table([honest])
+    column = {name: table.rows[0][i] for i, name in enumerate(table.columns)}
+    assert column["refusals (any party)"] == 0
+
+
+def test_the_small_end_probe_reports_a_range_not_a_single_draw() -> None:
+    """Whether a family is evaluable is not constant near the boundary.
+
+    The published table printed `4`, `2` and `1` withheld families at
+    ``L = 96``, ``180`` and ``183`` -- one draw each, presented as a property of
+    the length. Below about ``L = 216`` it depends on how the check rounds
+    happened to split between the QBER and CHSH cells, so the probe reports the
+    range over its trials and this asserts the range is real: at ``L = 96`` the
+    minimum and maximum differ.
+
+    It also pins the two things the section's prose rests on -- the refused
+    parameter set is a row rather than a gap, and the claim turns on between
+    ``L = 180`` and ``L = 183``.
+    """
+    rows = {
+        row["key_length"]: row
+        for row in perf.measure_small_end([3, 96, 180, 183], trials=5)
+    }
+
+    assert rows[3]["refused"] is True
+    assert "check" in rows[3]["reason"]
+
+    assert rows[180]["security_claim"] is False
+    assert rows[183]["security_claim"] is True
+    assert rows[183]["signing_length"] == 138
+    assert rows[183]["M_min"] == 2 and rows[180]["M_min"] == 1
+
+    # The observation that would differ if the column were a single draw.
+    assert rows[96]["withheld_max"] > rows[96]["withheld_min"], (
+        "L=96 is inside the region where the channel family is withheld on "
+        "some runs and not others; a constant here means the probe is only "
+        "looking at one trial"
+    )
+    assert rows[384 if 384 in rows else 183]["withheld_min"] >= 0
+
+
+def test_the_small_end_probe_counts_honest_aborts_at_the_very_small_end() -> None:
+    """Honest runs really do abort below L=24, and they are no-verdicts.
+
+    A 20% abort rate on honest runs is a denominator problem for any table
+    drawn there, so the figure is measured rather than remembered.
+    """
+    rows = {
+        row["key_length"]: row for row in perf.measure_small_end([6, 96], trials=5)
+    }
+    assert rows[6]["aborts"] >= 1, "L=6 should abort on some honest runs"
+    assert rows[96]["aborts"] == 0
+    for row in rows.values():
+        assert 0 <= row["aborts"] <= row["trials"]
