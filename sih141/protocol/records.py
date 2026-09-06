@@ -88,8 +88,10 @@ columns above, and a counting rule can only ask whether the declaration agrees
 with what was measured. It cannot ask whose states were measured. An adversary
 who controls **both** seams -- distributing her own key states and then signing
 her own key -- produces records that are honest records of *her* protocol run,
-so both verifiers accept: ``60/60`` at Bob and ``60/60`` at Charlie, ``QBER``
-exactly ``0.0000``, ``transferable=True``, measured through the shipped seams.
+so both verifiers accept: ``200/200`` at Bob and at Charlie, pooled mismatch
+rate ``0.0000`` at each, ``transferable=True``, measured through the shipped
+seams by :mod:`sih141.attacks.impersonation` at ``L = 192`` over ``n = 200``
+sessions per arm -- the same acceptance the ``none`` control earns.
 That is not a defect of this module, of the thresholds or of the floors; it is
 the standing assumption of measurement-based QDS (Dunjko-Wallden-Andersson 2014;
 Amiri et al. 2016), which derives everything else *given* authenticated channels
@@ -97,11 +99,18 @@ from the signer.
 
 **Partial impersonation is caught cold, and by the mismatch rate alone.** An
 adversary who seizes only one of the two seams is the forger the thresholds are
-sized against: ``0/60`` accepted, at ``QBER = 0.4987`` (Bob) and ``0.4806``
-(Charlie), against the ``1/2`` a declaration uncorrelated with these records
-produces. Note what is *unchanged* in those runs -- the matched counts. The
-matched set is ``{i : record_basis_i == declared_basis_i}`` and both columns are
-drawn uniformly and independently of the adversary, so no impersonator moves it.
+sized against: ``0/200`` accepted under either single-seam scope, at pooled
+mismatch rates ``0.4988`` (Bob) and ``0.5038`` (Charlie) when only the signing
+seam is seized and ``0.5031`` and ``0.4997`` when only the distribution seam
+is, against the ``1/2`` a declaration uncorrelated with these records
+produces. Note what is *unchanged* in those runs -- the matched-count *law*,
+which is not the same as the counts. The matched set is
+``{i : record_basis_i == declared_basis_i}`` and both columns are drawn
+uniformly and independently of the adversary, so its distribution is fixed. The
+realised counts do move where the adversary holds the signing seam:
+:data:`~sih141.attacks.impersonation.MATCHED_IDENTICAL_TRIALS` records
+``200/200`` runs identical to the control under the distribution seam and
+``0/200`` under the signing seam.
 The mismatch rate is the only signal a record carries, which is why (AUTH) has
 to be assumed rather than checked, and why the matched-count floors in
 :mod:`sih141.protocol.verify` are an evidence-liveness control and not an
@@ -136,6 +145,22 @@ a fair coin and the measured ``QBER`` sits at ``1/2``, far above ``s_v``.
 
 >>> 0.5 > DEFAULT_PARAMS.s_v > DEFAULT_PARAMS.s_a > 0
 True
+
+The (AUTH) paragraphs above quote acceptance counts and mismatch rates. Those
+are not prose: they are the rows :mod:`sih141.attacks.impersonation` measured
+through the shipped seams, and this is the table they print. The four figures
+this section used to quote were retired rather than corrected: they named no
+``L``, no ``n`` and no estimator, so there was nothing in them to reproduce.
+See :mod:`sih141.protocol.analysis` section 0b, which carries the digits and
+the reason.
+
+>>> from sih141.attacks.impersonation import shipped_summary
+>>> for row in shipped_summary():
+...     print(row)
+none L=192 n=200: accepted 200/200, r_Bob=0.0000, r_Charlie=0.0000
+full L=192 n=200: accepted 200/200, r_Bob=0.0000, r_Charlie=0.0000
+signing L=192 n=200: accepted 0/200, r_Bob=0.4988, r_Charlie=0.5038
+distribution L=192 n=200: accepted 0/200, r_Bob=0.5031, r_Charlie=0.4997
 
 The ``M``-averaged figure this docstring says these records cannot earn, beside
 the per-run figure a symmetrised pair does earn at the expected ``M``:

@@ -89,7 +89,11 @@ from sih141.detect.statistics import wilson_interval
 from sih141.detect.thresholds_structural import NoVerdictCount, OutcomeTally
 
 from .experiments import EXPERIMENTS
-from .records import UNDETECTABLE_BY_CONSTRUCTION, TrialRecord
+from .records import (
+    UNDETECTABLE_ASSUMPTION,
+    UNDETECTABLE_BY_CONSTRUCTION,
+    TrialRecord,
+)
 from .store import ResultStore
 
 __all__ = [
@@ -97,6 +101,7 @@ __all__ = [
     "EXTRA_CHARTS",
     "EXTRA_REDUCTIONS",
     "NOT_EVALUATED",
+    "VARIANT_MARKERS",
     "Table",
     "completeness_note",
     "detection_table",
@@ -249,6 +254,71 @@ class Table:
         }
 
 
+VARIANT_MARKERS: Final[tuple[str, ...]] = (
+    "count_exchange_timing",
+    "symmetrised",
+    "counts_exchanged",
+    "signer_saw_recipient_logs",
+    "security_claim",
+)
+"""tuple of str: The names of ``Detection.grouping_key``'s five elements.
+
+Phase 4 froze that key with "Group by this; never average over it"
+(:class:`~sih141.detect.detector.Detection`). Only the first element reaches
+the grouping here, because the other four are functions of a cell's parameters
+and so are constant inside a cell -- which is an *invariant*, not a
+coincidence, and :func:`_refuse_mixed_variant_markers` is where it is checked
+rather than assumed.
+"""
+
+
+def _refuse_mixed_variant_markers(
+    grouped: Mapping[tuple[str, str], Sequence[TrialRecord]],
+) -> None:
+    """Refuse to hand back a group that averages over a variant marker.
+
+    ``Detection.grouping_key``'s first element is the count-exchange ordering
+    and is part of the group key. The other four --
+    ``symmetrised``, ``counts_exchanged``, ``signer_saw_recipient_logs``,
+    ``security_claim`` -- are not, because today they are fixed by a cell's
+    parameters. If one of them ever varies inside a cell, every table built on
+    this grouping would average two different protocols into one row, silently.
+    ``signer_saw_recipient_logs`` is the case Phase 4 carried the marker for:
+    a run where the signer saw the recipient's logs is not the shipped scheme,
+    and no table may quote it as if it were.
+
+    Parameters
+    ----------
+    grouped : Mapping
+        The groups, keyed as :func:`group_records` keys them.
+
+    Raises
+    ------
+    ValueError
+        If a group holds two values of one marker. Records with no
+        ``grouping_key`` in their detection payload are skipped: a stand-in
+        record in a test is not evidence of a mixed group.
+    """
+    for (cell, timing), group in grouped.items():
+        seen: dict[str, set[Any]] = {}
+        for record in group:
+            key = record.detection.get("grouping_key")
+            if not isinstance(key, (list, tuple)) or len(key) != len(
+                VARIANT_MARKERS
+            ):
+                continue
+            for name, value in zip(VARIANT_MARKERS[1:], tuple(key)[1:]):
+                seen.setdefault(name, set()).add(value)
+        mixed = sorted(name for name, values in seen.items() if len(values) > 1)
+        if mixed:
+            raise ValueError(
+                f"cell {cell!r} ({timing}) mixes two values of "
+                + ", ".join(mixed)
+                + ": these are grouping_key markers and a table must not "
+                "average over them. Split the cell, or widen the group key."
+            )
+
+
 def group_records(
     records: Iterable[TrialRecord],
     *,
@@ -276,6 +346,14 @@ def group_records(
         which is the point: the timing is a column, never a thing averaged
         over.
 
+    Raises
+    ------
+    ValueError
+        If a group mixes two values of one of the four ``grouping_key``
+        markers that are *not* in the key -- see
+        :func:`_refuse_mixed_variant_markers`. Every caller routes through
+        here, so the invariant is checked once rather than in each table.
+
     Examples
     --------
     >>> import tempfile
@@ -295,6 +373,7 @@ def group_records(
     for record in records:
         key = (record.cell, record.count_exchange_timing)
         grouped.setdefault(key, []).append(record)
+    _refuse_mixed_variant_markers(grouped)
     for group in grouped.values():
         group.sort(key=lambda r: r.index)
     rank = {name: i for i, name in enumerate(cell_order or ())}
@@ -624,7 +703,10 @@ def completeness_note(
     expected : Mapping
         Cell name to the trial count the sweep asked for, from
         :func:`expected_trials`. An empty mapping means no manifest recorded a
-        count, and the note says only what it could check.
+        count, and the note says only what it could check. A mapping that
+        covers *some* cells is the same problem in miniature -- a manifest that
+        would not parse leaves its cells out -- and the uncovered cells are
+        named rather than counted as complete.
 
     Returns
     -------
@@ -655,6 +737,17 @@ def completeness_note(
     trial index is missing below the highest present. A trial whose scenario
     raised would leave no file, so this is checked rather than assumed.
 
+    A cell no manifest covers is not folded into the affirmative, because it
+    was checked against nothing -- which is what happens whenever
+    :func:`expected_trials` skips an unreadable manifest:
+
+    >>> print(completeness_note(got, {"a": 2}))
+    ... # doctest: +NORMALIZE_WHITESPACE
+    Partly checked: every cell a manifest covers has all the trials it asked
+    for, and no trial index is missing below the highest present. No manifest
+    recorded a trial count for b, so that cell was checked for interior gaps
+    only and may be short of what was asked for.
+
     With no manifest to check against it does not claim completeness:
 
     >>> print(completeness_note(got, {}))
@@ -681,12 +774,35 @@ def completeness_note(
         if cell not in by_cell:
             short.append(f"{cell} has no records at all")
 
+    # A cell with records that no manifest covers was never checked against a
+    # count, only for interior gaps. Saying "every cell has all the trials its
+    # manifest asked for" over it is the false affirmative this function
+    # exists to remove, so the cells are named.
+    unchecked = [cell for cell in sorted(by_cell) if cell not in expected]
+    caveat = (
+        " No manifest recorded a trial count for "
+        + ", ".join(unchecked)
+        + ", so "
+        + ("that cell was" if len(unchecked) == 1 else "those cells were")
+        + " checked for interior gaps only and may be short of what was "
+        "asked for."
+        if expected and unchecked
+        else ""
+    )
+
     if short or gaps:
         return (
             "**INCOMPLETE** -- the denominators above are smaller than the "
             "sweep asked for, so every rate here is over a shrunken sample: "
             + "; ".join(short + gaps)
             + "."
+            + caveat
+        )
+    if caveat:
+        return (
+            "Partly checked: every cell a manifest covers has all the trials "
+            "it asked for, and no trial index is missing below the highest "
+            "present." + caveat
         )
     if not expected:
         return (
@@ -890,8 +1006,8 @@ def detection_table(
         "runs depart from it, and the mismatch members fire correctly -- so a "
         "`yes` here is a caveat on the row, not a detail.",
         f"`{UNDETECTABLE_BY_CONSTRUCTION}` means an assumption rules "
-        "detection out for that hypothesis. It is never a blank, a dash or a "
-        "zero.",
+        f"detection out for that hypothesis -- {UNDETECTABLE_ASSUMPTION}. It "
+        "is never a blank, a dash or a zero.",
     ]
     if withheld_seen:
         notes.append(

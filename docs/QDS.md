@@ -215,10 +215,13 @@ bounds, so the abort rule can never become the dominant reason an honest run fai
 
 - **The classical and quantum channels from Alice are authenticated.** If an attacker can fully
   impersonate Alice from the very start (distributing her own key states *and* signing them),
-  she is accepted, because nothing in the protocol binds an identity. Measured: **60/60 accepted
-  by both verifiers at QBER exactly 0.** This is inherent to every scheme in this family, not a
-  defect of ours, but it is load-bearing and we state it rather than hoping nobody asks.
-  *Partial* impersonation is caught cold: 0/60 accepted, QBER ≈ 0.5.
+  she is accepted, because nothing in the protocol binds an identity. Measured at `L = 192` over
+  200 trials, `sih141.attacks.impersonation`: **200/200 accepted by both verifiers at a mismatch
+  rate of exactly 0**, which is what the honest control gives too. This is inherent to every
+  scheme in this family, not a defect of ours, but it is load-bearing and we state it rather than
+  hoping nobody asks. *Partial* impersonation is caught cold: 0/200 accepted on either seam, at
+  mismatch rates `0.4988` (Bob) and `0.5038` (Charlie) on the signing seam, `0.5031` and `0.4997`
+  on the distribution seam.
 - **The symmetrisation coins are private to the recipients.** The non-repudiation proof depends
   on Alice not knowing them. We found and fixed a bug where an attack harness could read them
   (§10).
@@ -247,8 +250,16 @@ CHSH separates the channel attacks cleanly:
 | --- | --- |
 | Ideal entanglement | **2.8284** (the quantum maximum, 2√2) |
 | Depolarising, p = 0.3 | 1.9799 |
-| Eve keeps a GHZ share | 2.0000 |
-| Intercept-resend | 1.0020 |
+| Eve keeps a GHZ share, `Z` axis | 1.4142 (√2) |
+| Intercept-resend | 0.9428 |
+
+All four are closed forms in `sih141.attacks.channel`, not fits; the measured 99% intervals are in
+[PHASE3](PHASE3.md) §4. **2.0000 is not on this list on purpose.** It is
+`CLASSICAL_CHSH_BOUND`, what a separable resource may not *exceed*, and an earlier draft published
+it as the kept share's own value. A kept share attains √2, so a detector thresholding on "does
+this link still violate the classical bound" has 0.59 of margin against it, not 0.00. A kept share
+taken in a uniformly drawn axis rather than `Z` falls further, to the same 0.9428 as
+intercept-resend; the two attacks then part company on purity, not on CHSH.
 
 ---
 
@@ -300,7 +311,7 @@ sih141/
     session.py     orchestration and the attack seams
     analysis.py    analytic closed forms; no simulation lives here
 
-  tests/           1,418 automated tests
+  tests/           3,819 automated tests
   docs/            per-phase engineering notes, metrics, this document
   tools/           metrics, working journal, and commit tooling
 ```
@@ -475,10 +486,10 @@ walk of all six seams, 0/4001 generator-rewind steps, 0/19 seed-reconstruction r
 | `M_min − 2·m_min` | 1,080 | The margin that closes Break 3; grows like √L |
 | `E[\|M_R\|]` | 38,400 | Expected matched positions per verifier |
 | Repudiation bound | 1.4139 × 10⁻⁹ | Unconditional, with the abort rule |
-| Recipient forgery | 2.17 × 10⁻¹⁰⁵ | The binding forgery adversary |
+| Recipient forgery | 2.17 × 10⁻¹⁰⁵ | The binding forgery adversary. This is the *exact in-model probability*, not a bound; the KL bound over it is 1.12 × 10⁻¹⁰³ and the Hoeffding bound is 1.13 × 10⁻²⁹ |
 | Honest-abort probability | 8.0 × 10⁻³¹ | Cost of the abort rule, against a 2⁻⁶⁴ budget |
 | Session runtime | 2.04 ms/position | 235 s, or 3.9 minutes, for one full-scale session |
-| Test suite | 3,750 tests | ~25 minutes to run |
+| Test suite | 3,819 tests | see `docs/METRICS.md`, which is generated |
 
 ---
 
@@ -569,9 +580,9 @@ seed and on nothing else.
 > monotone amortisation an earlier draft described.
 >
 > **Detector latency is not a constant few milliseconds.** It is 1.54 s on a full-scale
-> transcript against 2.9 ms on a 96-position one, because it is dominated by parsing the JSON,
-> so it scales with `L` like everything else. Still under one percent of the session that
-> produced the transcript.
+> **unchecked** transcript against 2.9 ms on a 96-position one, because it is dominated by
+> parsing the JSON, so it scales with `L` like everything else. Still under one percent of the
+> session that produced the transcript.
 
 **Phase 6 was built first.** The work order was 4 → 6 → 5 → 7; see the roadmap note in
 `README.md` for why. Nothing in Phase 6 depends on the numbers this phase produces.

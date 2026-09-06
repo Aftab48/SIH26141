@@ -973,14 +973,19 @@ one place and 37.2 in another when both were the same measurement in different
 units.
 """
 
-SECURITY_CLAIM_MIN_KEY_LENGTH: Final[int] = 183
+SECURITY_CLAIM_MIN_KEY_LENGTH: Final[int] = 182
 """int: Smallest ``L`` carrying a security claim at ``check_fraction = 0.25``.
 
-Measured by bisection: at ``L = 180`` the pooled floor ``M_min`` degenerates to
-1 and ``Detection.security_claim`` is ``False``; at ``L = 183`` -- signing
-length 138 -- ``M_min`` reaches 2 and the claim turns on.
+Measured by scanning every length, not by bisecting between two of them: at
+``L = 181`` -- signing length 136 -- the pooled floor ``M_min`` is 1 and
+``Detection.security_claim`` is ``False``; at ``L = 182`` -- signing length 137
+-- ``M_min`` reaches 2 and the claim turns on. An earlier draft said 183, from
+a bisection that tried 180 and 183 and neither of the two lengths between them;
+182 and 183 both carry a claim, so the endpoints agreed and the boundary was
+still off by one. :data:`~sih141.eval.security.FLOOR_CROSSOVER` is the same
+fact stated in signing lengths, 137, and the two now agree.
 
-The number to hold onto is the **signing** length, 138, not the nominal key
+The number to hold onto is the **signing** length, 137, not the nominal key
 length. A quarter of the positions go to check rounds, so a caller who sets
 ``key_length = 140`` because "below 140 the floors degenerate" gets a signing
 length of 105 and no claim at all. Below this, runs still complete and the
@@ -988,7 +993,7 @@ detector still returns a verdict; what it does not return is a claim.
 """
 
 DEGENERATE_END: Final[str] = (
-    "Below L=183 at check_fraction=0.25 the pooled floor degenerates to 1 and "
+    "Below L=182 at check_fraction=0.25 the pooled floor degenerates to 1 and "
     "no run carries a security claim. Below about L=24 aborts appear on honest "
     "runs -- 1 in 5 at L=6 and L=12 -- because a verifier's matched set falls "
     "under the floor, and those are no-verdicts rather than rejections. At "
@@ -1002,7 +1007,8 @@ DEGENERATE_END: Final[str] = (
 """str: What happens at the small end, measured rather than assumed.
 
 Every figure here comes from ``tools/`` probes over five trials per length; the
-boundary at 183 is pinned as :data:`SECURITY_CLAIM_MIN_KEY_LENGTH` and tested.
+boundary at 182 is pinned as :data:`SECURITY_CLAIM_MIN_KEY_LENGTH` and tested
+by a scan across it rather than by two endpoints that skip it.
 """
 
 

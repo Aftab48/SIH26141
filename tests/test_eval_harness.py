@@ -45,7 +45,12 @@ from sih141.eval.experiments import (
     experiment,
     run_trial,
 )
-from sih141.eval.manifest import MANIFEST_SCHEMA, RunManifest, seed_derivation
+from sih141.eval.manifest import (
+    MANIFEST_SCHEMA,
+    RunManifest,
+    git_state,
+    seed_derivation,
+)
 from sih141.eval.records import (
     NON_DETERMINISTIC_FIELDS,
     RECORD_SCHEMA,
@@ -58,6 +63,7 @@ from sih141.eval.reduce import (
     CONFIDENCE,
     NOT_EVALUATED,
     Table,
+    completeness_note,
     detection_table,
     group_records,
     outcome_table,
@@ -582,7 +588,7 @@ def test_an_unmonitored_link_reports_nothing_rather_than_zero() -> None:
 
 
 def test_transcripts_are_not_retained_by_default() -> None:
-    """The 26.7 MB field is absent unless asked for."""
+    """The 25.4 MiB field is absent unless asked for."""
     lean = run_trial(experiment("smoke"), "tiny", 0)
     assert lean.transcript_json is None
     assert "transcript_json" not in lean.to_dict()
@@ -1225,10 +1231,10 @@ def test_the_measured_rate_and_its_projections_agree() -> None:
     assert measured["ms_per_position"] == perf.REFERENCE_MS_PER_POSITION
     assert perf.projected_session_seconds(115200) == pytest.approx(
         measured["seconds"], rel=1e-3
-    )
+    , abs=0)
     assert measured["seconds"] / measured["key_length"] * 1000 == pytest.approx(
         perf.REFERENCE_MS_PER_POSITION, rel=1e-3
-    )
+    , abs=0)
 
 
 def test_scaling_stayed_linear_across_the_measured_range() -> None:
@@ -1240,7 +1246,7 @@ def test_scaling_stayed_linear_across_the_measured_range() -> None:
     for row in perf.MEASURED_SESSIONS:
         assert row["seconds"] * 1000 / row["key_length"] == pytest.approx(
             row["ms_per_position"], rel=2e-3
-        )
+        , abs=0)
 
 
 def test_the_sweep_projection_is_the_arithmetic_it_claims() -> None:
@@ -1471,12 +1477,16 @@ def test_memory_rises_with_key_length_above_a_fixed_floor() -> None:
 
 def test_the_security_claim_boundary_is_where_it_is_recorded(
 ) -> None:
-    """L=180 carries no claim and L=183 does, run rather than asserted.
+    """The claim turns on at the recorded length and not one length earlier.
 
-    The boundary is a property of the floors, so this runs the protocol at both
-    lengths and reads ``Detection.security_claim``. A change to ``M_min`` that
-    moved the boundary would fail here rather than quietly invalidate the note
-    that tells a Phase 5 reader which cells carry a claim.
+    Scanned, not bisected. The previous version of this test asserted the
+    endpoints ``C`` and ``C - 3`` and jumped the two lengths between them,
+    which is how the constant came to be 183 when the claim already turns on
+    at 182: both endpoints agreed with the wrong answer. Every length from
+    ``C - 3`` to ``C + 1`` is run here, so an off-by-one has nowhere to hide.
+
+    The boundary is a property of the floors, so this runs the protocol and
+    reads ``Detection.security_claim`` rather than recomputing the rule.
     """
     from sih141.core.rng import seed_to_generator
 
@@ -1485,9 +1495,31 @@ def test_the_security_claim_boundary_is_where_it_is_recorded(
         transcript = QDSSession(params, rng=seed_to_generator(4242 + length)).run(0)
         return bool(detect(transcript.to_json(), eps=1e-9).security_claim)
 
-    assert perf.SECURITY_CLAIM_MIN_KEY_LENGTH == 183
-    assert claims(perf.SECURITY_CLAIM_MIN_KEY_LENGTH) is True
-    assert claims(perf.SECURITY_CLAIM_MIN_KEY_LENGTH - 3) is False
+    boundary = perf.SECURITY_CLAIM_MIN_KEY_LENGTH
+    scan = {length: claims(length) for length in range(boundary - 3, boundary + 2)}
+    assert scan == {
+        boundary - 3: False,
+        boundary - 2: False,
+        boundary - 1: False,
+        boundary: True,
+        boundary + 1: True,
+    }, f"the claim does not turn on at {boundary}: {scan}"
+
+    # And the signing length is the number the docstring tells a caller to
+    # hold onto, which is the same crossover eval.security records.
+    from sih141.eval.security import FLOOR_CROSSOVER
+
+    assert (
+        ProtocolParams(key_length=boundary, check_fraction=0.25).signing_length
+        == FLOOR_CROSSOVER
+    )
+    assert (
+        ProtocolParams(
+            key_length=boundary - 1, check_fraction=0.25
+        ).signing_length
+        < FLOOR_CROSSOVER
+    )
+    assert f"L={boundary}" in perf.DEGENERATE_END
 
 
 def test_a_parameter_set_that_would_estimate_nothing_is_refused() -> None:
@@ -1682,8 +1714,11 @@ def test_the_small_end_probe_reports_a_range_not_a_single_draw() -> None:
     minimum and maximum differ.
 
     It also pins the two things the section's prose rests on -- the refused
-    parameter set is a row rather than a gap, and the claim turns on between
-    ``L = 180`` and ``L = 183``.
+    parameter set is a row rather than a gap, and the claim is off at
+    ``L = 180`` and on at ``L = 183``. Where between them it turns on is
+    pinned by ``test_the_security_claim_boundary_is_where_it_is_recorded``,
+    which scans rather than bisecting: it is 182, and bisecting over these
+    two endpoints is how the constant came to say 183.
     """
     rows = {
         row["key_length"]: row
@@ -1720,3 +1755,235 @@ def test_the_small_end_probe_counts_honest_aborts_at_the_very_small_end() -> Non
     assert rows[96]["aborts"] == 0
     for row in rows.values():
         assert 0 <= row["aborts"] <= row["trials"]
+
+
+# --------------------------------------------------------------------------- #
+# 12. The cross-phase audit, second round                                      #
+#                                                                              #
+# Each test here was written after reverting the fix beside it and watching it #
+# fail. What they have in common is that the code they cover was checked by    #
+# something that could not have noticed it was wrong: a key-presence assertion #
+# over a provenance flag, two endpoints that jumped the boundary between them, #
+# an affirmative guarded on the wrong emptiness.                               #
+# --------------------------------------------------------------------------- #
+
+
+def _git(*args: str, cwd: Path) -> None:
+    """Run one git command in ``cwd``, with an identity the box may lack."""
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "commit.gpgsign=false",
+            *args,
+        ],
+        cwd=str(cwd),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_git_state_reads_the_tree_rather_than_reporting_it_clean(
+    tmp_path: Path,
+) -> None:
+    """``dirty`` moves with the working tree, in both directions.
+
+    This is the D9 provenance measurement: it is why the previous 12,494-trial
+    store was deleted and re-run, and every published table now rests on it.
+    Until this test existed the flag could be hard-wired to ``False`` and the
+    whole suite stayed green, because the only assertion touching it checked
+    that the key was present in the manifest payload -- which is the right
+    check for "has someone deleted this field" and no check at all for "does
+    it measure anything".
+
+    A real repository is built here rather than a fake one, because what is
+    under test is the reading of ``git status --porcelain``.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git("init", cwd=repo)
+    (repo / "a.txt").write_text("one", encoding="utf-8")
+
+    # Untracked content is a dirty tree: it is content the commit does not
+    # carry, so a manifest naming that commit does not describe this run.
+    assert git_state(repo)["dirty"] is True
+
+    _git("add", "a.txt", cwd=repo)
+    _git("commit", "-m", "one", cwd=repo)
+    clean = git_state(repo)
+    assert clean["dirty"] is False
+    assert clean["commit"] is not None and len(clean["commit"]) == 40
+
+    (repo / "a.txt").write_text("two", encoding="utf-8")
+    dirty = git_state(repo)
+    assert dirty["dirty"] is True, (
+        "an edited tracked file is a dirty tree; a flag that cannot see this "
+        "proves nothing about what produced a results store"
+    )
+    assert dirty["commit"] == clean["commit"]
+
+
+def test_git_state_says_nothing_rather_than_clean_outside_a_repository(
+    tmp_path: Path,
+) -> None:
+    """No repository is ``None``, never ``False``.
+
+    ``False`` would be a claim -- "this tree matches its commit" -- made where
+    there is no commit to match.
+    """
+    outside = tmp_path / "plain"
+    outside.mkdir()
+    state = git_state(outside)
+    assert state["dirty"] is None
+    assert state["commit"] is None
+
+
+def test_completeness_note_does_not_affirm_a_cell_no_manifest_covers() -> None:
+    """A cell checked against nothing is named, not folded into "Complete".
+
+    ``expected_trials`` skips a manifest it cannot read -- an OSError, bad JSON
+    or a ``trials`` field that is not a positive int -- so a store can have
+    records for cells no manifest covers. Guarding the affirmative on
+    ``expected`` being *empty* prints the unqualified "every cell has all the
+    trials its manifest asked for" over exactly those cells, which is the false
+    reassurance this note was written to remove.
+    """
+
+    class Fake:
+        def __init__(self, cell: str, index: int) -> None:
+            self.cell, self.index = cell, index
+
+    records = [Fake("a", 0), Fake("a", 1), Fake("b", 0)]
+
+    partial = completeness_note(records, {"a": 2})
+    assert not partial.startswith("Complete:"), partial
+    assert "b" in partial and "No manifest recorded a trial count" in partial
+
+    # Full coverage still gets the plain affirmative, so the qualification is
+    # not a blanket hedge that would make the note useless.
+    assert completeness_note(records, {"a": 2, "b": 1}).startswith("Complete:")
+
+    # And a cell that is both uncovered and short elsewhere still leads with
+    # the loud answer.
+    both = completeness_note(records, {"a": 3})
+    assert both.startswith("**INCOMPLETE**")
+    assert "b" in both
+
+
+def test_group_records_refuses_to_average_over_a_variant_marker(
+    tmp_path: Path,
+) -> None:
+    """Two values of a grouping_key marker in one cell is an error, not a row.
+
+    Phase 4 froze ``Detection.grouping_key`` as five markers with "Group by
+    this; never average over it", and the grouping uses element 0. The other
+    four are functions of a cell's parameters today, which is why nothing would
+    notice a cell that varied one -- ``signer_saw_recipient_logs`` above all,
+    carried so that no Phase 5 table can quote a run that saw the recipient's
+    logs as if it described the shipped scheme.
+    """
+    store = ResultStore(tmp_path)
+    run_experiment(
+        experiment("smoke"), store, trials=2, workers=1, in_process=True, quiet=True
+    )
+    records = list(store.read_experiment("smoke"))
+    assert len(group_records(records)) == 1
+
+    forged = records[0].to_dict()
+    key = list(forged["detection"]["grouping_key"])
+    assert len(key) == 5
+    key[3] = not key[3]  # signer_saw_recipient_logs
+    forged["detection"] = {**forged["detection"], "grouping_key": key}
+    mixed = [*records, TrialRecord.from_dict(forged)]
+
+    with pytest.raises(ValueError, match="signer_saw_recipient_logs"):
+        group_records(mixed)
+
+    # The table builders all route through the grouping, so none of them can
+    # publish the averaged row either.
+    with pytest.raises(ValueError, match="signer_saw_recipient_logs"):
+        detection_table(mixed)
+
+
+def test_the_undetectable_legend_names_the_assumption_it_rests_on(
+    tmp_path: Path,
+) -> None:
+    """The token's legend says which assumption, not "an assumption".
+
+    ``undetectable-by-construction`` is printed instead of a zero so a reader
+    can tell an excluded hypothesis from one we tried and failed to catch. A
+    legend that names no assumption gives that reader half the distinction, and
+    in ``docs/tables/roc.md`` the token appears on twenty rows under this
+    legend while ``(AUTH)`` appears once, in a different table's legend far
+    below.
+    """
+    store = ResultStore(tmp_path)
+    run_experiment(
+        experiment("smoke"), store, trials=2, workers=1, in_process=True, quiet=True
+    )
+    table = detection_table(list(store.read_experiment("smoke")))
+    legends = [
+        note for note in table.notes if UNDETECTABLE_BY_CONSTRUCTION in note
+    ]
+    assert legends, "the table must carry a legend for the token"
+    assert all("(AUTH)" in note for note in legends), legends
+    assert all("full impersonation" in note for note in legends), legends
+
+
+def test_no_source_of_ours_quotes_a_transcript_size_in_decimal_megabytes() -> None:
+    """The transcript figures are mebibytes, and every one of them says so.
+
+    ``peak_rss_bytes`` and ``json_bytes`` are both divided by 1048576, so 26.7
+    MB and 25.4 MiB are the same measurement in two units -- which is how the
+    full-scale transcript came to be quoted as 26.7 in one place and 37.2 in
+    another. The unit sweep that fixed this missed a docstring in a file it
+    edited, because a prose number has nothing checking it. This is the check.
+    """
+    # Assembled rather than written out, so this test is not its own offender.
+    decimal = "M" + "B"
+    needles = (f"26.7 {decimal}", f"37.2 {decimal}")
+    offenders = []
+    paths = [
+        *(REPO_ROOT / "sih141" / "eval").glob("*.py"),
+        *(REPO_ROOT / "tests").glob("test_eval_*.py"),
+        REPO_ROOT / "tools" / "sweep.py",
+    ]
+    for path in sorted(paths):
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if any(needle in line for needle in needles):
+                offenders.append(f"{path.name}:{number}: {line.strip()}")
+    assert not offenders, offenders
+
+
+def test_metrics_never_publishes_a_bound_of_exactly_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A probability that underflowed the float format is not published as 0.
+
+    ``forgery_probability`` and ``forgery_bound`` at the production parameters
+    are near ``10 ** -6553``; both reach the generator as ``0.0``. Formatting
+    that with ``{:.6g}`` publishes ``0``, and a bound of exactly zero is a
+    claim no proof supports -- which is why the sweep tables print the log10
+    form instead.
+    """
+    sys.path.insert(0, str(REPO_ROOT / "tools"))
+    try:
+        import metrics  # type: ignore[import-not-found]
+    finally:
+        sys.path.pop(0)
+
+    payload = '@@METRICS@@{"forgery_bound": 0.0, "s_a": 0.015625}\n'
+    monkeypatch.setattr(metrics, "run", lambda *a, **k: payload)
+    rows = metrics.security_rows()
+    forgery = next(row for row in rows if "forgery_bound" in row)
+    assert "underflow" in forgery, forgery
+    assert not forgery.endswith("| 0 |"), forgery
+    # A number that did not underflow is still printed as a number.
+    assert "| 0.015625 |" in next(row for row in rows if "s_a" in row)

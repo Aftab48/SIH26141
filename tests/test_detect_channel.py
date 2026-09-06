@@ -430,7 +430,7 @@ def test_the_exact_inversion_agrees_with_rational_arithmetic_at_every_count(
         assert threshold.critical_value == float(critical)
         assert threshold.false_positive_bound == pytest.approx(
             float(exact[critical]), rel=1e-09
-        )
+        , abs=0)
 
 
 def test_the_three_qber_inversions_are_ordered_by_how_much_they_waste():
@@ -492,7 +492,7 @@ def test_the_chsh_half_width_is_the_mcdiarmid_inversion(budget, counts):
     half_width = IDEAL_CHSH - threshold.critical_value
     reciprocal = sum(1.0 / count for count in counts)
     exponent = math.exp(-half_width * half_width / (2.0 * reciprocal))
-    assert exponent == pytest.approx(budget, rel=1e-12)
+    assert exponent == pytest.approx(budget, rel=1e-12, abs=0)
     assert threshold.false_positive_bound <= budget
 
 
@@ -537,7 +537,7 @@ def test_the_chsh_certificate_sits_the_same_half_width_above_two(budget):
     certificate = chsh_certificate_threshold(counts=counts, epsilon=budget)
     assert certificate.critical_value - CLASSICAL_CHSH_BOUND == pytest.approx(
         IDEAL_CHSH - detector.critical_value, rel=1e-12
-    )
+    , abs=0)
     assert certificate.is_alarm is False
     assert detector.is_alarm is True
 
@@ -570,7 +570,7 @@ def test_the_bounded_mean_half_width_is_the_hoeffding_inversion(
         expected = width * math.sqrt(-math.log(budget) / (2.0 * samples))
         assert honest - threshold.critical_value == pytest.approx(
             expected, rel=1e-12
-        )
+        , abs=0)
         assert threshold.false_positive_bound <= budget
 
 
@@ -593,7 +593,7 @@ def test_the_purity_span_is_a_quarter_narrower_than_the_naive_one():
     )
     narrow_gap = werner_purity(0.1) - narrow.critical_value
     wide_gap = werner_purity(0.1) - wide.critical_value
-    assert narrow_gap / wide_gap == pytest.approx(0.75, rel=1e-12)
+    assert narrow_gap / wide_gap == pytest.approx(0.75, rel=1e-12, abs=0)
 
 
 @pytest.mark.parametrize("budget", BUDGETS)
@@ -845,7 +845,9 @@ def test_no_honest_link_trips_the_screen_at_any_budget(honest_links, budget):
             budget / screen.evaluated
             for screen in screens
             if "chsh" in screen.thresholds
-        )
+        ),
+        rel=1e-12,
+        abs=0,
     )
     assert total <= budget * len(screens)
     assert total < 0.1
@@ -866,7 +868,7 @@ def test_the_screen_bound_is_not_the_budget_because_most_nulls_are_exact(
         screen = screen_link(link, epsilon=1e-09)
         if screen.evaluated != len(CHANNEL_STATISTICS):  # pragma: no cover
             continue
-        assert screen.false_positive_bound == pytest.approx(2e-10, rel=1e-12)
+        assert screen.false_positive_bound == pytest.approx(2e-10, rel=1e-12, abs=0)
         exact = [
             name
             for name, threshold in screen.thresholds.items()
@@ -916,7 +918,9 @@ def test_the_screens_union_bound_is_the_sum_of_its_members(honest_links):
             math.fsum(
                 threshold.false_positive_bound
                 for threshold in screen.thresholds.values()
-            )
+            ),
+            rel=1e-12,
+            abs=0,
         )
         assert screen.false_positive_bound <= screen.epsilon
         assert screen.evaluated + len(screen.unavailable) == len(
@@ -1047,7 +1051,7 @@ def test_a_link_measures_half_the_reserved_set_and_pays_root_two_for_it():
     real = chsh_threshold(counts=(1028, 1029, 1029, 1029), epsilon=1e-09)
     naive_width = IDEAL_CHSH - naive.critical_value
     real_width = IDEAL_CHSH - real.critical_value
-    assert real_width / naive_width == pytest.approx(math.sqrt(2.0), rel=1e-03)
+    assert real_width / naive_width == pytest.approx(math.sqrt(2.0), rel=1e-03, abs=0)
 
 
 def test_the_sizing_figures_come_from_the_parameter_set_not_from_a_typist():

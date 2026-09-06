@@ -2,13 +2,13 @@
 
 **SIH26141**: Quantum-Inspired Cyber Threat Detection for Digital Signature Security
 
-Generated `2026-09-05 16:45 UTC` by `tools/metrics.py`. Every figure is computed from the
+Generated `2026-09-06 00:16 UTC` by `tools/metrics.py`. Every figure is computed from the
 repository, so do not edit by hand, re-run the script.
 
 ## Test suite
 
 ```
-3800 passed in 1990.62s (0:33:10)
+3819 passed in 1487.01s (0:24:47)
 ```
 
 - Doctests collected from package modules: **481**
@@ -32,7 +32,7 @@ repository, so do not edit by hand, re-run the script.
 | `sih141/protocol/distribute.py` | 1805 | 306 | 1249 | 78 | 13 | 2 |
 | `sih141/protocol/keys.py` | 773 | 117 | 537 | 3 | 24 | 2 |
 | `sih141/protocol/params.py` | 1606 | 483 | 916 | 2 | 26 | 2 |
-| `sih141/protocol/records.py` | 1413 | 335 | 901 | 7 | 31 | 3 |
+| `sih141/protocol/records.py` | 1438 | 333 | 926 | 7 | 31 | 3 |
 | `sih141/protocol/session.py` | 5327 | 1554 | 3032 | 227 | 92 | 9 |
 | `sih141/protocol/signature.py` | 955 | 179 | 646 | 4 | 16 | 1 |
 | `sih141/protocol/symmetrise.py` | 554 | 79 | 407 | 2 | 4 | 1 |
@@ -55,25 +55,25 @@ repository, so do not edit by hand, re-run the script.
 | `sih141/eval/__init__.py` | 286 | 200 | 76 | 0 | 0 | 0 |
 | `sih141/eval/experiments.py` | 888 | 277 | 492 | 3 | 16 | 2 |
 | `sih141/eval/manifest.py` | 516 | 191 | 269 | 0 | 11 | 1 |
-| `sih141/eval/perf.py` | 1113 | 425 | 527 | 10 | 11 | 1 |
-| `sih141/eval/records.py` | 781 | 219 | 473 | 0 | 16 | 2 |
-| `sih141/eval/reduce.py` | 1131 | 406 | 584 | 24 | 13 | 1 |
-| `sih141/eval/roc.py` | 2526 | 1140 | 1070 | 59 | 33 | 2 |
+| `sih141/eval/perf.py` | 1119 | 431 | 527 | 10 | 11 | 1 |
+| `sih141/eval/records.py` | 791 | 227 | 473 | 0 | 16 | 2 |
+| `sih141/eval/reduce.py` | 1247 | 460 | 630 | 28 | 14 | 1 |
+| `sih141/eval/roc.py` | 2531 | 1145 | 1070 | 59 | 33 | 2 |
 | `sih141/eval/runner.py` | 675 | 193 | 393 | 0 | 12 | 2 |
 | `sih141/eval/security.py` | 3137 | 1227 | 1512 | 42 | 46 | 3 |
 | `sih141/eval/seeds.py` | 363 | 58 | 246 | 0 | 6 | 1 |
 | `sih141/eval/store.py` | 448 | 82 | 299 | 0 | 16 | 1 |
 | `sih141/web/__init__.py` | 145 | 34 | 96 | 0 | 0 | 0 |
-| `sih141/web/__main__.py` | 329 | 97 | 175 | 10 | 4 | 0 |
-| `sih141/web/api.py` | 887 | 316 | 432 | 35 | 16 | 3 |
+| `sih141/web/__main__.py` | 357 | 97 | 190 | 21 | 4 | 0 |
+| `sih141/web/api.py` | 921 | 334 | 443 | 35 | 16 | 3 |
 | `sih141/web/catalogue.py` | 583 | 317 | 207 | 7 | 5 | 1 |
 | `sih141/web/driver.py` | 1250 | 512 | 562 | 40 | 12 | 3 |
 | `sih141/web/limits.py` | 1070 | 277 | 578 | 78 | 14 | 2 |
 | `sih141/web/payload.py` | 696 | 277 | 341 | 10 | 9 | 0 |
-| **total** | **74589** | **20060** | **44013** | **1587** | **1150** | **134** |
+| **total** | **74813** | **20149** | **44110** | **1602** | **1151** | **134** |
 
-Tests: **47933 lines** across **42 files**, **2318 test functions** defined.
-Test-lines to code-lines ratio: **2.39 : 1**
+Tests: **48887 lines** across **43 files**, **2348 test functions** defined.
+Test-lines to code-lines ratio: **2.43 : 1**
 
 ## Live security parameters
 
@@ -88,8 +88,8 @@ actually computes today, not what a document once claimed.
 | `bases` | 3 |
 | `recipient_forgery_bound` | 1.12518e-29 |
 | `recipient_forgery_probability` | 2.17257e-105 |
-| `forgery_probability` | 0 |
-| `forgery_bound` | 0 |
+| `forgery_probability` | underflow (below 1e-308, not zero -- see the log10 form in docs/tables/) |
+| `forgery_bound` | underflow (below 1e-308, not zero -- see the log10 form in docs/tables/) |
 | `repudiation_bound` | (requires an explicit argument by design) |
 | `averaged_repudiation_bound` | (requires an explicit argument by design) |
 | `repudiation_bound_with_abort` | (requires an explicit argument by design) |
@@ -99,17 +99,17 @@ actually computes today, not what a document once claimed.
 
 | File | Words |
 | --- | ---: |
-| `README.md` | 6224 |
+| `README.md` | 6378 |
 | `JOURNAL.md` | 92394 |
-| `docs/METRICS.md` | 1446 |
+| `docs/METRICS.md` | 1461 |
 | `docs/PHASE1.md` | 4038 |
 | `docs/PHASE2.md` | 9968 |
 | `docs/PHASE3.md` | 14827 |
 | `docs/PHASE4.md` | 9547 |
-| `docs/PHASE5.md` | 12552 |
-| `docs/PHASE6.md` | 12185 |
-| `docs/QDS.md` | 5285 |
-| **total** | **168466** |
+| `docs/PHASE5.md` | 12630 |
+| `docs/PHASE6.md` | 12345 |
+| `docs/QDS.md` | 5458 |
+| **total** | **169046** |
 
 Working-journal entries: **239** (temporary; deleted at the end of Phase 7).
 
@@ -119,7 +119,7 @@ Working-journal entries: **239** (temporary; deleted at the end of Phase 7).
 
 | Commit | Subject |
 | --- | --- |
-| `4ad12d0` | Rewrite the documentation prose: 673 em dashes down to 75, substance untouched |
+| `37454a5` | Update the docs to the latest data |
 | `98d55cb` | Re-run the Phase 5 sweep from a clean tree: same results, provable provenance |
 | `f94d9fe` | Close the Phase 5 audit: nine defects fixed, the sweep run end to end |
 | `6cb0f57` | Add the Phase 5 experiment families: security curves and ROC |

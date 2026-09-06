@@ -40,7 +40,7 @@ inequalities. That yields a *provable* false-acceptance bound rather than an obs
 | --- | --- | --- | --- | --- |
 | **Forgery**, outside | Produces a signature without the signer's private key | Basis-mismatch count exceeds threshold; success decays exponentially in key length | mismatch `0.4956`/`0.5018` on a predicted `1/2`; acceptance `5/800` vs `0.0042` | `40/40` detected, named as the substitution group |
 | **Forgery**, forging recipient | Forwards his own measured log as the signature | Mismatch hits the `1/12` symmetrisation floor, *and* the matched count doubles to `2L/3` | acceptance `96/300 = 0.320` vs a predicted `0.3456` | `40/40` both orderings; named **alone** after-forwarding, on Charlie's matched count |
-| **Impersonation** | Poses as the signer during key distribution or signing | Mismatch rate, and *only* the mismatch rate; the matched counts do not move at all | `0/40` accepted at QBER ≈ `1/2` for either seam alone; `200/200` accepted for **both** seams, which assumption (AUTH) excludes and nothing detects | `40/40` for either seam alone; **`0/40` for both**, reported as `undetectable-by-construction` under (AUTH) |
+| **Impersonation** | Poses as the signer during key distribution or signing | Mismatch rate, and *only* the mismatch rate; the matched-count *law* never moves. Under `DISTRIBUTION` the realised counts do not move either (identical position for position, `200/200`); under `SIGNING` they do (`0/200` identical). So the floors are an evidence-liveness control, not an impersonation detector | `0/40` accepted at QBER ≈ `1/2` for either seam alone; `200/200` accepted for **both** seams, which assumption (AUTH) excludes and nothing detects | `40/40` for either seam alone; **`0/40` for both**, reported as `undetectable-by-construction` under (AUTH) |
 | **Replay** | Re-sends a previously valid (message, signature) pair | Consumed-records ledger; round identifier on every declaration | `100/100` → `0/100` with the defence; cross-session `0.115` → `0/100` | `40/40` both orderings, named with recipient forgery; both hold the forwarding hop |
 | **Channel manipulation** | Tampers with entanglement distribution (intercept-resend, kept share, injected noise) | Per-link QBER rises; CHSH falls from 2√2, and the *per-link* form is what names the compromised party | QBER `0.0994`/`0.3306`/`0.3335` on predictions `p/2`, `1/3`, `1/3` | `40/40` on all four attacks, at `check_fraction` `0.0` **and** `0.25` |
 | **Count starvation** | A recipient understates his own matched count and denies the other a verdict | The declared count as a z-score: any successful starvation sits below `−11.54` honest standard deviations, at every key length | denial `20/20`, deterministic and free, one integer | `40/40` both orderings, named **alone** |
@@ -55,7 +55,7 @@ bound quoted without its hypothesis is not a bound. Numbers are at `DEFAULT_PARA
 | Property | Bound | Rests on |
 | --- | --- | --- |
 | **Unforgeability**, outside adversary | `< 1e−100` | She does not hold a verifier's log. Part of the stated adversary model. |
-| **Unforgeability**, recipient forger (the case that binds) | `1.1e−103` | The symmetrisation exchange reveals only the swapped entries. |
+| **Unforgeability**, recipient forger (the case that binds) | `1.1e−103` (KL) | The symmetrisation exchange reveals only the swapped entries. `recipient_forgery_bound` has two estimators and they are decades apart: this is `method='kl'`; the Hoeffding default is `1.13e−29`, which is what the generated [docs/METRICS.md](docs/METRICS.md) publishes under the same name. Both are valid bounds over the same exact probability, `2.17e−105`. |
 | **Non-repudiation**, a-priori | **`1.4e−09`** | **Nothing.** The three matched-count floors `verify.py` enforces, not an assumption about the signer. |
 | **Non-repudiation**, per completed run | `6.9e−10` on a healthy run | **Nothing.** Conditions on the run's own evidence, `M = m_B + m_C`. |
 | Robustness: honest run aborts | `< 1e−9` on a 1% depolarising channel | Standard channel model. The matched-count floors add `8.0e−31`. |
@@ -268,10 +268,10 @@ refusals to fold. The check existed and could not fail, which is the same shape 
 dashboard defects Phase 6 shipped behind green tests. It is closed now, against a fixture that
 actually refuses, and the fold fails.
 
-Full suite: **3800 passed, 0 failed, 0 skipped**, up from `3750` with the Phase 5 experiment
+Full suite: **3819 passed, 0 failed, 0 skipped**, up from `3750` with the Phase 5 experiment
 families, `3588` with the harness alone, `3460` at the end of Phase 6, `3036` at the end of Phase 4,
 `2174` at the end of Phase 3 and `1421` at the end of Phase 2. The load-bearing figure is
-`3800 / 3800`; the wall clock is not, and Phase 5 is the reason. Four runs of the identical suite
+`3819 / 3819`; the wall clock is not, and Phase 5 is the reason. Four runs of the 3800-test suite
 on this machine took `1512 s` (25:12), `2290 s` (38:10), `1634 s` (27:14) and `1991 s` (33:10),
 a spread of 51% with the pass count identical every time. The variable is what else the machine was doing,
 measured in [`docs/PHASE5.md`](docs/PHASE5.md) §11.2 as a 49% move in single-threaded throughput
@@ -346,9 +346,10 @@ both measurements.
 > results only Phase 7 consumes. Phase 7 is last either way, because it publishes Phase 5's
 > numbers.
 >
-> **The dashboard reports no evaluation results, and says so on the screen.** It demonstrates a
-> live run; it does not present a study. The one table of measured rates on the page is labelled
-> *"not a Phase 5 result, a Phase 4 calibration"*.
+> **The dashboard still reports no evaluation results, and says so on the screen.** Phase 5's
+> results were never wired to it: it demonstrates a live run, it does not present a study, and
+> the tables below are where the study lives. The one table of measured rates on the page is
+> labelled *"not a Phase 5 result, a Phase 4 calibration"*.
 >
 > **Phase 5 is complete.** The production sweep ran **12,494 trials across seven experiments in
 > 23.3 minutes** at twenty workers, zero failures, and every table in
@@ -381,6 +382,12 @@ Requires Python 3.11+. Verified on Python 3.14.4 / Windows 11.
 ```bash
 pip install -r requirements.txt
 ```
+
+**Node is a test-time dependency**, and only that. Six tests execute the shipped dashboard
+JavaScript under a DOM shim, because scanning the source for strings cannot tell whether the
+screen renders the right field. Without `node` on the PATH those six skip, and the
+`0 skipped` above becomes `6 skipped`. Nothing at runtime needs it: the dashboard ships
+26 vendored files and no build step.
 
 ## Running the dashboard
 

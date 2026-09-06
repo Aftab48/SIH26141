@@ -100,7 +100,21 @@ def security_rows() -> list[str]:
     rows = []
     for key, value in data.items():
         if isinstance(value, float):
-            value = f"{value:.6g}"
+            # A probability that underflowed the float format is not zero, and
+            # "0" is a claim no proof supports -- the sweep tables print these
+            # in log10 for exactly this reason (docs/tables/forgery-curve.md
+            # quotes 10^-6553.3 for a bound that reaches here as 0.0).
+            #
+            # Keyed on WHAT THE QUANTITY IS, not on its value: a parameter that
+            # is legitimately zero (a check fraction, a tilt) must not be
+            # published as an underflowed probability just for being 0.0.
+            is_probability = key.endswith(("_bound", "_probability"))
+            value = (
+                "underflow (below 1e-308, not zero -- see the log10 form in "
+                "docs/tables/)"
+                if value == 0.0 and is_probability
+                else f"{value:.6g}"
+            )
         rows.append(f"| `{key}` | {value} |")
     return rows or ["| _no parameters found_ | n/a |"]
 

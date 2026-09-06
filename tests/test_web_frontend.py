@@ -2,11 +2,12 @@
 
 WHY A PYTHON TEST FOR A JAVASCRIPT SCREEN
 -----------------------------------------
-Phase 6 ships with no Node, no bundler and no browser in CI, so the frontend
-cannot be unit-tested the way a JavaScript project would test it. That is not a
-reason to ship it untested, because the property that matters most about this
-frontend is not behavioural at all -- it is **structural**, and structure is
-exactly what a text-level test can pin:
+Phase 6 ships with no bundler and no browser, so the frontend is not unit-tested
+the way a JavaScript project would test it. It is tested in two layers instead,
+and the second one had to be added after an audit showed what the first misses.
+
+**Structure, read as text.** Some of what matters most about this frontend is
+not behavioural at all, and a text-level scanner is the right tool for it:
 
 **D8 -- the frontend computes nothing.** Every guarantee this project makes
 lives in Python that ~3050 tests and ``--doctest-modules`` cover. A number
@@ -44,12 +45,24 @@ The other five things this file pins, in the order they would hurt:
   corresponding panel unexercised and unseen until the demonstration.
 * **The contract and the recordings agree.** The manifest the page validates
   against at runtime is the same file this test reads.
+
+**Behaviour, by running the shipped scripts.** Everything above reads the
+frontend as characters, and an audit measured the size of that hole: swapping
+one field name in ``boundsPanel`` made the dashboard publish the BUDGET under
+the caption "THE NUMBER TO QUOTE", and reversing ``scale()`` in ``charts.js``
+mirrored every bar about its axis -- and the whole suite stayed green through
+both. So the last section of this file loads ``format.js``, ``charts.js``,
+``contract.js`` and ``render.js`` into a Node ``vm`` context under a two-function
+DOM shim, feeds them the committed recordings, and asserts on the values that
+come out. It needs ``node`` on PATH and skips loudly without it.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -406,9 +419,13 @@ def test_no_maths_library_calls_outside_the_chart_geometry() -> None:
 def test_the_chart_geometry_cannot_format_a_number() -> None:
     """`charts.js` may compute pixels and may not turn one into text.
 
-    This is what makes the arithmetic exemption safe. Every string that reaches
-    the screen from the chart module arrived as a caller-supplied ``label``,
-    formatted in ``format.js`` from a value the API sent.
+    This is half of what makes the arithmetic exemption safe: every string that
+    reaches the screen from the chart module arrived as a caller-supplied
+    ``label``, formatted in ``format.js`` from a value the API sent. It says
+    nothing about whether the GEOMETRY is right -- a mirrored axis puts no wrong
+    characters anywhere -- and that half is
+    :func:`test_bars_are_drawn_left_to_right_from_the_domain_minimum`, which
+    runs the module.
     """
     code = code_of(STATIC / "js" / GEOMETRY_SCRIPT)
     for name in ("toFixed", "toExponential", "toPrecision", "toLocaleString"):
@@ -987,7 +1004,7 @@ def test_the_headline_bounds_are_the_ones_the_panels_quote() -> None:
     assert bounds["kind"] == "proven"
     assert _pick(
         [headline, bounds], "enforced_repudiation_bound"
-    ) == pytest.approx(1.4139e-09, rel=1e-4)
+    ) == pytest.approx(1.4139e-09, rel=1e-4, abs=0)
     assert _pick(
         [headline, {"minimum_matched": bounds.get("matched_minimum")}],
         "minimum_matched",
@@ -1627,7 +1644,7 @@ def test_the_enforced_bound_at_demo_scale_is_useless_and_shown(
     """
     defaults = json.loads((RECORDED / "defaults.json").read_text("utf-8"))
     headline = defaults["bounds"]["headline"]["enforced_repudiation_bound"]
-    assert headline == pytest.approx(1.4139e-09, rel=1e-4)
+    assert headline == pytest.approx(1.4139e-09, rel=1e-4, abs=0)
     for scenario, payload in recordings.items():
         enforced = payload["run"]["enforced_repudiation_bound"]
         if enforced is None:
@@ -2107,3 +2124,443 @@ def test_projector_mode_sets_the_variable_where_it_is_actually_read() -> None:
         "the toggle no longer puts the class on the root element, so the "
         "CSS above sets --scale where the html rule cannot read it"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Executing the shipped JavaScript
+# --------------------------------------------------------------------------- #
+#
+# Everything above this line reads the frontend as TEXT. That was the whole
+# coverage this file had, and an audit showed what it buys: swap
+# ``detection.false_positive_bound`` for ``detection.eps`` in ``boundsPanel``
+# and the dashboard publishes the BUDGET (1e-09) under the label
+# ``false_positive_bound`` and the caption "THE NUMBER TO QUOTE", where the
+# proven bound (3.8649e-10) belongs -- and 3800 tests pass. Reverse ``scale()``
+# in ``charts.js`` so every bar, marker and whisker mirrors about its axis, and
+# 3800 tests pass. A scanner proving ``charts.js`` cannot format a number says
+# nothing at all about whether its geometry is right.
+#
+# So the tests below RUN the shipped scripts. There is no bundler and no
+# browser: ``node`` loads ``format.js``, ``charts.js``, ``contract.js`` and
+# ``render.js`` into one ``vm`` context under a DOM shim of two functions --
+# ``createElement`` and ``createElementNS`` are the entire DOM surface those
+# four files touch -- feeds them a committed recording out of
+# ``static/data/recorded/``, and hands back the tree they built. The assertions
+# are then about VALUES on the screen rather than about substrings in a file.
+#
+# The harness is written to a temp directory rather than committed under
+# ``static/``: nothing may live in the served tree that the page does not load.
+
+NODE = shutil.which("node")
+
+requires_node = pytest.mark.skipif(
+    NODE is None,
+    reason=(
+        "node is not on PATH, so the shipped JavaScript goes unexecuted and "
+        "only the text-level scanners above are covering it"
+    ),
+)
+
+#: Loads the shipped scripts under a minimal DOM, runs one job read as JSON on
+#: stdin, and writes the resulting element tree to stdout as JSON.
+HARNESS_JS = """
+"use strict";
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
+
+function El(tag) {
+  this.tag = tag;
+  this.attrs = {};
+  this.children = [];
+  this.own = "";
+  this.className = "";
+}
+El.prototype.setAttribute = function (k, v) { this.attrs[k] = String(v); };
+El.prototype.appendChild = function (c) { this.children.push(c); return c; };
+Object.defineProperty(El.prototype, "textContent", {
+  get: function () {
+    return this.children.length
+      ? this.children.map(function (c) { return c.textContent; }).join("")
+      : this.own;
+  },
+  set: function (v) { this.own = String(v); this.children.length = 0; },
+});
+
+function tree(node) {
+  return {
+    tag: node.tag,
+    cls: node.className,
+    attrs: node.attrs,
+    text: node.own,
+    children: node.children.map(tree),
+  };
+}
+
+const job = JSON.parse(fs.readFileSync(0, "utf-8"));
+const dir = path.join(job.root, "sih141", "web", "static", "js");
+const sandbox = {
+  document: {
+    createElement: function (t) { return new El(t); },
+    createElementNS: function (ns, t) { return new El(t); },
+  },
+};
+vm.createContext(sandbox);
+["format.js", "charts.js", "contract.js", "render.js"].forEach(function (f) {
+  vm.runInContext(fs.readFileSync(path.join(dir, f), "utf-8"), sandbox,
+                  { filename: f });
+});
+
+// `const Render = ...` at the top level of a vm script lands in that script's
+// own lexical scope and not on the context object, so the modules are reached
+// by evaluating their names.
+const mod = vm.runInContext(
+  "({Charts: Charts, Contract: Contract, Render: Render, Fmt: Fmt})", sandbox);
+
+let root;
+if (job.op === "run") {
+  mod.Contract.install(job.contract);
+  root = new El("div");
+  mod.Render.run(root, job.payload, job.context);
+} else if (job.op === "bars") {
+  root = mod.Charts.bars(job.options);
+} else {
+  throw new Error("unknown op: " + job.op);
+}
+process.stdout.write(JSON.stringify(tree(root)));
+"""
+
+
+@pytest.fixture(scope="module")
+def harness(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Write the Node harness out once per module."""
+    path = tmp_path_factory.mktemp("js") / "harness.js"
+    path.write_text(HARNESS_JS, encoding="utf-8")
+    return path
+
+
+def drive(harness: Path, job: dict[str, Any]) -> dict[str, Any]:
+    """Run one harness job and return the element tree it produced."""
+    job = dict(job, root=str(ROOT))
+    done = subprocess.run(
+        [str(NODE), str(harness)],
+        input=json.dumps(job),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert done.returncode == 0, (
+        f"the shipped frontend threw while rendering:\n{done.stderr}"
+    )
+    return json.loads(done.stdout)
+
+
+def render_run(harness: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    """Render one ``POST /api/run`` response the way the page does."""
+    return drive(
+        harness,
+        {
+            "op": "run",
+            "payload": payload,
+            "contract": json.loads(CONTRACT_PATH.read_text(encoding="utf-8")),
+            "context": {
+                "defaults": json.loads(
+                    (RECORDED / "defaults.json").read_text(encoding="utf-8")
+                ),
+                "attacks": json.loads(
+                    (RECORDED / "attacks.json").read_text(encoding="utf-8")
+                ),
+                "constants": json.loads(
+                    CONSTANTS_PATH.read_text(encoding="utf-8")
+                ),
+            },
+        },
+    )
+
+
+def walk(node: dict[str, Any]) -> Iterable[dict[str, Any]]:
+    """Yield every element of a rendered tree, in document order."""
+    yield node
+    for child in node["children"]:
+        yield from walk(child)
+
+
+def text_of(node: dict[str, Any]) -> str:
+    """The element's ``textContent``, exactly as the browser computes it."""
+    if node["children"]:
+        return "".join(text_of(child) for child in node["children"])
+    return node["text"]
+
+
+def rendered_rows(tree: dict[str, Any]) -> dict[str, str]:
+    """Every ``<dt>``/``<dd>`` pair on the page, as term to rendered text."""
+    rows: dict[str, str] = {}
+    for node in walk(tree):
+        if node["tag"] != "dl":
+            continue
+        children = node["children"]
+        for term, value in zip(children[0::2], children[1::2]):
+            rows[text_of(term)] = text_of(value)
+    return rows
+
+
+def exponential(value: float) -> str:
+    """The string ``format.js`` renders for a float, computed independently.
+
+    ``Fmt.exp`` pads the exponent to two digits precisely so that it agrees
+    with Python's ``{:.4e}``, which is what makes this an independent check
+    rather than the JavaScript grading its own homework.
+    """
+    return f"{value:.4e}"
+
+
+@requires_node
+def test_the_bounds_panel_publishes_the_proven_bound_not_the_budget(
+    harness: Path, recordings: dict[str, dict[str, Any]]
+) -> None:
+    """The headline number has to be the one that was proven.
+
+    ``false_positive_bound`` is P(any signal | honest run), derived and covered
+    in Python. ``eps`` is what the operator ASKED for. They sit within an order
+    of magnitude of each other on every recorded run, both render as the same
+    shape of string, and the panel captions one of them "THE NUMBER TO QUOTE".
+    Reading the wrong field there publishes an input as a result, on the row a
+    judge is told to quote, and no amount of reading this file as text can see
+    it.
+    """
+    for name, payload in sorted(recordings.items()):
+        detection = payload["detection"]
+        if detection is None:
+            continue
+        rows = rendered_rows(render_run(harness, payload))
+        published = rows["false_positive_bound"]
+        assert exponential(detection["false_positive_bound"]) in published, (
+            f"on {name} the bounds panel published {published!r} as "
+            f"false_positive_bound, and the API's own value formats as "
+            f"{exponential(detection['false_positive_bound'])!r}"
+        )
+        assert "THE NUMBER TO QUOTE" in published
+        if detection["eps"] != detection["false_positive_bound"]:
+            assert exponential(detection["eps"]) not in published, (
+                f"on {name} the row captioned THE NUMBER TO QUOTE carries the "
+                f"budget eps = {exponential(detection['eps'])}. eps is an "
+                f"input; publishing it as the proven bound states a guarantee "
+                f"this project never derived."
+            )
+        budget = rows["eps (the budget asked for)"]
+        assert exponential(detection["eps"]) in budget, (
+            f"on {name} the budget row reads {budget!r}"
+        )
+
+
+@requires_node
+def test_the_verdict_strip_publishes_the_proven_bound_not_the_budget(
+    harness: Path, recordings: dict[str, dict[str, Any]]
+) -> None:
+    """The same field is read a second time, at the top of the page.
+
+    ``verdictStrip`` prints the bound under "P(any signal | honest run)" before
+    a reader has scrolled as far as the bounds panel, so it is a second
+    unchecked copy of the same expression and gets its own assertion rather
+    than trusting the one above.
+    """
+    for name, payload in sorted(recordings.items()):
+        detection = payload["detection"]
+        if detection is None:
+            continue
+        strip = [
+            text_of(node)
+            for node in walk(render_run(harness, payload))
+            if node["cls"] == "num num-proven"
+            and "P(any signal | honest run)" in text_of(node)
+        ]
+        assert strip, f"the verdict strip on {name} publishes no bound at all"
+        for shown in strip:
+            assert exponential(detection["false_positive_bound"]) in shown, (
+                f"on {name} the verdict strip reads {shown!r}, and "
+                f"false_positive_bound formats as "
+                f"{exponential(detection['false_positive_bound'])!r}"
+            )
+
+
+@requires_node
+def test_bars_are_drawn_left_to_right_from_the_domain_minimum(
+    harness: Path,
+) -> None:
+    """``scale()`` is the only arithmetic in the app and nothing ran it.
+
+    Reversing it -- ``(domain.max - value)`` for ``(value - domain.min)`` --
+    mirrors every bar, tick, marker and whisker about the middle of the plot
+    and leaves the text-level scanners entirely happy, because the geometry
+    reaches the screen as pixel coordinates rather than as characters. A QBER
+    of 0.02 would draw as one of 0.98, past every threshold marker on the
+    chart, and the markers would have moved too.
+    """
+    tree = drive(
+        harness,
+        {
+            "op": "bars",
+            "options": {
+                "title": "geometry",
+                "domain": {"min": 0.0, "max": 1.0},
+                "ticks": [
+                    {"value": 0.0, "label": "0"},
+                    {"value": 1.0, "label": "1"},
+                ],
+                "markers": [
+                    {"value": 0.5, "label": "half", "className": "marker"}
+                ],
+                "rows": [
+                    {"label": "zero", "valueLabel": "0", "value": 0.0},
+                    {"label": "quarter", "valueLabel": "0.25", "value": 0.25},
+                    {"label": "full", "valueLabel": "1", "value": 1.0},
+                ],
+            },
+        },
+    )
+    ticks = [
+        float(node["attrs"]["x1"])
+        for node in walk(tree)
+        if node["attrs"].get("class") == "grid-line"
+    ]
+    assert len(ticks) == 2
+    plot_left, plot_right = ticks
+    assert plot_left < plot_right, (
+        f"the tick at the domain minimum landed at x={plot_left} and the tick "
+        f"at the maximum at x={plot_right}: the axis runs backwards"
+    )
+
+    widths = [
+        float(node["attrs"]["width"])
+        for node in walk(tree)
+        if node["attrs"].get("class") == "bar"
+    ]
+    assert len(widths) == 3
+    zero, quarter, full = widths
+    assert zero == 0.0, f"a bar at the domain minimum is {zero} px wide"
+    assert full == pytest.approx(plot_right - plot_left), (
+        f"a bar at the domain maximum is {full} px wide and the plot is "
+        f"{plot_right - plot_left} px across"
+    )
+    assert quarter == pytest.approx(full / 4.0), (
+        f"a value one quarter of the way across the domain drew a bar "
+        f"{quarter} px wide against a full-scale bar of {full} px"
+    )
+
+    marker = [
+        float(node["attrs"]["x1"])
+        for node in walk(tree)
+        if node["attrs"].get("class") == "marker"
+    ]
+    assert marker == [pytest.approx((plot_left + plot_right) / 2.0)], (
+        f"the marker at the middle of the domain landed at {marker}, and the "
+        f"plot runs from {plot_left} to {plot_right}"
+    )
+
+
+@requires_node
+def test_a_bar_below_the_baseline_is_drawn_below_the_baseline(
+    harness: Path,
+) -> None:
+    """CHSH runs over [-4, 4] and its bars grow from zero, in both directions.
+
+    An SVG ``rect`` is anchored at its LEFT edge. Anchoring every bar at the
+    baseline drew a CHSH of -2 as a bar of the right LENGTH on the wrong SIDE
+    of the zero line -- indistinguishable from +2, on the one chart whose whole
+    job is which side of the classical bound a link sits.
+    """
+    tree = drive(
+        harness,
+        {
+            "op": "bars",
+            "options": {
+                "title": "chsh",
+                "domain": {"min": -4.0, "max": 4.0},
+                "baseline": 0.0,
+                "ticks": [{"value": 0.0, "label": "0"}],
+                "rows": [
+                    {"label": "below", "valueLabel": "-2", "value": -2.0},
+                    {"label": "above", "valueLabel": "2", "value": 2.0},
+                ],
+            },
+        },
+    )
+    zero = [
+        float(node["attrs"]["x1"])
+        for node in walk(tree)
+        if node["attrs"].get("class") == "grid-line"
+    ][0]
+    bars = [
+        (float(node["attrs"]["x"]), float(node["attrs"]["width"]))
+        for node in walk(tree)
+        if node["attrs"].get("class") == "bar"
+    ]
+    (below_x, below_width), (above_x, above_width) = bars
+    assert below_x + below_width == pytest.approx(zero), (
+        f"the bar for CHSH = -2 runs from x={below_x} to "
+        f"x={below_x + below_width}, and the zero line is at x={zero}: a "
+        f"negative value is drawn on the positive side of the axis"
+    )
+    assert above_x == pytest.approx(zero)
+    assert below_width == pytest.approx(above_width)
+
+
+@requires_node
+def test_the_null_banner_never_speaks_for_a_null_the_response_omitted(
+    harness: Path, recordings: dict[str, dict[str, Any]]
+) -> None:
+    """There are TWO nulls and a response may report neither, one or both.
+
+    ``run.nulls`` carries both; ``detection.null_is_noiseless`` is the RATE
+    family's flag and nothing more. With ``run.nulls`` absent the banner stands
+    on that one flag, so it may not say what the CHANNEL family's null was --
+    and printing ``tolerated_depolarising = n/a`` inside a sentence saying the
+    operator supplied it does not withdraw the claim, it decorates it.
+    """
+    payload = json.loads(json.dumps(recordings["honest"]))
+    del payload["run"]["nulls"]
+    payload["detection"]["null_is_noiseless"] = False
+    page = text_of(render_run(harness, payload))
+    assert "Both nulls were stated by the operator" not in page, (
+        "with no run.nulls on the response the page still announces that "
+        "BOTH nulls were stated. It has been told about one."
+    )
+    assert "Both were supplied by the operator" not in page
+    assert "The API did not supply run.nulls" in page, (
+        "the page says nothing about the half of the state it never received"
+    )
+
+    # And with `run.nulls` present the sentence is still the full one, so the
+    # guard above is a guard rather than a deletion.
+    both = recordings["honest_noisy_right_null"]
+    assert both["run"]["nulls"]["both_are_stated"] is True
+    page = text_of(render_run(harness, both))
+    assert "Both nulls were stated by the operator" in page
+    assert (
+        f"tolerated_depolarising = "
+        f"{both['run']['nulls']['tolerated_depolarising']:.6f}"
+    ) in page
+
+
+@requires_node
+def test_no_banner_explains_itself_with_a_check_fraction_it_did_not_run_at(
+    harness: Path, recordings: dict[str, dict[str, Any]]
+) -> None:
+    """A true statement given a reason that is false on the run it prints on.
+
+    The noiseless-null banner said the nulls are never inferred from the
+    transcript "because at check_fraction = 0 the transcript carries no
+    estimate of either". Every recorded run but the unmonitored one is at
+    check_fraction = 0.25, where the transcript does carry an estimate. The
+    rule holds on every run; the reason was local to one, and a false reason
+    for a true rule is what a judge pulls on.
+    """
+    for name, payload in sorted(recordings.items()):
+        fraction = payload["request"]["check_fraction"]
+        if fraction == 0:
+            continue
+        page = text_of(render_run(harness, payload))
+        assert "check_fraction = 0 " not in page, (
+            f"{name} ran at check_fraction = {fraction} and the page argues "
+            f"from what is true at check_fraction = 0"
+        )

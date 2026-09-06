@@ -542,13 +542,13 @@ def test_the_chernoff_bounds_are_their_own_algebra():
     upper = math.exp(-d * d * mean / (2.0 + d))
     assert chernoff_deviation_bound(
         count, trials, probability, side="lower"
-    ) == pytest.approx(lower, rel=1e-15)
+    ) == pytest.approx(lower, rel=1e-15, abs=0)
     assert chernoff_deviation_bound(
         count, trials, probability, side="upper"
     ) == pytest.approx(1.0)
     assert chernoff_deviation_bound(count, trials, probability) == pytest.approx(
         lower + upper, rel=1e-15
-    )
+    , abs=0)
 
 
 def test_a_one_sided_bound_is_not_charged_for_the_other_tail():
@@ -969,11 +969,11 @@ def test_the_honest_abort_bound_is_a_function_of_n_and_not_a_constant():
     # on 3 * eps0, which is LARGER than 2 * eps0 for the different reason that
     # the union is over three floor events and not two.
     assert stats.params.key_length == 96
-    assert stats.aborts.honest_bound == pytest.approx(2.4904e-17, rel=1e-3)
+    assert stats.aborts.honest_bound == pytest.approx(2.4904e-17, rel=1e-3, abs=0)
     assert stats.aborts.honest_bound > 2 * HONEST_ABORT_BUDGET
 
     settled = evidence_abort_probability_bound(ProtocolParams(key_length=384))
-    assert settled == pytest.approx(3 * HONEST_ABORT_BUDGET, rel=1e-12)
+    assert settled == pytest.approx(3 * HONEST_ABORT_BUDGET, rel=1e-12, abs=0)
     assert settled > 2 * HONEST_ABORT_BUDGET
 
     short = evidence_abort_probability_bound(ProtocolParams(key_length=24))
@@ -1284,7 +1284,7 @@ def test_the_chsh_z_uses_the_nulls_variance_not_the_measurements():
             continue
         variance = sum(1.0 / (2.0 * count) for count in link.chsh.counts)
         expected = (link.chsh.statistic - ideal) / math.sqrt(variance)
-        assert link.chsh_z == pytest.approx(expected, rel=1e-12)
+        assert link.chsh_z == pytest.approx(expected, rel=1e-12, abs=0)
         # A clean run sits near the ideal; nothing here is a threshold.
         assert abs(link.chsh_z) < SIGMAS
 

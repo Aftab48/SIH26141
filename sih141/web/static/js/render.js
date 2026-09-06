@@ -600,9 +600,14 @@ const Render = (function () {
           `controls: ${field.rate} to the link's true matched-position error ` +
           `rate and ${field.channel} to its Werner strength, to score it ` +
           "against the link instead. Setting only one does not clear the run. " +
-          "Neither is ever inferred from the transcript, because at " +
-          "check_fraction = 0 the transcript carries no estimate of either " +
-          "and guessing would be inventing a null.",
+          // The reason this clause used to give -- "because at
+          // check_fraction = 0 the transcript carries no estimate of either"
+          // -- is the API's sentence about ONE run, hardcoded here and printed
+          // on every run: at check_fraction = 0.25 the transcript does carry
+          // an estimate, and the banner was giving a false reason for a true
+          // design. The design holds on every run; only the reason was local
+          // to one, so the reason is gone and the statement stays.
+          "Neither is ever inferred from the transcript.",
       ];
       if (detection.detected === true) {
         paragraphs.unshift(
@@ -641,23 +646,59 @@ const Render = (function () {
       // on a run with Eve on the resource seam and the heading would assert
       // she is not there. Whether the nulls MATCH is the harness's sentence,
       // below, and only the harness knows it.
-      out.push(
-        banner("info", "ℹ", "Both nulls were stated by the operator", [
-          `The rate family's mismatch members were scored against ` +
+      //
+      // And without `run.nulls` this branch knows even less than that. It is
+      // reached on `detection.null_is_noiseless === false`, which is the RATE
+      // family's flag alone: the channel family's null was not reported, so
+      // "both were stated" is a claim about a half of the state that never
+      // arrived, and printing `tolerated_depolarising = n/a` inside the
+      // sentence that makes the claim does not withdraw it. Same treatment as
+      // the sibling branch above -- the heading says what the one flag knows,
+      // and a paragraph says the response is why.
+      const paragraphs = [
+        nulls
+          ? `The rate family's mismatch members were scored against ` +
             `${field.rate} = ${Fmt.rate(detection.channel_error_rate)} and ` +
             `the channel family's check rounds against ${field.channel} = ` +
-            `${Fmt.rate((nulls || {}).tolerated_depolarising)}. Both were ` +
+            `${Fmt.rate(nulls.tolerated_depolarising)}. Both were ` +
             `supplied by the operator rather than read off the transcript, ` +
-            `and neither was inferred from it.`,
-          "Stating both is necessary for an honest run over a noisy link to " +
-            "come back quiet, and it is not sufficient: these are the laws " +
-            "the run was SCORED against, and whether they are the laws the " +
-            "wire obeyed is a separate question that only the harness can " +
-            "answer. Stating either one alone does not reach even this far, " +
-            "the family whose null is still the default goes on scoring the " +
-            "run against a link nobody has.",
-          harness,
-        ])
+            `and neither was inferred from it.`
+          : `The rate family's mismatch members were scored against ` +
+            `${field.rate} = ${Fmt.rate(detection.channel_error_rate)}, ` +
+            `which was supplied by the operator rather than read off the ` +
+            `transcript. What ${field.channel} was set to is not reported ` +
+            `on this response, so nothing here says what the channel ` +
+            `family's check rounds were scored against.`,
+      ];
+      if (!nulls) {
+        paragraphs.push(
+          "The API did not supply run.nulls on this response, so the only " +
+            "flag available here is the RATE family's " +
+            "(Detection.null_is_noiseless). The channel family's null is not " +
+            "reported and this banner cannot speak for it."
+        );
+      }
+      // A standing statement about the design rather than about this run, so
+      // it is true on both sides of the branch above.
+      paragraphs.push(
+        "Stating both is necessary for an honest run over a noisy link to " +
+          "come back quiet, and it is not sufficient: these are the laws " +
+          "the run was SCORED against, and whether they are the laws the " +
+          "wire obeyed is a separate question that only the harness can " +
+          "answer. Stating either one alone does not reach even this far, " +
+          "the family whose null is still the default goes on scoring the " +
+          "run against a link nobody has."
+      );
+      paragraphs.push(harness);
+      out.push(
+        banner(
+          "info",
+          "ℹ",
+          nulls
+            ? "Both nulls were stated by the operator"
+            : "The rate family's null is not noiseless",
+          paragraphs
+        )
       );
     }
 

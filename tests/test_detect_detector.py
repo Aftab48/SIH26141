@@ -271,7 +271,9 @@ def test_the_three_shares_sum_to_the_budget(eps: float, length: int) -> None:
         split.rate + split.structural + split.channel, eps, rel_tol=1e-12
     )
     assert split.rate == split.channel
-    assert split.per_link * len(LINK_ROSTER) == pytest.approx(split.channel)
+    assert split.per_link * len(LINK_ROSTER) == pytest.approx(
+        split.channel, rel=1e-12, abs=0
+    )
 
 
 @pytest.mark.parametrize("eps", [1e-30, 1e-19, 1e-9, 1e-3, 0.9])
@@ -286,7 +288,7 @@ def test_the_structural_family_is_charged_what_it_can_prove(eps: float) -> None:
     params = ProtocolParams(key_length=LENGTH)
     split = family_budget(params, eps=eps)
     expected = min(evidence_abort_bound(params), eps / 3.0)
-    assert split.structural == pytest.approx(expected, rel=1e-12)
+    assert split.structural == pytest.approx(expected, rel=1e-12, abs=0)
     assert split.evidence_bound == evidence_abort_bound(params)
     # Never worse than the even split, for either of the other two.
     assert split.rate >= eps / 3.0
@@ -306,7 +308,9 @@ def test_the_structural_share_keeps_its_own_check_admissible() -> None:
     stats = honest_plain()[0]
     report = structural_report(stats, eps=split.structural)
     assert report.withheld == ()
-    assert report.false_positive_bound == pytest.approx(split.evidence_bound)
+    assert report.false_positive_bound == pytest.approx(
+        split.evidence_bound, rel=1e-12, abs=0
+    )
 
 
 def test_the_composite_bound_is_the_sum_of_the_three_families() -> None:
@@ -335,7 +339,7 @@ def test_the_composite_bound_is_the_sum_of_the_three_families() -> None:
                 if link in stats.links
             )
         )
-        assert result.false_positive_bound == pytest.approx(expected, rel=1e-12)
+        assert result.false_positive_bound == pytest.approx(expected, rel=1e-12, abs=0)
 
 
 def test_the_correction_is_doing_work_and_here_is_how_much() -> None:
@@ -398,7 +402,7 @@ def test_the_link_roster_is_fixed_and_not_sized_to_the_run() -> None:
     # Same budget, same per-link share, whether or not the links exist.
     assert family_budget(plain.params, eps=1e-9).per_link == pytest.approx(
         family_budget(checked.params, eps=1e-9).per_link, rel=1e-12
-    )
+    , abs=0)
     bare = detect(plain, eps=1e-9)
     assert any("no check rounds" in item for item in bare.withheld)
 

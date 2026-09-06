@@ -166,6 +166,21 @@ def open_listeners(
     >>> for listener in sockets:
     ...     listener.close()
 
+    ``--port 0`` is a free port chosen by the kernel, and what is announced is
+    the port that was handed out -- once, for the whole family, so the pair is
+    one server on one port:
+
+    >>> sockets, bound, skipped = open_listeners("127.0.0.1", 0)
+    >>> ports = {listener.getsockname()[1] for listener in sockets}
+    >>> len(ports) == 1 and 0 not in ports
+    True
+    >>> [url.rsplit(":", 1)[1] for url in bound] == [
+    ...     str(listener.getsockname()[1]) for listener in sockets
+    ... ]
+    True
+    >>> for listener in sockets:
+    ...     listener.close()
+
     A busy port raises here rather than being announced and then failing:
 
     >>> held = _socket.socket()
@@ -185,6 +200,14 @@ def open_listeners(
     sockets: list[socket.socket] = []
     bound: list[str] = []
     skipped: list[str] = []
+    # The port to bind, which is the REQUESTED port until an ephemeral one has
+    # been handed out. `--port 0` means "any free port", and the kernel answers
+    # it once per socket: bound naively, the loopback pair lands on two
+    # different ports and is two servers, not one. So the first bind fixes the
+    # port and the rest of the family follows it -- and if the second family
+    # cannot have that port it is `skipped`, reported, like any other
+    # half-success here.
+    wanted = port
     for index, address in enumerate(bind_hosts(host)):
         family = (
             socket.AF_INET6 if ":" in address else socket.AF_INET
@@ -206,7 +229,7 @@ def open_listeners(
                 # dual-stack v6 socket claim the v4 wildcard as well: with both
                 # in the list that is a bind conflict on Linux.
                 listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
-            listener.bind((address, port))
+            listener.bind((address, wanted))
             listener.listen(128)
         except OSError as failure:
             listener.close()
@@ -217,8 +240,13 @@ def open_listeners(
             skipped.append(f"{address} ({failure.strerror or failure})")
             continue
         sockets.append(listener)
+        # The port the socket ACTUALLY got, never the one that was asked for:
+        # they differ under `--port 0`, and an announced address that was
+        # never bound is the one thing this function exists to prevent
+        # (:ref:`bind-before-you-announce`).
+        wanted = listener.getsockname()[1]
         shown = f"[{address}]" if ":" in address else address
-        bound.append(f"http://{shown}:{port}")
+        bound.append(f"http://{shown}:{wanted}")
     return sockets, bound, skipped
 
 

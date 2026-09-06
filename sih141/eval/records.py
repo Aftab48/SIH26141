@@ -121,6 +121,7 @@ __all__ = [
     "NON_DETERMINISTIC_FIELDS",
     "RECORD_SCHEMA",
     "TrialRecord",
+    "UNDETECTABLE_ASSUMPTION",
     "UNDETECTABLE_BY_CONSTRUCTION",
     "transcript_summary",
 ]
@@ -132,6 +133,15 @@ UNDETECTABLE_BY_CONSTRUCTION: Final[str] = "undetectable-by-construction"
 """str: What a results table prints for a hypothesis assumption (AUTH) excludes.
 
 Never a blank, a dash or a zero (Phase 3 constraint 5).
+"""
+
+UNDETECTABLE_ASSUMPTION: Final[str] = "full impersonation under (AUTH)"
+"""str: The assumption the token rests on, named wherever the token is used.
+
+One definition, because a legend that says only "an assumption" leaves a reader
+of that table alone unable to say which -- and the whole point of printing
+:data:`UNDETECTABLE_BY_CONSTRUCTION` instead of a zero is that the reader can
+tell an excluded hypothesis from a missed one.
 """
 
 NON_DETERMINISTIC_FIELDS: Final[frozenset[str]] = frozenset({"wall_clock"})

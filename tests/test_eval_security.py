@@ -738,7 +738,7 @@ def test_the_repudiation_table_keeps_measured_and_proven_apart(
     assert "/" in str(row[measured_index]) and "[" in str(row[measured_index])
     assert float(str(row[proven_index])) == pytest.approx(
         enforced_repudiation_bound(ProtocolParams(key_length=24)), rel=1e-3
-    )
+    , abs=0)
 
 
 def test_the_curve_says_where_a_demo_scale_run_cannot_demonstrate_anything(
@@ -820,10 +820,10 @@ def test_the_forgery_table_quotes_the_right_closed_form_per_adversary(
     # and not the arithmetic's.
     assert float(row[11]) == pytest.approx(
         recipient_forgery_probability(params), rel=1e-4
-    )
+    , abs=0)
     assert float(row[12]) == pytest.approx(
         10.0 ** recipient_forgery_bound_log10(params), rel=1e-3
-    )
+    , abs=0)
     assert float(row[11]) < float(row[12]), (
         "the exact acceptance probability exceeds its own upper bound, which "
         "would mean one of the two is wrong"
@@ -1035,8 +1035,8 @@ def test_the_exact_column_is_blank_on_rows_that_ran_another_family(
         repudiation_probability(
             ProtocolParams(key_length=24), mismatch_probability=0.085
         ),
-        rel=1e-3,
-    )
+        rel=1e-3
+    , abs=0)
 
 
 def test_the_demo_scale_note_quotes_the_longest_key_that_measured_zero(
@@ -1195,11 +1195,11 @@ def test_the_gap_table_recomputes_both_bounds_from_the_parameters() -> None:
         assert float(row[3]) == pytest.approx(params.gap, abs=1e-6)
         assert float(row[4]) == pytest.approx(
             enforced_repudiation_bound(params), rel=1e-3
-        )
+        , abs=0)
         if recipient_forgery_bound_log10(params) > -300.0:
             assert float(row[5]) == pytest.approx(
                 recipient_forgery_bound(params, method="kl"), rel=1e-3
-            )
+            , abs=0)
         else:
             assert row[5].startswith("10^-")
         # Both columns are rounded for printing, so the tolerance is the

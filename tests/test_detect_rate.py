@@ -783,7 +783,7 @@ def test_the_forgery_separation_is_the_one_phase_three_measured():
     """
     assert forgery_separation_sigma(192, 1 / 3) == pytest.approx(
         9.797958971132712, rel=1e-12
-    )
+    , abs=0)
     assert (
         forgery_separation_sigma(
             DEFAULT_PARAMS.signing_length, DEFAULT_PARAMS.match_probability
@@ -792,7 +792,7 @@ def test_the_forgery_separation_is_the_one_phase_three_measured():
     )
     assert forgery_separation_sigma(192, 1 / 3) == pytest.approx(
         math.sqrt(192 / 2), rel=1e-12
-    )
+    , abs=0)
 
     # The forger's scored fraction is recomputed here from ``(1 + p) / 2``
     # rather than read off the parameter set, so that this module's separation
@@ -808,7 +808,7 @@ def test_the_forgery_separation_is_the_one_phase_three_measured():
         spread = math.sqrt(params.signing_length * chance * (1.0 - chance))
         assert forgery_separation_sigma(
             params.signing_length, chance
-        ) == pytest.approx(shift / spread, rel=1e-12)
+        ) == pytest.approx(shift / spread, rel=1e-12, abs=0)
 
 
 @pytest.mark.parametrize("length", [192, 600, 4800, 115200])
@@ -825,7 +825,7 @@ def test_pooling_costs_exactly_root_two(length):
     """
     per = forgery_separation_sigma(length, 1 / 3)
     both = forgery_separation_sigma(length, 1 / 3, pooled=True)
-    assert per / both == pytest.approx(math.sqrt(2), rel=1e-12)
+    assert per / both == pytest.approx(math.sqrt(2), rel=1e-12, abs=0)
 
 
 def test_the_upper_matched_threshold_sits_between_the_two_hypotheses():
@@ -948,7 +948,7 @@ def test_the_roster_is_fixed_complete_and_disjoint_from_the_free_tests():
     assert set(family.thresholds) == set(RATE_COUNT_ROSTER)
     assert math.fsum(
         family.threshold(name).budget for name in RATE_COUNT_ROSTER
-    ) == pytest.approx(family.eps, rel=1e-12)
+    ) == pytest.approx(family.eps, rel=1e-12, abs=0)
 
 
 @pytest.mark.parametrize("budget", [1e-2, 1e-6, 1e-9, HONEST_ABORT_BUDGET])
@@ -970,7 +970,7 @@ def test_the_family_bound_is_the_sum_and_never_exceeds_the_budget(
         family.threshold(name).false_positive_bound
         for name in RATE_COUNT_ROSTER
     )
-    assert family.false_positive_bound == pytest.approx(total, rel=1e-12)
+    assert family.false_positive_bound == pytest.approx(total, rel=1e-12, abs=0)
     assert family.false_positive_bound <= budget
     for name in RATE_COUNT_ROSTER:
         threshold = family.threshold(name)

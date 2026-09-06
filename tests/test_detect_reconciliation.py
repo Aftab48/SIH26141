@@ -377,7 +377,9 @@ def test_the_shared_floor_term_refuses_to_assert_an_unproven_bound() -> None:
     assert floor_shortfall_bound(24, 1 / 3, 3) == 1.0
     assert floor_shortfall_bound(115200, 1 / 3, 36555) == HONEST_ABORT_BUDGET
     # The degenerate floor takes the exact term, and it is far tighter.
-    assert floor_shortfall_bound(267, 1 / 3, 1) == pytest.approx((2 / 3) ** 267)
+    assert floor_shortfall_bound(267, 1 / 3, 1) == pytest.approx(
+        (2 / 3) ** 267, rel=1e-12, abs=0
+    )
     assert floor_shortfall_bound(267, 1 / 3, 1) < HONEST_ABORT_BUDGET
 
 

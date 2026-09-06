@@ -301,7 +301,7 @@ def test_a_zero_check_fraction_leaves_every_shipped_number_where_it_was():
     assert minimum_pooled_matched_count(DEFAULT_PARAMS) == 74190
     assert enforced_repudiation_bound(DEFAULT_PARAMS) == pytest.approx(
         1.4139e-09, rel=1e-4
-    )
+    , abs=0)
 
 
 @pytest.mark.parametrize(
@@ -357,8 +357,8 @@ def test_spending_key_on_check_rounds_costs_exactly_what_it_looks_like():
         for fraction in fractions
     ]
     assert bounds == sorted(bounds), "a shorter key must not tighten the bound"
-    assert bounds[0] == pytest.approx(1.4139e-09, rel=1e-4)
-    assert bounds[2] == pytest.approx(1.8853e-08, rel=1e-4)
+    assert bounds[0] == pytest.approx(1.4139e-09, rel=1e-4, abs=0)
+    assert bounds[2] == pytest.approx(1.8853e-08, rel=1e-4, abs=0)
     # Thirteenfold at the shipped fraction: the number that must never be
     # confused with CHECKED_PARAMS's.
     assert bounds[2] / bounds[0] > 10.0
@@ -1465,7 +1465,7 @@ def test_the_interval_half_width_shrinks_like_one_over_root_n():
         hoeffding.append(estimate.half_width)
         wilson.append(estimate_qber(sample).half_width)
     for earlier, later in zip(hoeffding, hoeffding[1:], strict=False):
-        assert earlier / later == pytest.approx(2.0, rel=1e-12)
+        assert earlier / later == pytest.approx(2.0, rel=1e-12, abs=0)
     for earlier, later in zip(wilson, wilson[1:], strict=False):
         assert 1.8 < earlier / later < 2.2
 

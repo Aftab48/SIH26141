@@ -105,7 +105,7 @@
    "matched_minimum": 1,
    "pooled_minimum": 22,
    "enforced_repudiation_bound": 0.9939757386017611,
-   "floors_are_live": false,
+   "floors_are_live": true,
    "family_budget": {
     "eps": 1e-09,
     "rate": 4.99999999972895e-10,
@@ -138,7 +138,7 @@
   },
   "chsh_classical_bound": 2.0,
   "chsh_tsirelson_bound": 2.8284271247461903,
-  "degenerate_below_key_length": 140,
+  "degenerate_below_key_length": 137,
   "note": "Closed forms evaluated at a parameter set: derived, not measured, and computed without running anything. Nothing here is a detection rate, and none of it is a false-negative bound -- there is no such bound in this project and none can be had from a transcript. What a run publishes afterwards is Detection.false_positive_bound. It is NOT eps: at L = 384, eps = 1e-9, false_positive_bound is 3.3964e-10 and the budget is 2.944 times larger, so quoting the budget overstates the error rate by that factor. It is also NOT evidence_bound, which is a post hoc statement about the signals that actually fired -- a different claim on a different scale entirely, smaller than false_positive_bound by about 7e9 on a run where anything fires, and null on a run where nothing does."
  },
  "limits": {

@@ -177,7 +177,7 @@ def test_the_certified_region_ends_where_the_containment_does() -> None:
 def test_a_zero_count_floor_is_still_answered_exactly() -> None:
     """A1-3: the other regime is untouched -- it never used the budget."""
     assert floor_shortfall_bound(267, 1 / 3, 1) == pytest.approx(
-        (2 / 3) ** 267
+        (2 / 3) ** 267, rel=1e-12, abs=0
     )
     assert floor_shortfall_bound(24, 1 / 3, 3) == 1.0
 

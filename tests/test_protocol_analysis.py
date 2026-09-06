@@ -376,13 +376,13 @@ def test_honest_rate_variance_is_the_exact_algebraic_expression() -> None:
 
         assert stats.expected_reciprocal_matched == pytest.approx(
             reciprocal, rel=1e-12
-        )
+        , abs=0)
         assert stats.rate_variance == pytest.approx(
             error_rate * (1.0 - error_rate) * reciprocal, rel=1e-12
-        )
+        , abs=0)
         assert stats.rate_standard_deviation == pytest.approx(
             math.sqrt(stats.rate_variance), rel=1e-12
-        )
+        , abs=0)
 
 
 def test_honest_rate_mean_and_variance_match_simulation() -> None:
@@ -423,7 +423,7 @@ def test_expected_reciprocal_matched_exceeds_one_over_expected_matched() -> None
     assert stats.expected_reciprocal_matched > 1.0 / params.expected_matched
     assert stats.expected_reciprocal_matched == pytest.approx(
         1.0 / params.expected_matched, rel=0.02
-    )
+    , abs=0)
 
 
 def test_honest_statistics_reports_zero_variance_at_zero_error_rate() -> None:
@@ -676,7 +676,9 @@ def test_forgery_bound_conditional_form_matches_the_hand_expression() -> None:
     params = ProtocolParams(key_length=115200)
     matched = 38400
     assert forgery_bound(params, matched=matched, method="kl") == pytest.approx(
-        math.exp(-matched * binary_kl_divergence(params.s_v, 0.5))
+        math.exp(-matched * binary_kl_divergence(params.s_v, 0.5)),
+        rel=1e-12,
+        abs=0,
     )
 
 
@@ -687,7 +689,7 @@ def test_averaged_bound_equals_the_binomial_average_of_the_conditional_bound() -
     pmf = matched_count_distribution(params)
     counts = np.arange(params.key_length + 1)
     direct = float((pmf * np.exp(-exponent * counts)).sum())
-    assert forgery_bound(params, method="kl") == pytest.approx(direct, rel=1e-12)
+    assert forgery_bound(params, method="kl") == pytest.approx(direct, rel=1e-12, abs=0)
 
 
 def test_forger_floor_is_the_recipient_forger_not_this_one() -> None:
@@ -1126,16 +1128,18 @@ def test_repudiation_bound_reproduces_the_documented_default_figure() -> None:
     """
     conditional = repudiation_bound(DEFAULT_PARAMS, matched_records=76800)
     assert conditional == pytest.approx(
-        math.exp(-76800 * DEFAULT_PARAMS.gap**2 / 8.0)
+        math.exp(-76800 * DEFAULT_PARAMS.gap**2 / 8.0),
+        rel=1e-12,
+        abs=0,
     )
     averaged = averaged_repudiation_bound(
         DEFAULT_PARAMS, signer_sees_recipient_bases=False
     )
-    assert averaged == pytest.approx(6.9e-10, rel=0.02)
+    assert averaged == pytest.approx(6.9e-10, rel=0.02, abs=0)
     assert averaged < 1e-9
     # The published figure and the per-run guarantee at the expected M agree to
     # the width of the legacy slack term, which underflows to zero here.
-    assert averaged == pytest.approx(conditional, rel=0.01)
+    assert averaged == pytest.approx(conditional, rel=0.01, abs=0)
 
 
 def test_repudiation_bound_pins_the_audited_adversarial_case() -> None:

@@ -283,7 +283,7 @@ def test_the_quantile_used_above_is_the_projects_own() -> None:
     trials = 40
     interval = wilson_interval(0, trials, confidence=CONFIDENCE)
     z_squared = interval.high * trials / (1.0 - interval.high)
-    assert z_squared**0.5 == pytest.approx(2.5758293035489004, rel=1e-9)
+    assert z_squared**0.5 == pytest.approx(2.5758293035489004, rel=1e-9, abs=0)
 
 
 # --------------------------------------------------------------------------- #

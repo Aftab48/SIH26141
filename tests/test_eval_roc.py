@@ -263,11 +263,11 @@ def test_the_anchor_bound_matches_the_number_phase_4_published() -> None:
     """
     checked = score_ladder(corpus("honest", 1)[0], eps_values=(1e-9,))[0]
     assert checked.false_positive_bound in (
-        pytest.approx(3.1464e-10, rel=1e-4),
-        pytest.approx(3.3964e-10, rel=1e-4),
+        pytest.approx(3.1464e-10, rel=1e-4, abs=0),
+        pytest.approx(3.3964e-10, rel=1e-4, abs=0),
     )
     unchecked = score_ladder(corpus("honest-unchecked", 1)[0], eps_values=(1e-9,))[0]
-    assert unchecked.false_positive_bound == pytest.approx(2.7818e-10, rel=1e-4)
+    assert unchecked.false_positive_bound == pytest.approx(2.7818e-10, rel=1e-4, abs=0)
     assert unchecked.withheld, "the unchecked arm cannot score the channel family"
 
 
@@ -636,7 +636,7 @@ def test_a_structural_member_loses_its_operating_point_below_5e_19() -> None:
         else:
             hi = mid
     crossover = 10.0**hi
-    assert crossover == pytest.approx(4.9e-19, rel=0.02)
+    assert crossover == pytest.approx(4.9e-19, rel=0.02, abs=0)
     assert crossover > 2.0**-64
 
 
@@ -966,8 +966,8 @@ def test_the_chart_plots_the_proven_bound_on_the_horizontal_axis() -> None:
     span = roc._CHART_WIDTH - roc._CHART_LEFT - roc._CHART_RIGHT
     for (cx, _), point in zip(plotted, points):
         recovered = 10 ** (lo + (cx - roc._CHART_LEFT) / span * (hi - lo))
-        assert recovered == pytest.approx(point.proven_bound, rel=2e-2)
-        assert recovered != pytest.approx(point.eps, rel=1e-3)
+        assert recovered == pytest.approx(point.proven_bound, rel=2e-2, abs=0)
+        assert recovered != pytest.approx(point.eps, rel=1e-3, abs=0)
 
 
 def test_the_chart_error_bars_are_the_wilson_interval() -> None:

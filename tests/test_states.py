@@ -661,7 +661,7 @@ def test_concurrence_resolves_weak_entanglement() -> None:
     for theta in (1e-3, 1e-5, 1e-7):
         amps = np.array([math.cos(theta), 0.0, 0.0, math.sin(theta)], dtype=complex)
         value = concurrence(Statevector(amps))
-        assert value == pytest.approx(abs(math.sin(2 * theta)), rel=1e-6)
+        assert value == pytest.approx(abs(math.sin(2 * theta)), rel=1e-6, abs=0)
         assert value > 0.0
 
 

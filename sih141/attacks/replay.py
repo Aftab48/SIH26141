@@ -1829,8 +1829,8 @@ def measure_ledger_denial_of_service(
                 f"-- turns a published rate into a statement about this seed "
                 f"rather than about the attack, and counting it as a failure "
                 f"would understate a defence that never got to act.\n"
-                f"L = {checked.key_length}: below 140 both matched-count "
-                f"floors degenerate and an honest run can fail on its own. "
+                f"L = {checked.key_length}: below 137 the pooled matched-count "
+                f"floor degenerates and an honest run can fail on its own. "
                 f"Raise the key length, or investigate the reason above."
             )
     return AttackOutcome(

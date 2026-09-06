@@ -2344,7 +2344,7 @@ def test_the_recipient_forgery_route_is_the_forwarding_hop() -> None:
     assert transcript.bob.accepted
     assert transcript.bob.matched_count == pytest.approx(
         params.expected_matched, rel=0.25
-    )
+    , abs=0)
     assert transcript.charlie.rate == pytest.approx(params.forger_floor, abs=0.03)
     assert transcript.charlie.rate > params.s_v
     assert not transcript.charlie.accepted

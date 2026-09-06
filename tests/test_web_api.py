@@ -35,6 +35,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from sih141 import __version__
+from sih141.eval.security import FLOOR_CROSSOVER, security_claim_at
+from sih141.protocol.params import ProtocolParams
 from sih141.web import driver
 from sih141.web.api import STATIC_DIR, create_app
 from sih141.web.catalogue import ATTACK_KEYS, DETECTABLE_VALUES
@@ -174,7 +176,7 @@ def test_defaults_publishes_the_caps_and_the_headline_bounds(client):
     assert "NOT RUNNABLE HERE" in headline["note"]
     assert bounds["chsh_classical_bound"] == 2.0
     assert f"{bounds['chsh_tsirelson_bound']:.4f}" == "2.8284"
-    assert bounds["degenerate_below_key_length"] == 140
+    assert bounds["degenerate_below_key_length"] == FLOOR_CROSSOVER
     # Measured is labelled measured, and carries its sample size.
     assert payload["noise_null_calibration"]["kind"] == "measured"
     assert payload["noise_null_calibration"]["runs_per_level"] == 30
@@ -188,14 +190,92 @@ def test_the_demo_set_is_published_with_its_own_uselessness_attached(client):
     """A demo-scale run cannot demonstrate non-repudiation, and the payload says so.
 
     The floors are inert and the enforced bound is ``0.994``. Publishing the
-    number beside ``floors_are_live: false`` is what stops a screen turning
-    ``transferable: true`` into a security claim it does not have.
+    number beside the note is what stops a screen turning ``transferable:
+    true`` into a security claim it does not have.
     """
     demo = client.get("/api/defaults").json()["bounds"]["demo"]
     assert demo["key_length"] == 192
-    assert demo["floors_are_live"] is False
+    # The floors ARE live at 192 -- the pooled one bites from 137 up -- and the
+    # payload says so, because /api/run says so for the same length. What makes
+    # the demo set unquotable is the enforced repudiation bound below, which is
+    # order one, and never a floor claim the rest of the project disagrees with.
+    assert demo["floors_are_live"] is True
     assert f"{demo['enforced_repudiation_bound']:.4f}" == "0.9940"
     assert "cannot demonstrate non-repudiation" in demo["note"]
+
+
+def _run_at(client, sifted: int) -> dict:
+    """Return the ``run`` block for a run of exactly ``sifted`` positions."""
+    body = client.post(
+        "/api/run",
+        json={
+            "attack": "honest",
+            "key_length": sifted,
+            "check_fraction": 0.0,
+            "seed": 11,
+        },
+    ).json()
+    assert body["error"] is None, body["error"]
+    assert body["run"]["sifted_key_length"] == sifted
+    return body["run"]
+
+
+def test_the_published_floor_boundary_is_the_one_a_run_actually_crosses(client):
+    """``degenerate_below_key_length`` against runs on either side of it.
+
+    The constant used to be a literal ``140`` -- the ``2 -> 3`` step in the
+    pooled floor, one transition past the one that matters -- pinned by a test
+    that repeated the literal. So the screen said "floors collapse below 140"
+    while a run at 137, 138 or 139 came back carrying a security claim, in the
+    adjacent row.
+
+    Nothing here names a number. The boundary is read from the payload and then
+    made to earn it: the run below it must carry no claim.
+    """
+    bounds = client.get("/api/defaults").json()["bounds"]
+    boundary = bounds["degenerate_below_key_length"]
+    assert boundary == FLOOR_CROSSOVER, (
+        "the dashboard publishes its own copy of the crossover Phase 5 froze"
+    )
+
+    at = _run_at(client, boundary)
+    below = _run_at(client, boundary - 1)
+    assert at["security_claim"] is True
+    assert at["floors"]["degenerate"] is False
+    assert below["security_claim"] is False, (
+        f"a run of {boundary - 1} sifted positions carries a claim, on a "
+        f"screen that says the floors collapse below {boundary}"
+    )
+    assert below["floors"]["degenerate"] is True
+
+
+def test_the_defaults_floor_verdict_is_the_one_the_run_endpoint_gives(client):
+    """``floors_are_live`` is ``security_claim``, not a second spelling of it.
+
+    ``_parameter_set`` scored the floors as ``m_min > 1 and pooled > 2`` while
+    Phase 4 froze ``security_claim = m_min > 1 or pooled > 1``. The two
+    disagree for every sifted length from the crossover up to the per-verifier
+    one, which is where the dashboard's own demo set lives, so ``/api/defaults``
+    published the demo set INERT and ``/api/run`` reported the same length LIVE.
+    """
+    from sih141.web.api import _parameter_set
+
+    demo = client.get("/api/defaults").json()["bounds"]["demo"]
+    run = _run_at(client, demo["key_length"])
+    assert run["floors"]["pooled_minimum"] == demo["pooled_minimum"]
+    assert demo["floors_are_live"] is run["security_claim"], (
+        "the same length is INERT in /api/defaults and LIVE in /api/run"
+    )
+    assert demo["floors_are_live"] is not run["floors"]["degenerate"]
+
+    # And across the whole window the two predicates used to disagree on,
+    # without running any of it: the closed form the payload serves is the
+    # closed form the transcript is scored by.
+    for length in (24, 136, 137, 138, 160, 192, 272, 273, 512):
+        published = _parameter_set(ProtocolParams(key_length=length), "")
+        assert published["floors_are_live"] is security_claim_at(length), (
+            f"floors_are_live disagrees with security_claim at L = {length}"
+        )
 
 
 def test_a_run_returns_the_contract_keys(client):
@@ -1315,6 +1395,40 @@ def test_the_service_listens_on_both_loopback_families():
     finally:
         for listener in sockets:
             listener.close()
+
+
+def test_every_announced_address_is_the_port_that_was_bound():
+    """``--port 0`` announced two addresses ending in ``:0``, on two ports.
+
+    The banner was built from the REQUESTED port, so the one flag that makes
+    the requested port differ from the bound one falsified the invariant the
+    bind-first fix exists for: neither printed address was ever bound, and the
+    loopback pair had landed on two different ephemeral ports, which is two
+    servers and not one.
+    """
+    from sih141.web.__main__ import open_listeners
+
+    sockets, bound, skipped = open_listeners("127.0.0.1", 0)
+    try:
+        ports = {listener.getsockname()[1] for listener in sockets}
+        assert 0 not in ports
+        assert len(ports) == 1, (
+            f"the loopback pair is two servers on {sorted(ports)}, not one"
+        )
+        announced = [url.rsplit(":", 1)[1] for url in bound]
+        assert announced == [
+            str(listener.getsockname()[1]) for listener in sockets
+        ], f"announced {bound}, bound {sorted(ports)}"
+        # And the announced address really answers, which ``:0`` never could.
+        for listener in sockets:
+            host = "::1" if listener.family is socket.AF_INET6 else "127.0.0.1"
+            with socket.socket(listener.family, socket.SOCK_STREAM) as caller:
+                caller.settimeout(5)
+                caller.connect((host, ports.copy().pop()))
+    finally:
+        for listener in sockets:
+            listener.close()
+    assert skipped == [] or len(sockets) == 1
 
 
 def test_a_busy_port_fails_before_any_address_is_announced(capsys):

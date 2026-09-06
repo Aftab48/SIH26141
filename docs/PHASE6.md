@@ -28,10 +28,13 @@ exit `0`, no failures, no errors, no skips. `python -m pytest` printed that summ
 verbatim, and `pytest --collect-only -q` sums to the same 3460. The round before it reported
 3338; the 122 new tests are §11's.
 
-> **Phase 6 runs before Phase 5.** Nothing on this screen is an evaluation result. Phase 5 has
-> produced no numbers, and the dashboard demonstrates a live run rather than reporting a study.
-> The one table of measured rates on the page is a **Phase 4 calibration**, labelled as such,
-> and it is about the noiseless null rather than about any adversary.
+> **Phase 6 was built before Phase 5 ran.** Nothing on this screen is an evaluation result.
+> Phase 5 had produced no numbers when this was written, and the dashboard demonstrates a live
+> run rather than reporting a study. The one table of measured rates on the page is a **Phase 4
+> calibration**, labelled as such, and it is about the noiseless null rather than about any
+> adversary. Phase 5 has since run (12,494 trials, seven reduced tables in
+> [`docs/tables/`](tables)) and none of it was back-ported onto this screen: the dashboard still
+> shows one run at a time, by design.
 
 ## 0. The one command
 
@@ -348,7 +351,7 @@ prints that and, immediately beside it, everything that makes it meaningless:
   outcome of THIS run, not a guarantee"*.
 * this run's enforced repudiation bound (`9.9890e-01` at `L = 192`) against `1.4139e-09` at
   `DEFAULT_PARAMS`, both labelled `⊢ PROVEN`.
-* `are this run's floors live?` and `floors collapse below 140 sifted positions`.
+* `are this run's floors live?` and `floors collapse below 137 sifted positions`.
 * the sentence **NON-REPUDIATION IS NOT DEMONSTRATED HERE**, with the reason: *"the enforced
   bound at this run's parameters is a number close to one, which is not a bound on anything."*
 
@@ -383,24 +386,36 @@ and are rendered as three different things.
 
 **Cannot.** Anything about non-repudiation (§3.7). Any false-negative statement whatsoever,
 since there is no such bound in this project and none can be had from a transcript. Any detection
-*rate* for any adversary: the screen shows one run at a time, and Phase 5 has not run. The
-single table of measured rates is a Phase 4 calibration about the noiseless null, labelled
-`not a Phase 5 result, a Phase 4 calibration`, and it is about honest runs.
+*rate* for any adversary: the screen shows one run at a time and aggregates nothing. Phase 5's
+detection rates exist, in [`docs/tables/`](tables), and they are not on this screen and were never
+wired to it. The single table of measured rates here is a Phase 4 calibration about the noiseless
+null, labelled `not a Phase 5 result, a Phase 4 calibration`, and it is about honest runs.
 
 The decision rule is the **same** at both sizes. Only `L` differs, and with it whether the
 floors mean anything at all.
 
 ## 5. Vendoring, and how the no-network claim was verified
 
-**26 files, 520 KB, four extensions.**
+**26 files, four extensions.** The column is kibibytes, `bytes / 1024`, throughout. An earlier
+revision labelled it KB and then computed one of its four rows in decimal kilobytes, which is the
+same mixed-unit defect [PHASE5](PHASE5.md) §11.1 records fixing once already, and the total
+inherited the error. These figures are measured on a checkout, where every text file carries CRLF
+line endings; measuring a working copy that has been rewritten with LF gives smaller numbers that
+do not reproduce from `git archive`.
+
+Regenerate, from the repository root:
+
+```
+python -c "import os,collections;s=collections.Counter();c=collections.Counter();[(s.update({f.rsplit('.',1)[-1]:os.path.getsize(os.path.join(d,f))}),c.update([f.rsplit('.',1)[-1]])) for d,_,fs in os.walk('sih141/web/static') for f in fs];print({e:(c[e],round(n/1024,1)) for e,n in s.items()}, sum(c.values()), round(sum(s.values())/1024,1))"
+```
 
 | kind | count | size |
 |---|---:|---:|
-| `.json` (contract, constants, 13 recorded runs + index) | 19 | 356.2 KB |
-| `.js`  (`app`, `render`, `charts`, `contract`, `format`) | 5 | 137.0 KB |
-| `.css` (`app.css`) | 1 | 22.6 KB |
-| `.html` (`index.html`) | 1 | 3.7 KB |
-| **total** | **26** | **519.5 KB** |
+| `.json` (contract, constants, 13 recorded runs + index) | 19 | 356.6 KiB |
+| `.js`  (`app`, `render`, `charts`, `contract`, `format`) | 5 | 142.9 KiB |
+| `.css` (`app.css`) | 1 | 23.6 KiB |
+| `.html` (`index.html`) | 1 | 3.7 KiB |
+| **total** | **26** | **526.8 KiB** |
 
 No file was added by the audit round; the growth is the fixes and the words that explain them.
 

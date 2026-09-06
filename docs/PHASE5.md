@@ -411,10 +411,13 @@ mechanism works. It is never confirmation of the bound.**
 > Regenerate: same command. Every column in this table is a closed form in the parameter set;
 > none is a measurement and none is labelled one.
 
-The security claim turns on at `L = 137`, where the pooled floor `max(2·m_min, M_min)` first
-exceeds 1. The per-verifier floor does not bite until `L = 273`. Below the crossover both floors
-are 1 ("abort only on an empty matched set"), and every number in the run still computes
-cheerfully, which is why the column exists.
+The security claim turns on at `L = 137`, where `M_min` (`minimum_pooled_matched_count`) first
+exceeds 1. `M_min` **alone** is the quantity that crosses, which is what `security_claim_at` and
+`detect/statistics.py` test: the "floor on `M`" column below is `max(2·m_min, M_min)`, and it
+already reads 2 at `L = 132` and `L = 136`, on the wrong side of the crossover. The per-verifier
+floor `m_min` does not bite until `L = 273`. Below the crossover `m_min` and `M_min` are both 1
+("abort only on an empty matched set"), and every number in the run still computes cheerfully,
+which is why the column exists.
 
 | `L` | `m_min` | `M_min` | floor on `M` | claim | enforced repudiation (**proven**) | recipient forgery (**proven**) | outside forgery (**proven**) |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -955,7 +958,7 @@ having no figures.** Its numbers came from an ad-hoc probe. `measure_small_end` 
 | 24 | 18 | 1 | 1 | 0 | no | 5 |
 | 96 | 72 | 1 | 1 | 0 | no | **1–4** |
 | 180 | 135 | 1 | 1 | 0 | no | **0–2** |
-| **183** | **138** | 1 | **2** | 0 | **yes** | **0–4** |
+| **182** | **137** | 1 | **2** | 0 | **yes** | **0–4** |
 | 384 | 288 | 4 | 62 | 0 | yes | 0 |
 
 **The withheld column is a range now, and it should always have been one.** The earlier table
@@ -966,8 +969,8 @@ length. The section's own prose already said that; the table now measures it.
 
 Three more things worth carrying forward:
 
-- **The claim boundary is `L = 183`, not 140.** The number to hold onto is the *signing* length,
-  138. A quarter of the positions go to check rounds, so a caller who sets `key_length = 140`
+- **The claim boundary is `L = 182`, not 140.** The number to hold onto is the *signing* length,
+  137. A quarter of the positions go to check rounds, so a caller who sets `key_length = 140`
   because "below 140 the floors degenerate" gets a signing length of 105 and no claim at all. Below
   the boundary runs still complete and the detector still returns a verdict; what it does not return
   is a claim.
@@ -1020,9 +1023,11 @@ link is not a clean one.
 because the single-worker baseline moved by half. Nothing derived from a speedup ratio in this
 project should be quoted without both numbers.
 
-**8. This store's provenance is dirty.** §5. Every manifest records `dirty: true`. The numbers are
-correct and reproducible from their seeds; the commit stamp does not describe the code that
-produced them until the human commits and re-runs.
+**8. This store's provenance was dirty, and no longer is.** *(Closed, kept as history.)* The first
+production store recorded `dirty: true` on every manifest, so its commit stamp did not describe
+the code that produced it. It was deleted and the seven lines were run again from a committed
+tree: all seven manifests in the shipped store record `f94d9fe` with `dirty: false` (§5). Nothing
+in this limitation applies to the numbers published here.
 
 **9. The samples are small where the effects are small.** 400 trials resolve about `0.016` at the
 99% level and 40 trials resolve about `0.14`. Every rate in this document that reads `0.000` is a

@@ -7,8 +7,28 @@ Charlie does, a count of four ROC cells where there are three, ``51 minutes``
 against a doctest that says ``52``, and a table header reading ``MB`` over a
 quantity computed in mebibytes -- and those are fixed where they were written.
 
-These are the other five, and each test here fails against the code as the
-auditors found it.
+These are the other five. **They do not all bite, and the file used to claim
+they did** -- "each test here fails against the code as the auditors found it",
+which is this project's named failure mode written down rather than committed.
+Checked against a ``git archive`` of the parent commit ``6cb0f57``, and against
+the diff:
+
+- A2's ``test_the_replay_capture_cache_is_keyed_on_the_whole_parameter_set``
+  is the one behavioural failure. It fails there and passes here.
+- A4's test only fails to *collect* there, because
+  :func:`~sih141.eval.reduce.refused_run` did not exist yet. Once the import
+  is satisfied the behaviour it pins did change, so it is a real fix with an
+  unusual failure mode rather than a passing test.
+- The two A1 tests and the A5 test pass against the parent unmodified, and
+  must: ``git show f94d9fe -- sih141/eval/security.py`` changes no line of
+  ``repudiated_from_verdicts``, and the change to ``global_rng_fingerprint``
+  is docstring-only. They are **regression pins** over a guard the auditor
+  broke by mutation and over a blind spot that is being documented, not
+  removed. A pin is worth having; advertising it as a bite is not.
+- A3's cross-worker adversary determinism test is **new coverage**: no
+  adversary had ever run at more than one worker anywhere. It passes at the
+  parent too, which is the honest outcome of a coverage gap that turned out to
+  hide no bug.
 
 A1
     :func:`~sih141.eval.security.repudiated_from_verdicts` enforces Phase 3

@@ -159,7 +159,12 @@ from .experiments import (
     Experiment,
     claim,
 )
-from .records import UNDETECTABLE_BY_CONSTRUCTION, GroundTruth, TrialRecord
+from .records import (
+    UNDETECTABLE_ASSUMPTION,
+    UNDETECTABLE_BY_CONSTRUCTION,
+    GroundTruth,
+    TrialRecord,
+)
 from .reduce import (
     CONFIDENCE,
     NOT_EVALUATED,
@@ -1629,8 +1634,8 @@ def _roc_notes(points: Sequence[RocPoint]) -> list[str]:
         "recipient-forgery rows are the case in point, where one ordering "
         "produces a rejection and the other a denial of transfer.",
         f"**`{UNDETECTABLE_BY_CONSTRUCTION}`** means an assumption rules "
-        "detection out for that hypothesis -- full impersonation under "
-        "(AUTH). It is never a blank, a dash or a zero. The clean column on "
+        f"detection out for that hypothesis -- {UNDETECTABLE_ASSUMPTION}. It "
+        "is never a blank, a dash or a zero. The clean column on "
         "such a row is still a measurement, because the assumption is about "
         "the attack and not about the runs it left alone.",
         "**`null_is_noiseless`** says whether the mismatch members were "

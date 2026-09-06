@@ -97,6 +97,7 @@ from pydantic import BaseModel, ConfigDict
 
 from sih141 import __version__
 from sih141.detect import family_budget
+from sih141.eval.security import FLOOR_CROSSOVER, security_claim_at
 from sih141.protocol.params import (
     DEFAULT_PARAMS,
     DEMO_PARAMS,
@@ -128,10 +129,29 @@ from sih141.web.limits import (
     limits_payload,
 )
 
-#: Below this key length both matched-count floors degenerate and a run carries
-#: no security claim at all. Published so the screen can label a short run
-#: rather than infer the boundary.
-DEGENERATE_BELOW_KEY_LENGTH: Final[int] = 140
+DEGENERATE_BELOW_KEY_LENGTH: Final[int] = FLOOR_CROSSOVER
+"""int: The sifted length below which a run carries no security claim.
+
+The dashboard's name for :data:`sih141.eval.security.FLOOR_CROSSOVER`, aliased
+rather than restated: a second literal in a second package is what let this
+screen publish ``140`` while every other phase said ``137``.
+
+``137`` is where :func:`~sih141.protocol.verify.minimum_pooled_matched_count`
+first exceeds ``1`` and
+:attr:`~sih141.detect.statistics.TranscriptStatistics.security_claim` turns on.
+It is NOT where *both* floors bite -- the per-verifier floor stays at ``1``
+until ``273``
+(:data:`~sih141.eval.security.PER_VERIFIER_CROSSOVER`) -- and it is not the
+``2 -> 3`` step in the pooled floor at ``140`` either, which is one transition
+past the one an operator cares about.
+
+>>> from sih141.web.api import DEGENERATE_BELOW_KEY_LENGTH as boundary
+>>> from sih141.eval.security import security_claim_at
+>>> boundary
+137
+>>> security_claim_at(boundary - 1), security_claim_at(boundary)
+(False, True)
+"""
 
 
 __all__ = ["STATIC_DIR", "RunBody", "create_app", "defaults_payload"]
@@ -422,8 +442,19 @@ def _parameter_set(params: ProtocolParams, note: str) -> dict[str, Any]:
     >>> from sih141.protocol.params import DEMO_PARAMS
     >>> from sih141.web.api import _parameter_set
     >>> demo = _parameter_set(DEMO_PARAMS, "the interactive set")
-    >>> demo["minimum_matched"], demo["floors_are_live"]
-    (1, False)
+    >>> demo["minimum_matched"], demo["minimum_pooled"]
+    (1, 22)
+    >>> demo["floors_are_live"]
+    True
+
+    ``floors_are_live`` is
+    :attr:`~sih141.detect.statistics.TranscriptStatistics.security_claim`
+    evaluated on the length alone, so it agrees with what ``/api/run`` reports
+    for a run of that length rather than contradicting it:
+
+    >>> from sih141.eval.security import security_claim_at
+    >>> demo["floors_are_live"] == security_claim_at(192)
+    True
     """
     floor = minimum_matched_count(params)
     pooled = minimum_pooled_matched_count(params)
@@ -442,10 +473,13 @@ def _parameter_set(params: ProtocolParams, note: str) -> dict[str, Any]:
         "enforced_repudiation_bound": float(
             enforced_repudiation_bound(params)
         ),
-        # Both floors degenerate on a short key: `m_min` collapses to 1 and the
-        # pooled floor to a handful, at which point neither is a control on
-        # anything. Reported rather than left to a reader to notice.
-        "floors_are_live": bool(floor > 1 and pooled > 2),
+        # THE SAME PREDICATE a transcript is scored by, from the same
+        # function, and not a second spelling of it: this said
+        # `floor > 1 and pooled > 2` while Phase 4 froze
+        # `security_claim = floor > 1 or pooled > 1`, so every sifted length
+        # in [137, 272] -- the demo set at 192 included -- was published INERT
+        # here and LIVE by /api/run on the same screen.
+        "floors_are_live": security_claim_at(params.signing_length),
         "family_budget": family_budget(params, eps=EPS_DEFAULT).to_dict(),
         "note": note,
     }
@@ -501,7 +535,7 @@ def defaults_payload() -> dict[str, Any]:
 
     >>> demo = payload["bounds"]["demo"]
     >>> demo["key_length"], demo["floors_are_live"]
-    (192, False)
+    (192, True)
     >>> f'{demo["enforced_repudiation_bound"]:.4f}'
     '0.9940'
     >>> "cannot demonstrate non-repudiation" in demo["note"]

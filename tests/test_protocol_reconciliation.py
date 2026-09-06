@@ -551,16 +551,16 @@ def test_the_published_a_priori_number_is_the_one_the_defaults_earn() -> None:
     assert pooled_floor == 74190
     assert repudiation_bound_with_abort(
         DEFAULT_PARAMS, minimum_matched_records=floor
-    ) == pytest.approx(4.3614e-05, rel=1e-4)
+    ) == pytest.approx(4.3614e-05, rel=1e-4, abs=0)
     assert repudiation_bound_with_abort(
         DEFAULT_PARAMS, minimum_matched_records=2 * floor
-    ) == pytest.approx(1.9022e-09, rel=1e-4)
+    ) == pytest.approx(1.9022e-09, rel=1e-4, abs=0)
     assert enforced_repudiation_bound(DEFAULT_PARAMS) == pytest.approx(
         1.4139e-09, rel=1e-4
-    )
+    , abs=0)
     assert averaged_repudiation_bound(
         DEFAULT_PARAMS, signer_sees_recipient_bases=False
-    ) == pytest.approx(6.9173e-10, rel=1e-4)
+    ) == pytest.approx(6.9173e-10, rel=1e-4, abs=0)
 
 
 def test_the_averaged_number_cannot_be_obtained_without_naming_its_hypothesis(

@@ -258,10 +258,10 @@ def test_the_evidence_bound_is_the_union_of_the_three_tails() -> None:
         )
         assert evidence_abort_bound(params) == pytest.approx(
             2 * own + pooled, rel=1e-12
-        )
+        , abs=0)
         assert evidence_abort_bound(
             params, counts_exchanged=False
-        ) == pytest.approx(2 * own, rel=1e-12)
+        ) == pytest.approx(2 * own, rel=1e-12, abs=0)
 
 
 def test_each_abort_reason_carries_its_own_bound_and_they_are_not_summed() -> None:
@@ -276,7 +276,9 @@ def test_each_abort_reason_carries_its_own_bound_and_they_are_not_summed() -> No
         assert abort_reason_bound(params, reason) == 0.0
     assert abort_reason_bound(
         params, AbortReason.EMPTY_MATCHED_SET
-    ) == pytest.approx((2 / 3) ** LENGTH)
+    ) == pytest.approx(
+        (2 / 3) ** LENGTH, rel=1e-12, abs=0
+    )
     for reason in (
         AbortReason.BELOW_FLOOR,
         AbortReason.COUNTERPART_BELOW_FLOOR,
@@ -322,10 +324,10 @@ def test_the_evidence_bound_settles_on_three_times_the_floor_budget() -> None:
     for length in (273, 384, 600, 6000, 115200):
         assert evidence_abort_bound(
             ProtocolParams(key_length=length)
-        ) == pytest.approx(3 * HONEST_ABORT_BUDGET, rel=1e-12)
+        ) == pytest.approx(3 * HONEST_ABORT_BUDGET, rel=1e-12, abs=0)
         assert evidence_abort_bound(
             ProtocolParams(key_length=length), counts_exchanged=False
-        ) == pytest.approx(2 * HONEST_ABORT_BUDGET, rel=1e-12)
+        ) == pytest.approx(2 * HONEST_ABORT_BUDGET, rel=1e-12, abs=0)
 
 
 def test_the_evidence_bound_steps_up_where_a_floor_starts_to_bite() -> None:
@@ -359,7 +361,7 @@ def test_the_exact_bound_is_tighter_than_the_closed_form_everywhere() -> None:
         ) <= evidence_abort_bound(params)
     assert evidence_abort_bound(DEFAULT_PARAMS, exact=True) == pytest.approx(
         8.0154e-31, rel=1e-3
-    )
+    , abs=0)
 
 
 def test_the_minimum_length_certifies_the_whole_tail_not_one_point() -> None:
@@ -471,14 +473,14 @@ def test_a_withheld_check_abstains_rather_than_firing() -> None:
     assert "withheld" in withheld.detail
     assert withheld.false_positive_bound == pytest.approx(
         3 * HONEST_ABORT_BUDGET, rel=1e-12
-    )
+    , abs=0)
 
 
 def test_a_demonstration_key_cannot_buy_a_serious_budget() -> None:
     """At ``n = 24`` an abort is a ``1.2e-04`` event, and the check says so."""
     short = evidence_abort_threshold(ProtocolParams(key_length=24), 1e-9)
     assert not short.admissible
-    assert short.false_positive_bound == pytest.approx(1.1881e-04, rel=1e-3)
+    assert short.false_positive_bound == pytest.approx(1.1881e-04, rel=1e-3, abs=0)
 
 
 @pytest.mark.parametrize(
@@ -549,7 +551,7 @@ def test_a_withheld_check_makes_the_family_bound_smaller_not_larger() -> None:
     withheld = structural_report(stats, eps=1e-20)
     assert applied.false_positive_bound == pytest.approx(
         3 * HONEST_ABORT_BUDGET, rel=1e-12
-    )
+    , abs=0)
     assert withheld.false_positive_bound == 0.0
 
 
@@ -562,7 +564,7 @@ def test_the_family_bound_is_the_sum_of_its_applied_checks() -> None:
         for threshold in report.thresholds
         if threshold.admissible
     )
-    assert report.false_positive_bound == pytest.approx(total, rel=1e-12)
+    assert report.false_positive_bound == pytest.approx(total, rel=1e-12, abs=0)
 
 
 def test_a_run_without_the_count_exchange_bounds_two_events_not_three() -> None:
@@ -572,7 +574,7 @@ def test_a_run_without_the_count_exchange_bounds_two_events_not_three() -> None:
     report = structural_report(stats, eps=1e-9)
     assert report.false_positive_bound == pytest.approx(
         2 * HONEST_ABORT_BUDGET, rel=1e-12
-    )
+    , abs=0)
     assert not report.alarm_raised
 
 
@@ -599,7 +601,7 @@ def test_the_layer_below_now_agrees_and_the_two_share_one_implementation() -> No
     assert stats.aborts.honest_bound == evidence_abort_bound(stats.params)
     assert evidence_abort_bound(stats.params) == pytest.approx(
         3 * HONEST_ABORT_BUDGET, rel=1e-12
-    )
+    , abs=0)
     # Three terms, never two.
     assert stats.aborts.honest_bound > 2 * HONEST_ABORT_BUDGET
 
@@ -613,7 +615,7 @@ def test_the_bound_is_a_function_of_n_which_is_why_no_constant_was_right() -> No
     """
     short = ProtocolParams(key_length=96)
     assert evidence_abort_bound(short) > 2 * HONEST_ABORT_BUDGET
-    assert evidence_abort_bound(short) == pytest.approx(2.4904e-17, rel=1e-3)
+    assert evidence_abort_bound(short) == pytest.approx(2.4904e-17, rel=1e-3, abs=0)
 
 
 # --------------------------------------------------------------------------- #
@@ -1133,7 +1135,7 @@ def test_the_exact_bound_reaches_budgets_the_closed_form_cannot() -> None:
     """
     tight = evidence_abort_threshold(DEFAULT_PARAMS, 1e-25, exact=True)
     assert tight.admissible
-    assert tight.false_positive_bound == pytest.approx(8.0154e-31, rel=1e-3)
+    assert tight.false_positive_bound == pytest.approx(8.0154e-31, rel=1e-3, abs=0)
     assert "exact binomial lower tail" in tight.inequality
     assert not evidence_abort_threshold(
         DEFAULT_PARAMS, 1e-33, exact=True

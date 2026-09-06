@@ -442,7 +442,7 @@ def test_default_key_length_delivers_the_documented_repudiation_bound() -> None:
             + stay**params.key_length
         )
 
-    assert bound(DEFAULT_PARAMS) == pytest.approx(6.9e-10, rel=0.05)
+    assert bound(DEFAULT_PARAMS) == pytest.approx(6.9e-10, rel=0.05, abs=0)
     assert bound(DEFAULT_PARAMS) < 1e-9
     assert bound(DEMO_PARAMS) > 0.1
 

@@ -257,10 +257,10 @@ def test_the_pooled_count_is_binomial_over_two_l_draws() -> None:
     )
 
     draws = 2 * length
-    assert counts.mean() == pytest.approx(draws / alphabet, rel=0.01)
+    assert counts.mean() == pytest.approx(draws / alphabet, rel=0.01, abs=0)
     assert counts.var(ddof=1) == pytest.approx(
         draws * (1 / alphabet) * (1 - 1 / alphabet), rel=0.05
-    )
+    , abs=0)
 
     # Exact CDF of Binomial(2L, 1/3), and the Kolmogorov distance to it.
     pmf = np.array(

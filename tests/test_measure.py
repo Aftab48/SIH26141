@@ -1197,7 +1197,7 @@ def test_min_branch_prob_is_derived_from_epsilon_and_the_validation_tolerance() 
     # relative error is exactly the PSD tolerance.
     assert float(np.finfo(np.float64).eps) / _MIN_BRANCH_PROB == pytest.approx(
         _VALIDATION_TOL, rel=1e-12
-    )
+    , abs=0)
 
 
 def test_prob_tol_is_not_tighter_than_the_canonical_state_validator() -> None:
@@ -1313,7 +1313,7 @@ def test_a_branch_above_the_guard_is_reachable_by_the_sampler() -> None:
     # land on branch 0, because it is above the guard.
     outcome = projective_measure(state, 0, PauliBasis.Z, rng=FixedDrawRng(0.0))
     assert outcome.eigenvalue == 1
-    assert outcome.probability == pytest.approx(p_plus, rel=1e-12)
+    assert outcome.probability == pytest.approx(p_plus, rel=1e-12, abs=0)
     assert_valid_density(outcome.post_state, 1)
 
     # ...and it is genuinely rare under honest sampling.
@@ -1400,7 +1400,7 @@ def test_collapse_repairs_round_off_negativity_it_is_handed() -> None:
     assert negativity < _VALIDATION_TOL  # legal input by the project's own rule
     rho = np.diag([1.0 + negativity, -negativity]).astype(complex)
     as_density(rho)  # precondition: the canonical validator accepts it
-    assert float(np.linalg.eigvalsh(rho)[0]) == pytest.approx(-negativity, rel=1e-9)
+    assert float(np.linalg.eigvalsh(rho)[0]) == pytest.approx(-negativity, rel=1e-9, abs=0)
 
     collapsed = _collapse(rho, np.eye(2, dtype=complex), 1.0)
     smallest = float(np.linalg.eigvalsh(0.5 * (collapsed + collapsed.conj().T))[0])

@@ -303,10 +303,15 @@ const Charts = (function () {
           options.baseline === undefined ? domain.min : options.baseline;
         const zero = scale(base, domain, left, right);
         const x = scale(row.value, domain, left, right);
+        // An SVG rect is anchored at its LEFT edge, so a bar running back from
+        // the baseline starts at `x` and not at `zero`. Anchoring both at
+        // `zero` drew a CHSH of -2 as a bar reaching +2 -- the right length on
+        // the wrong side of the zero line, on the one chart whose whole point
+        // is which side of a bound a link sits.
         svg.appendChild(
           el("rect", {
             class: row.className || "bar",
-            x: zero,
+            x: Math.min(zero, x),
             y: mid - BAR_HEIGHT / 2,
             width: Math.abs(x - zero),
             height: BAR_HEIGHT,

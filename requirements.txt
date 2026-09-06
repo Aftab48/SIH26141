@@ -31,3 +31,7 @@ typing-inspection==0.4.4
 h11==0.16.0
 httpcore==1.0.9
 click==8.5.0
+
+# Node is NOT a Python dependency and is not installed by pip. It is a TEST-time
+# requirement: six tests in tests/test_web_frontend.py execute the shipped dashboard
+# JavaScript under a DOM shim and skip without `node` on the PATH. See README Setup.
