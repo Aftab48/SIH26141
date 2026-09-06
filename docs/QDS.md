@@ -201,8 +201,10 @@ Honest-abort budget:  ε = 2⁻⁶⁴
 ```
 
 The pooled floor `M_min = 74,190` is derived the same way from `M = m_B + m_C ~ Binomial(2L, 1/3)`.
-Total honest-abort probability is **8.0 × 10⁻³¹**, ten orders of magnitude below the security
-bounds, so the abort rule can never become the dominant reason an honest run fails.
+Total honest-abort probability is **8.0 × 10⁻³¹**, twenty-one orders of magnitude below the
+enforced repudiation bound of 1.4139 × 10⁻⁹, so the abort rule can never become the dominant
+reason an honest run fails. The full composition, and what each rung of the rule buys, is
+[MODELLING.md](MODELLING.md) §9.3.
 
 ---
 
@@ -383,12 +385,14 @@ is there to prevent.
 
 ## 10. Attacking ourselves
 
-We ran adversarial teams against our own protocol. **They broke it three times.** Every break
-was real, reproduced by measurement, and fixed.
+We ran adversarial teams against our own protocol. **They broke it four times**, and the fourth
+was in our own harness rather than in the scheme. Every break was real, reproduced by
+measurement, and fixed.
 
 This is a selling point, not an embarrassment. A judge asking *"how do you know this is secure?"*
-gets a far stronger answer from three measured breaks with before/after numbers than from a
-clean specification nobody ever attacked.
+gets a far stronger answer from four measured breaks with before/after numbers than from a
+clean specification nobody ever attacked. The same four are set out with their derivations in
+[MODELLING.md](MODELLING.md) §8.
 
 ### Break 1: Alice could deny her signature every single time
 
@@ -601,10 +605,21 @@ fails and a demo that dies on an unreachable CDN is the worst possible failure.
 Pick an attack → watch QBER and CHSH move → watch the floors fire → see the abort recorded as a
 no-verdict, with the proven bound sitting beside the measured rate.
 
-### Phase 7: Submission documents
+### Phase 7: Submission documents *(complete)*
 
-The mathematical modelling write-up, the security analysis, and the full record of every attack
-we ran against ourselves.
+The three documents a judge reads, each owning its own material and citing the other two rather
+than restating them:
+
+- [MODELLING.md](MODELLING.md), the protocol as mathematics: the teleportation identity, what
+  verification tests, the two unforgeability arguments, the non-repudiation theorem, the
+  Chernoff derivation of both floors, and the five inequalities every bound rests on.
+- [SECURITY.md](SECURITY.md), what is proven against what is measured, property by property,
+  with the four assumptions named and the headline limitation given its own section.
+- [ATTACKS.md](ATTACKS.md), every adversary run against the protocol, with what each was
+  allowed to know, what stopped it, and the engagement evidence behind every published zero.
+
+They do not replace [PHASE1.md](PHASE1.md) through [PHASE6.md](PHASE6.md), which stay as the
+engineering record.
 
 ---
 
@@ -612,8 +627,10 @@ we ran against ourselves.
 
 We state these rather than hoping nobody looks. Each one is worse if a judge finds it first.
 
-- **Demo-scale runs cannot demonstrate non-repudiation.** Both floors are inert below `L ≈ 1200`,
-  and the enforced bound is 0.994 at demo parameters, 0.943 at `L=600`, still 0.48 at `L=4800`.
+- **Demo-scale runs cannot demonstrate non-repudiation.** The pooled floor first exceeds 1 at
+  `L = 137` and the per-verifier floor at `L = 273`. Neither reaches half the honest pooled mean
+  until `L = 528`, so anywhere below that the floor exists and constrains nobody. The enforced
+  bound is 0.994 at demo parameters, 0.943 at `L=600`, still 0.48 at `L=4800`.
   This section used to say "a real Alice genuinely repudiates ~3.5% of the time at `L=600`", and
   Phase 5 measured it: at `L=600` the best symmetric tilt achieves `1.936e-03` in model and
   **`1/400 = 0.0025 [0.0003, 0.0209]`** over 400 trials. 3.27% is the figure for `L ≈ 138`, and it
@@ -672,5 +689,7 @@ codebase, including the live security parameters read straight out of the packag
 
 ---
 
-*Generated figures come from `docs/METRICS.md`. Per-phase engineering detail is in
-`docs/PHASE1.md` and `docs/PHASE2.md`. The running decision log is `JOURNAL.md`.*
+*Generated figures come from `docs/METRICS.md`. The submission documents are
+[MODELLING.md](MODELLING.md), [SECURITY.md](SECURITY.md) and [ATTACKS.md](ATTACKS.md).
+Per-phase engineering detail is in `docs/PHASE1.md` and `docs/PHASE2.md`. The running decision
+log is `JOURNAL.md`.*

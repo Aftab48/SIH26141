@@ -2643,9 +2643,10 @@ def forgery_table(
             "ABORTS: `Charlie no verdict` is a REFUSAL, not a rejection, and "
             "it is never folded into one. Under the before-forwarding "
             "ordering the recipient-forgery rows are ALL refusals: a "
-            "substituted declaration leaves the pooled matched count "
-            "undefined, both verifiers abort, and the attack is a denial of "
-            "transfer rather than a detected forgery.",
+            "substituted declaration leaves CHARLIE'S pooled matched count "
+            "undefined, so Bob accepts the genuine declaration he was sent "
+            "and Charlie alone reaches no verdict. The attack is a denial "
+            "of transfer rather than a detected forgery.",
             "COUNT ORDERING IS A COLUMN AND HERE IS WHY (Phase 3 constraint "
             "2): the same attack against the same code gives all refusals "
             "before forwarding and a real acceptance rate after it. Pooling "

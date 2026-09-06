@@ -2,13 +2,13 @@
 
 **SIH26141**: Quantum-Inspired Cyber Threat Detection for Digital Signature Security
 
-Generated `2026-09-06 03:04 UTC` by `tools/metrics.py`. Every figure is computed from the
+Generated `2026-09-06 05:02 UTC` by `tools/metrics.py`. Every figure is computed from the
 repository, so do not edit by hand, re-run the script.
 
 ## Test suite
 
 ```
-3819 passed in 1474.29s (0:24:34)
+3819 passed in 1465.05s (0:24:25)
 ```
 
 - Doctests collected from package modules: **481**
@@ -60,7 +60,7 @@ repository, so do not edit by hand, re-run the script.
 | `sih141/eval/reduce.py` | 1247 | 460 | 630 | 28 | 14 | 1 |
 | `sih141/eval/roc.py` | 2531 | 1145 | 1070 | 59 | 33 | 2 |
 | `sih141/eval/runner.py` | 675 | 193 | 393 | 0 | 12 | 2 |
-| `sih141/eval/security.py` | 3137 | 1227 | 1512 | 42 | 46 | 3 |
+| `sih141/eval/security.py` | 3138 | 1228 | 1512 | 42 | 46 | 3 |
 | `sih141/eval/seeds.py` | 363 | 58 | 246 | 0 | 6 | 1 |
 | `sih141/eval/store.py` | 448 | 82 | 299 | 0 | 16 | 1 |
 | `sih141/web/__init__.py` | 145 | 34 | 96 | 0 | 0 | 0 |
@@ -70,7 +70,7 @@ repository, so do not edit by hand, re-run the script.
 | `sih141/web/driver.py` | 1250 | 512 | 562 | 40 | 12 | 3 |
 | `sih141/web/limits.py` | 1070 | 277 | 578 | 78 | 14 | 2 |
 | `sih141/web/payload.py` | 696 | 277 | 341 | 10 | 9 | 0 |
-| **total** | **74847** | **20172** | **44118** | **1605** | **1151** | **134** |
+| **total** | **74848** | **20173** | **44118** | **1605** | **1151** | **134** |
 
 Tests: **48892 lines** across **43 files**, **2348 test functions** defined.
 Test-lines to code-lines ratio: **2.42 : 1**
@@ -99,26 +99,30 @@ actually computes today, not what a document once claimed.
 
 | File | Words |
 | --- | ---: |
-| `README.md` | 6378 |
+| `README.md` | 6513 |
 | `JOURNAL.md` | 92394 |
-| `docs/METRICS.md` | 1478 |
+| `docs/ATTACKS.md` | 7940 |
+| `docs/METRICS.md` | 1479 |
+| `docs/MODELLING.md` | 7809 |
 | `docs/PHASE1.md` | 4038 |
 | `docs/PHASE2.md` | 9968 |
 | `docs/PHASE3.md` | 14827 |
 | `docs/PHASE4.md` | 9650 |
 | `docs/PHASE5.md` | 12630 |
 | `docs/PHASE6.md` | 12343 |
-| `docs/QDS.md` | 5458 |
-| **total** | **169164** |
+| `docs/QDS.md` | 5640 |
+| `docs/SECURITY.md` | 6198 |
+| **total** | **191429** |
 
 Working-journal entries: **239** (temporary; deleted at the end of Phase 7).
 
 ## Repository
 
-- Commits: **32**
+- Commits: **33**
 
 | Commit | Subject |
 | --- | --- |
+| `91f3e18` | Re-measure the calibration panel from a clean tree |
 | `b52a2a9` | Measure the dashboard's calibration panel to the D9 standard |
 | `3484427` | Close the whole-project audit: 32 of 35 defects fixed, three deferred |
 | `37454a5` | Update the docs to the latest data |
@@ -143,4 +147,3 @@ Working-journal entries: **239** (temporary; deleted at the end of Phase 7).
 | `885f342` | Close Phase 3: propagate check-round sifting, fix stale figures |
 | `e36e7b1` | Add channel monitor, restrict signer seam, build and verify five attacks |
 | `658f2ff` | Add sampled check rounds for channel parameter estimation |
-| `ea5ba71` | Add replay defence: session binding and consumed-records ledger |
