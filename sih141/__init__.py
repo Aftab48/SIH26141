@@ -14,11 +14,15 @@ Three packages, in the order the project builds them.
     rate in the project is checked against.
 
 :mod:`sih141.attacks`
-    The five adversaries of Phase 3, each mounted through the protocol's own
-    seams, and the D6 isolation check that keeps their published rates honest.
+    Six adversaries, and the D6 isolation check that keeps their published rates
+    honest. Five are Phase 3's and each mounts through the protocol's own seams.
+    The sixth, :mod:`sih141.attacks.unauthorised`, mounts on no seam at all:
+    verification takes a declaration, a record and the parameters and touches no
+    seam of the session, so there is nothing to attach an unauthorised verifier
+    to, and that is the finding rather than a gap in the harness.
 
-Only the two subpackages are re-exported here, deliberately: the flat names live
-one level down, where the module that owns each one can be found from its
+Only the three subpackages are re-exported here, deliberately: the flat names
+live one level down, where the module that owns each one can be found from its
 qualified name. ``from sih141 import attacks, protocol`` is the intended
 spelling, and ``sih141.attacks.OutsideForger`` says where to go and read.
 

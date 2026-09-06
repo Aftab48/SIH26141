@@ -1,9 +1,11 @@
 # Phase 3: The Adversaries
 
-Engineering note for `sih141.attacks`. Covers the five adversaries and what each one is
-measured at, the isolation convention that makes those measurements mean anything, the
-detector signals Phase 4 will consume, the replay defence and its real price, the
-check-round sampling design, and every limitation the phase found.
+Engineering note for `sih141.attacks`. Covers the five adversaries Phase 3 built and what
+each one is measured at, the isolation convention that makes those measurements mean
+anything, the detector signals Phase 4 will consume, the replay defence and its real price,
+the check-round sampling design, and every limitation the phase found. A sixth module,
+`unauthorised`, was added after this phase and is not documented here; it mounts on no seam,
+and the package docstring says why.
 
 **Before quoting a check-round number from here, read §12.** It states the one boundary of
 what this simulator models, and the one assumption, **(NO-TIMING)**, that every check-round
@@ -102,7 +104,9 @@ at every seed tried, honest, monitored and attacked.
 `sih141/attacks/__init__.py` re-exports all of it with an explicit `__all__` and no wildcard
 imports, and `sih141/__init__.py` exposes the three subpackages. Dependencies run one way:
 `statistics` → `isolation` → the five attack modules, with every attack module depending on
-`sih141.protocol` and nothing in `sih141.protocol` depending on `sih141.attacks`.
+`sih141.protocol` and nothing in `sih141.protocol` depending on `sih141.attacks`. The later
+`unauthorised` module reads two of the five as well, for the seeds and the closed forms it
+reuses rather than restates, and the one-way rule holds through it.
 
 ---
 

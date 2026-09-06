@@ -222,7 +222,7 @@ data the honest protocol fixes, not by any random draw.
 
 | member | null | inequality | critical | proven bound | measured (honest) |
 | --- | --- | --- | --- | --- | --- |
-| `structural-abort` | point mass at `0`: each of the four structural reasons is an equality test on data the honest protocol fixes | none, a point mass | `1` | **exactly `0`** | `0/120` |
+| `structural-abort` | point mass at `0`: each of the five structural reasons is decided without a random draw, four by an equality test on data the honest protocol fixes and the fifth by set membership on an authorised set the caller supplies | none, a point mass | `1` | **exactly `0`** | `0/120` |
 | `evidence-abort` | union of three binomial lower tails: `m_B, m_C ~ Binomial(n, 1/3)` and `M ~ Binomial(2n, 1/3)` | multiplicative Chernoff lower tail at `eps₀ = 2⁻⁶⁴`, exact point mass where a floor degenerates, union bound over the three floor events | `1` | `1.6263e-19` | `0/120` |
 | `replay-refusal` | point mass at `0`: an honest run asks each verifier once per `(session, bit)` and the ledger check is set membership | none, a point mass | `1` | **exactly `0`** | `0/120` |
 | `run-shape` | point mass at `0`: six equalities the shipped session satisfies by construction | none, a point mass | `1` | **exactly `0`** | `0/120` |

@@ -44,6 +44,24 @@ inequalities. That yields a *provable* false-acceptance bound rather than an obs
 | **Replay** | Re-sends a previously valid (message, signature) pair | Consumed-records ledger; round identifier on every declaration | `100/100` → `0/100` with the defence; cross-session `0.115` → `0/100` | `40/40` both orderings, named with recipient forgery; both hold the forwarding hop |
 | **Channel manipulation** | Tampers with entanglement distribution (intercept-resend, kept share, injected noise) | Per-link QBER rises; CHSH falls from 2√2, and the *per-link* form is what names the compromised party | QBER `0.0994`/`0.3306`/`0.3335` on predictions `p/2`, `1/3`, `1/3` | `40/40` on all four attacks, at `check_fraction` `0.0` **and** `0.25` |
 | **Count starvation** | A recipient understates his own matched count and denies the other a verdict | The declared count as a z-score: any successful starvation sits below `−11.54` honest standard deviations, at every key length | denial `20/20`, deterministic and free, one integer | `40/40` both orderings, named **alone** |
+| **Unauthorised verification** | A party outside the round's authorised recipient set reaches a verdict on the declaration | None that is worth calling detection. Verification needs a recipient's record, and the three ways to get one end differently: an invented record, a stolen one, or one built off the wire | invented: `0/200` accepted at mismatch `0.4994`/`0.5043`, and the *same* record scores a declaration Alice never made at `0.5052`/`0.5042`, so his verdict is void rather than wrong | not a detector row. `verify(authorised=...)` refuses a party who does not claim to be a recipient; a **stolen record still names its owner**, so nothing here detects that, and it is assumption (RECORD SECRECY). A record built off the wire is intercept-resend and is the channel row above |
+
+**Objective 2 of the problem statement asks for four things, and this is what it gets.** It reads
+*"Detect digital signature forgery, impersonation, replay attacks, and unauthorized verification
+attempts."* Forgery and replay are detected, at `40/40 = 1.000 [0.858, 1.000]` (99% Wilson) against
+a proven false-positive bound of `3.3964e-10`. Impersonation is detected at the same rate for
+either seam alone and **not detected for both seams at once**, which is
+`undetectable-by-construction` under assumption (AUTH); "three of four" carries that asterisk,
+because the scope the assumption excludes is the strongest one. The fourth, unauthorised
+verification, is **decomposed and answered rather than detected**: a fabricated record yields a
+verdict carrying no information about the signature (`0/200` accepted, and the same mismatch rate
+on a declaration Alice never made as on a genuine one), a leaked record is byte-indistinguishable
+from its owner's and is assumption (RECORD SECRECY), and a record built off the wire is
+intercept-resend and is the channel row above. **No detector in this repository fires on an
+unauthorised verification attempt as such.** The `authorised` argument that refuses the fabricator
+is off by default, is never passed by `QDSSession`, and produced no published number here, so it is
+an interface a deployment could use and not a defence this one runs. Long form:
+[docs/SECURITY.md §13](docs/SECURITY.md#13-objective-2-threat-by-threat).
 
 ## Security claims, stated honestly
 
@@ -380,10 +398,22 @@ both measurements.
 > denial of transfer, the other a forgery rate of `0.3000` against a closed form of `0.29663`.
 > Pooling them publishes 15%, describing neither.
 
-> **Note on scope.** The published problem statement ends with an unfilled placeholder where
-> the organization's deliverables table should be (*"Add 'Delivery Table (Expected
-> Deliverables)' here"*). The roadmap above is therefore our own explicit interpretation of
-> the stated Objectives and Expected Solution, documented deliberately rather than left implicit.
+> **Note on scope, and a correction to what this note used to say.** It used to say the
+> published problem statement ends with an unfilled placeholder where the organization's
+> deliverables table should be, quoting a placeholder string. That is false and was false when
+> it was written. `SIH26141-problem-statement.pdf` in the repository root is image-only with no
+> text layer, which is how the claim survived unchecked; rendered, page 2 carries a populated
+> **Delivery Table (Expected Deliverables)** with rows S.No 1, 2, 3, 4 and 6. The one
+> irregularity is that S.No 5 is skipped, a gap in the numbering and not a blank row.
+>
+> Row 6 is *Software Framework / Prototype*, and its key components are **simulation
+> environment, verification interface, threat detection dashboard, logging of security events**.
+> The simulation environment is `sih141.core` and `sih141.protocol`; the verification interface
+> is `sih141.protocol.verify`, reached from the browser over `POST /api/run`; the dashboard is
+> Phase 6; the event log is `sih141/audit.py`, served over `GET /api/events` and fetched by no
+> screen on the page. The phase split above is still our own, because the table names
+> deliverables rather than an order to build them in, but it is a reading of a table that exists
+> and not of a blank page.
 
 ## Setup
 
@@ -527,13 +557,16 @@ sih141/eval/       the evaluation harness (Phase 5)
 
 sih141/web/        the dashboard (Phase 6): one FastAPI process, both halves
   __main__.py      the one command: python -m sih141.web
-  api.py           create_app(), six endpoints, the concurrency gate
+  api.py           create_app(), seven endpoints, the concurrency gate
   limits.py        every cap the UI can send, and the refusals that name them
   driver.py        mounts an adversary, runs a session, keeps the harness's
                    ground truth in its own object where the detector cannot read it
   catalogue.py     the attack roster, each row stating its detectability explicitly
   payload.py       the transcript facts the screen needs
   static/          the frontend: 26 vendored files, nothing fetched from a network
+sih141/audit.py    the security event log: one line per verification outcome,
+                   ordered by a counter and never a clock, bounded, and read
+                   back over GET /api/events
 
 tools/             sweep.py (run / reduce / perf), metrics.py, journal.py
 tests/             pytest suite

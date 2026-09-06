@@ -358,14 +358,17 @@ __all__ = [
 #: that a detector firing on one of them has a false-positive probability of
 #: exactly zero under the honest null. Two of them say the declaration and the
 #: record are not the same transaction at all; two say the counterpart's count
-#: named a different declaration or named none. None of the four is a statement
-#: about how much evidence a run produced, so none has a tail to bound.
+#: named a different declaration or named none; one says the party asking is
+#: outside the recipient set the caller authorised, and that one is unreachable
+#: unless a caller names such a set. None of the five is a statement about how
+#: much evidence a run produced, so none has a tail to bound.
 STRUCTURAL_ABORT_REASONS: Final[frozenset[AbortReason]] = frozenset(
     {
         AbortReason.SESSION_MISMATCH,
         AbortReason.RECORD_ALREADY_VERIFIED,
         AbortReason.COUNT_OF_UNRECORDED_PROVENANCE,
         AbortReason.COUNTS_FROM_TWO_DECLARATIONS,
+        AbortReason.UNAUTHORISED_VERIFIER,
     }
 )
 
@@ -374,7 +377,7 @@ STRUCTURAL_ABORT_REASONS: Final[frozenset[AbortReason]] = frozenset(
 #: derived from a Chernoff lower tail at :data:`HONEST_ABORT_BUDGET`, so an
 #: honest verifier trips one with probability at most ``2**-64`` and an honest
 #: run with probability at most ``2 * 2**-64``. Reported separately from the
-#: structural four because the provable bound is different -- exactly zero
+#: structural five because the provable bound is different -- exactly zero
 #: against ``2**-64`` -- and a table that summed them would quote the weaker
 #: one for both.
 EVIDENCE_ABORT_REASONS: Final[frozenset[AbortReason]] = frozenset(
@@ -1948,7 +1951,15 @@ class AbortStatistics:
         cannot happen on an honest run at any key length**, so a detector
         firing on ``structural > 0`` has a false-positive probability of
         exactly zero under the honest null. That is the strongest provable
-        bound in this module and it costs nothing.
+        bound in this module and it costs nothing. What the zero rests on is
+        not the same for all five: four are equality tests on data the honest
+        protocol fixes and carry it unconditionally, while the fifth,
+        :attr:`~sih141.protocol.verify.AbortReason.UNAUTHORISED_VERIFIER`, is
+        set membership on an argument the caller supplies. It is unreachable
+        unless a caller names an authorised recipient set, and its zero holds
+        only for a set containing the recipients the signer distributed to. A
+        set that omits one refuses him on every honest run, and that refusal is
+        counted here exactly like an adversarial one.
     evidence : int
         Refusals whose reason is in :data:`EVIDENCE_ABORT_REASONS`, i.e. one of
         the two matched-count floors. Each floor was derived from a Chernoff

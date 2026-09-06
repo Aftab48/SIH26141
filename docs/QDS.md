@@ -162,7 +162,7 @@ A recipient chose the same basis as Alice about **one third** of the time (three
 outcome there is uniformly random) and must be discarded, never counted as mismatches. This is
 the classic implementation bug in QDS, and we have an explicit test that fails if it reappears.
 
-The verifier then applies four checks in order:
+The verifier then applies four checks to that evidence, in order:
 
 ```
 abort   if  |M_R| < m_min                  own floor: no verdict, NOT a rejection
@@ -173,6 +173,12 @@ accept  iff r_R ≤ threshold(R)
 ```
 
 with `threshold(Bob) = s_a = 1/64` and `threshold(Charlie) = s_v = 1/16`.
+
+A fifth check was added later and is deliberately not one of the four: `verify(authorised=...)`
+refuses a record whose party is outside a caller-supplied set, before any of the four reads a
+count. It decides who is asking rather than what the evidence says, it runs only when a caller
+passes the set and `QDSSession` never does, and what it can and cannot settle is
+[SECURITY.md](SECURITY.md) §9.
 
 ### 4.4 Why `s_a < s_v`
 
@@ -614,7 +620,7 @@ than restating them:
   verification tests, the two unforgeability arguments, the non-repudiation theorem, the
   Chernoff derivation of both floors, and the five inequalities every bound rests on.
 - [SECURITY.md](SECURITY.md), what is proven against what is measured, property by property,
-  with the four assumptions named and the headline limitation given its own section.
+  with the five assumptions named and the headline limitation given its own section.
 - [ATTACKS.md](ATTACKS.md), every adversary run against the protocol, with what each was
   allowed to know, what stopped it, and the engagement evidence behind every published zero.
 
@@ -643,9 +649,22 @@ We state these rather than hoping nobody looks. Each one is worse if a judge fin
   authenticated. Inherent to this family of schemes; stated as a precondition.
 - **A recipient can force aborts** by under-reporting his matched count. Denial of service, not
   forgery, but it is a real fifth attack surface and Phase 3 measured it ([PHASE3](PHASE3.md) §6).
-- **The problem statement's deliverables table was left blank** by the organisation; the
-  published brief ends with an unfilled placeholder. Our scope is therefore our own documented
-  reading of the stated objectives, recorded deliberately rather than left implicit.
+- **An unauthorised verifier holding a leaked recipient record is undetectable.** `verify` is a
+  pure function of the declaration, the record and the parameters, so a thief holding a genuine
+  log returns the owner's eight result fields and writes a transcript byte-identical to his. The
+  optional `authorised` argument tests the identity a record *declares*, and a leaked record
+  declares its owner's, so it refuses the party who had to invent a record and decides nothing
+  about this one. Assumption **(RECORD SECRECY)** in [SECURITY.md](SECURITY.md) §2, and the
+  three routes to a record are worked in [SECURITY.md](SECURITY.md) §9.
+- **This list used to say the problem statement's deliverables table was left blank.** It is
+  not, and the entry was wrong rather than stale. `SIH26141-problem-statement.pdf` is image-only
+  with no text layer, which is how it went unread; rendered, page 2 carries a populated
+  **Delivery Table (Expected Deliverables)**, rows S.No 1, 2, 3, 4 and 6, with 5 skipped in the
+  numbering. Row 6 names a simulation environment, a verification interface, a threat detection
+  dashboard and logging of security events: `sih141.core` with `sih141.protocol`,
+  `sih141.protocol.verify` behind `POST /api/run`, the Phase 6 dashboard, and `sih141/audit.py`
+  behind `GET /api/events`, which no screen fetches. The phase split is still our own reading,
+  because the table names deliverables and not an order to build them in.
 
 ---
 

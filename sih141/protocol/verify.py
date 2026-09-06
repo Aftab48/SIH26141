@@ -622,9 +622,10 @@ class AbortReason(enum.StrEnum):
     A :class:`enum.StrEnum` like :class:`~sih141.protocol.params.Party`, so it
     passes through :func:`json.dumps` and into a Phase 5 table unchanged.
 
-    The eight members are ordered by which check fires first in :func:`verify`,
-    and they fall into three groups. First the two that ask whether this
-    declaration and this record are even the same transaction -- the right round
+    The nine members fall into four groups, and the eight that need no argument
+    beyond the declaration and the record are ordered by which check fires first
+    in :func:`verify`. First the two that ask whether this declaration and this
+    record are even the same transaction -- the right round
     (:attr:`SESSION_MISMATCH`) and a round not already decided
     (:attr:`RECORD_ALREADY_VERIFIED`), the subject of :ref:`replay`. Then the
     verifier's own count. Then four about the pair: whether the counterpart's
@@ -632,6 +633,16 @@ class AbortReason(enum.StrEnum):
     none and naming another -- then the pooled total, then the counterpart's own
     count. Those four exist only on a run where the recipients ran the count
     exchange of :mod:`sih141.protocol.tally`.
+
+    The fourth group holds one member, :attr:`UNAUTHORISED_VERIFIER`, and it is
+    the only one that is about who is asking rather than about the evidence or
+    its bookkeeping. It is listed last rather than first because it is the only
+    member a caller can decline to enable: its check runs before all eight above
+    it, and only on a call that names an authorised recipient set. The four
+    groups are written out in this module as ``_ROUND_REASONS``,
+    ``_IDENTITY_REASONS``, ``_OWN_COUNT_REASONS`` and ``_PAIR_REASONS``, and
+    ``tests/test_protocol_replay.py`` fails if a member belongs to none of them
+    or to two.
 
     Attributes
     ----------
@@ -690,6 +701,29 @@ class AbortReason(enum.StrEnum):
         this verifier can be told he should have transferred. The consequence of
         the per-verifier floor is joint, and :ref:`pooled-floor` explains why
         that is what closes the split-coin route rather than merely pricing it.
+    UNAUTHORISED_VERIFIER
+        The record's party is outside the authorised recipient set the caller
+        named, so no count is taken and no verdict is reached. Off unless
+        ``authorised`` is passed to :func:`verify`; the numbers this refusal
+        carries are the parameter set's, not measurements, and its
+        ``matched_count`` is ``0`` because none was taken rather than because
+        the matched set was empty.
+
+        What the check tests is the identity the record *declares*, and that
+        bounds what it can do. It refuses a party who does not claim to be an
+        authorised recipient -- the party holding no distribution data, whose
+        verdict was worthless in any case: with ``|B| = 3`` a fabricated log
+        coincides with the declared basis at rate ``1/3`` and its eigenvalue
+        there is a fair coin, so its mismatch rate concentrates on ``1/2``, the
+        outside forger's number in :mod:`sih141.attacks.forgery`. It is
+        **powerless** against a party verifying with a genuine recipient's
+        leaked log: that record still names its owner, so the check passes and
+        no field of the transcript differs from the owner's own verification.
+        The third route, building a record by intercepting the teleported
+        qubits, reaches neither case -- no-cloning makes the interceptor
+        measure and the disturbance is channel manipulation, which
+        :mod:`sih141.attacks.channel` models and the channel threshold family
+        already detects.
     """
 
     SESSION_MISMATCH = "session-identifier-mismatch"
@@ -700,11 +734,13 @@ class AbortReason(enum.StrEnum):
     COUNTS_FROM_TWO_DECLARATIONS = "counts-from-two-declarations"
     POOLED_BELOW_FLOOR = "pooled-matched-count-below-floor"
     COUNTERPART_BELOW_FLOOR = "counterpart-matched-count-below-floor"
+    UNAUTHORISED_VERIFIER = "unauthorised-verifier"
 
 
 #: Reasons that describe *this* verifier's own matched set, as opposed to the
-#: four that describe the pair and the two that describe the pairing itself.
-#: Used to keep the label and the numbers a single observation; see
+#: four that describe the pair, the two that describe the pairing itself and the
+#: one that describes who is asking (``_IDENTITY_REASONS`` below). Used to keep
+#: the label and the numbers a single observation; see
 #: :class:`VerificationAbort`.
 _OWN_COUNT_REASONS: Final[frozenset[AbortReason]] = frozenset(
     {AbortReason.EMPTY_MATCHED_SET, AbortReason.BELOW_FLOOR}
@@ -721,8 +757,20 @@ _ROUND_REASONS: Final[frozenset[AbortReason]] = frozenset(
     {AbortReason.SESSION_MISMATCH, AbortReason.RECORD_ALREADY_VERIFIED}
 )
 
+#: The one reason that refuses on *who is asking* rather than on any evidence:
+#: the record's party is outside the authorised set the caller named. A group of
+#: its own rather than a third round reason, because it is not about the pairing
+#: of a declaration with a record at all -- it is settled from the party the
+#: record names and nothing else -- and because the exactly-one-group rule in
+#: ``tests/test_protocol_replay.py`` is what stops a member being added without
+#: anyone deciding what it says. Like the round reasons it makes no claim about
+#: any count, so :attr:`VerificationAbort.shortfall` is ``0`` on it.
+_IDENTITY_REASONS: Final[frozenset[AbortReason]] = frozenset(
+    {AbortReason.UNAUTHORISED_VERIFIER}
+)
+
 #: Reasons that are statements about the two verifiers together, and therefore
-#: need both exchanged numbers. The complement of the two sets above, written
+#: need both exchanged numbers. The complement of the three sets above, written
 #: out rather than derived so that adding a member to :class:`AbortReason`
 #: without deciding which group it belongs to fails a test instead of silently
 #: joining this one.
@@ -1623,14 +1671,16 @@ class VerificationAbort:
         :ref:`replay`, that no counting rule was reached because the declaration
         and the record are not one transaction. Cross-checked against the
         counts, so the label and the numbers cannot disagree: see
-        :class:`AbortReason` for the eight cases and the order :func:`verify`
+        :class:`AbortReason` for the nine cases and the order :func:`verify`
         tests them in.
     matched_count : int
         ``|M_R|`` as observed. May be ``0``. Below ``minimum_matched`` for the
         two own-count reasons and at or above it for the four pair reasons,
         since a verifier only reaches those checks having cleared his own floor.
         Unconstrained for the two round reasons, which are recorded before any
-        floor is applied and carry the count for diagnosis only.
+        floor is applied and carry the count for diagnosis only, and ``0`` on
+        :attr:`AbortReason.UNAUTHORISED_VERIFIER`, which is recorded before any
+        count is taken.
     minimum_matched : int
         ``m_min`` from :func:`minimum_matched_count` for the parameter set the
         run executed under. Carried rather than recomputed so that a stored
@@ -1819,11 +1869,12 @@ class VerificationAbort:
             If the reason and the counts describe different runs, or if a pair
             reason is missing the exchanged numbers it is a statement about.
         """
-        if self.reason in _ROUND_REASONS:
-            # Nothing to cross-check. These two refuse *before* any counting
+        if self.reason in _ROUND_REASONS or self.reason in _IDENTITY_REASONS:
+            # Nothing to cross-check. These three refuse *before* any counting
             # rule is reached -- the declaration and the record are not the same
-            # transaction, or the transaction is already closed -- so the counts
-            # they carry are context for a reader and are not a claim about any
+            # transaction, or the transaction is already closed, or the party
+            # asking is not one the caller authorised -- so the counts they
+            # carry are context for a reader and are not a claim about any
             # floor. Insisting on a relation here would assert something the
             # refusal explicitly declines to assert; see :ref:`replay`.
             return
@@ -1943,17 +1994,23 @@ class VerificationAbort:
         :attr:`AbortReason.COUNTERPART_BELOW_FLOOR`. Reading it against any
         other floor would report a shortfall nobody measured.
 
-        At least ``1`` on each of those four, and exactly ``0`` on the four that
-        name no floor -- :attr:`AbortReason.COUNTS_FROM_TWO_DECLARATIONS` and
-        :attr:`AbortReason.COUNT_OF_UNRECORDED_PROVENANCE`, which report that
-        the pooled rule could not be *applied*, and
+        At least ``1`` on each of those four, and exactly ``0`` on the five
+        that name no floor -- :attr:`AbortReason.COUNTS_FROM_TWO_DECLARATIONS`
+        and :attr:`AbortReason.COUNT_OF_UNRECORDED_PROVENANCE`, which report
+        that the pooled rule could not be *applied*,
         :attr:`AbortReason.SESSION_MISMATCH` and
         :attr:`AbortReason.RECORD_ALREADY_VERIFIED`, which report that no
-        counting rule was reached at all. Quoting a distance from a floor nobody
-        evaluated would invite a reader to treat "one record short" and "not the
-        same experiment" as the same finding.
+        counting rule was reached at all, and
+        :attr:`AbortReason.UNAUTHORISED_VERIFIER`, which reports that no count
+        was taken. Quoting a distance from a floor nobody evaluated would invite
+        a reader to treat "one record short" and "not the same experiment" as
+        the same finding.
         """
-        if self.reason in _UNPOOLABLE_REASONS or self.reason in _ROUND_REASONS:
+        if (
+            self.reason in _UNPOOLABLE_REASONS
+            or self.reason in _ROUND_REASONS
+            or self.reason in _IDENTITY_REASONS
+        ):
             return 0
         if self.reason is AbortReason.POOLED_BELOW_FLOOR:
             assert self.minimum_pooled is not None  # enforced in __post_init__
@@ -1973,11 +2030,12 @@ class VerificationAbort:
         carry :attr:`counterpart_matched`; the two own-count reasons are
         reachable with or without it, and the two round reasons of
         :ref:`replay` are about the pairing rather than about anybody's
-        evidence and answer ``False`` here. Phase 4 and Phase 5 read this to
-        separate "this verifier had nothing to score" from "the two of them
-        together did not clear the pooled rule", which are different findings
-        about a run. Read :attr:`reason` to separate the two cases where the
-        pooled rule was never evaluated --
+        evidence and answer ``False`` here, as does
+        :attr:`AbortReason.UNAUTHORISED_VERIFIER`, which is about who is asking.
+        Phase 4 and Phase 5 read this to separate "this verifier had nothing to
+        score" from "the two of them together did not clear the pooled rule",
+        which are different findings about a run. Read :attr:`reason` to
+        separate the two cases where the pooled rule was never evaluated --
         :attr:`AbortReason.COUNTS_FROM_TWO_DECLARATIONS` and
         :attr:`AbortReason.COUNT_OF_UNRECORDED_PROVENANCE` -- from the two where
         it was and failed.
@@ -2011,6 +2069,10 @@ class VerificationAbort:
             :attr:`AbortReason.COUNTS_FROM_TWO_DECLARATIONS` the pair's total is
             printed with the two counts, since seeing the number that was *not*
             enforced is the point.
+            :attr:`AbortReason.UNAUTHORISED_VERIFIER` prints no counts at all,
+            because none were taken: a line reading ``0/600 positions matched``
+            there would be read as an empty matched set, which is a measurement
+            and this is not one.
 
         Examples
         --------
@@ -2027,6 +2089,12 @@ class VerificationAbort:
 200.0; pooled M = 80 + 60 = 140, pooled floor 212 \
 (pooled-matched-count-below-floor). Not a rejection.'
         """
+        if self.reason is AbortReason.UNAUTHORISED_VERIFIER:
+            return (
+                f"{self.party.value} NO VERDICT bit {self.message_bit}: not in "
+                f"the authorised recipient set for this round, so no count was "
+                f"taken ({self.reason.value}). Not a rejection."
+            )
         pooled = ""
         if self.counterpart_matched is not None:
             pooled = (
@@ -2325,6 +2393,24 @@ def _abort_message(abort: VerificationAbort) -> str:
             f"usual cause is a forwarding hop that altered the declaration "
             f"after the recipients had already exchanged counts: what to "
             f"investigate is the hop, not the verifiers."
+        )
+    if abort.reason is AbortReason.UNAUTHORISED_VERIFIER:
+        return (
+            f"{party} is not in the authorised recipient set for this round, "
+            f"so verification refused before taking any count: none of the "
+            f"numbers on this refusal is a measurement. "
+            f"{not_a_signature_failure}: nothing was scored, and a rejection "
+            f"here would be recorded as a forgery detection when no evidence "
+            f"of forgery exists. The outcome goes back to whoever named the "
+            f"authorised set -- verify_or_abort returns it as a "
+            f"VerificationAbort, verify raises it as a MatchedSetTooSmall -- "
+            f"and not to QDSSession, which names no such set and so cannot "
+            f"produce this reason at all. "
+            f"The check tests the identity the record declares, so it refuses "
+            f"a party who does not claim to be an authorised recipient and is "
+            f"powerless against one presenting a leaked record that still "
+            f"names its owner -- see sih141.protocol.verify on what an "
+            f"authorised set can and cannot decide."
         )
     if abort.reason is AbortReason.EMPTY_MATCHED_SET:
         return (
@@ -3076,6 +3162,7 @@ def verify(
     *,
     counterpart_matched: int | None = None,
     ledger: ConsumedRecords | None = None,
+    authorised: frozenset[Party] | None = None,
 ) -> VerificationResult:
     """Score a signature against one recipient's record and reach a verdict.
 
@@ -3088,6 +3175,7 @@ def verify(
     The checks that precede a verdict, in the order a verifier can actually
     apply them::
 
+        record.party in authorised              only if the caller named a set
         signature names the record's round      the replay binding
         this round has not been decided yet     the consumed-records ledger
         |M_R| >= m_min                          his own, computed locally
@@ -3096,22 +3184,29 @@ def verify(
         |M_R| + counterpart_matched >= M_min    the pooled floor
         counterpart_matched >= m_min            the counterpart's own floor
 
-    The first two are the replay defence of :ref:`replay`, and each is inert
-    unless the caller supplies the state it reads: a record stamped with a
-    distribution round, and a ledger of rounds already decided. Then ``m_min``
-    from :func:`minimum_matched_count` and ``M_min`` from
+    The first is inert unless the caller names an authorised recipient set, and
+    it runs first of these so that a party outside the set learns no count. One
+    check does precede it and is not on the list: the declaration and the record
+    are checked to be one pairing, and a record made for another message bit or
+    another key length raises rather than refusing. Neither of those two facts
+    is a count, and both are already in the hands of whoever holds the record
+    and the declaration. The two after the first are the replay defence of
+    :ref:`replay`, and each is inert unless the
+    caller supplies the state it reads: a record stamped with a distribution
+    round, and a ledger of rounds already decided. Then ``m_min`` from
+    :func:`minimum_matched_count` and ``M_min`` from
     :func:`minimum_pooled_matched_count`. The last four need ``counterpart``'s
     count, which arrives over the recipients' count exchange
     (:mod:`sih141.protocol.tally`); they are skipped when it is not supplied,
     and :ref:`pooled-floor` says exactly what a run gives up by skipping them.
-    The second and third are :ref:`one-declaration`: adding a count made against
-    another declaration to this one produces a number no run ever had, so such a
-    pair is refused rather than pooled -- and so is a count that came through
-    the exchange without saying which declaration it counted, because the party
-    who runs Phase C' is an adversary here and a check he can switch off by
-    declining to answer is not a check. Any failed check scores nothing and
-    raises
-    :exc:`MatchedSetTooSmall` carrying a :class:`VerificationAbort`; use
+    The two provenance checks are :ref:`one-declaration`: adding a count made
+    against another declaration to this one produces a number no run ever had,
+    so such a pair is refused rather than pooled -- and so is a count that came
+    through the exchange without saying which declaration it counted, because
+    the party who runs Phase C' is an adversary here and a check he can switch
+    off by declining to answer is not a check. Any failed check scores nothing
+    and raises :exc:`MatchedSetTooSmall` carrying a
+    :class:`VerificationAbort`; use
     :func:`verify_or_abort` to get that as a returned outcome instead.
 
     Parameters
@@ -3165,6 +3260,45 @@ def verify(
         ``None`` -- the default -- keeps the function pure and is what a caller
         with no replay surface to defend can honestly pass. A ledger built for
         the other party raises rather than answering; see :ref:`replay`.
+    authorised : frozenset of Party or None, optional
+        Keyword-only. The recipients this round's declaration may be verified
+        by. ``None`` -- the default -- runs no such check at all, which is what
+        every call that does not name a set gets and what this module enforced
+        before the parameter existed.
+
+        Members are coerced by the same rule as every other party argument in
+        this package, so ``frozenset({"bob"})`` and ``frozenset({Party.BOB})``
+        name the same set, and a member that names no party raises instead of
+        being carried into the check. That is not a nicety: an unresolvable
+        member matches no ``record.party``, so it would refuse *every* verifier
+        with :attr:`AbortReason.UNAUTHORISED_VERIFIER`, which
+        :mod:`sih141.detect.statistics` counts as structural and reports at a
+        false-positive probability of exactly zero. A caller's typo would arrive
+        in a Phase 4 table as an adversarial event no honest run can produce. An
+        empty set is refused for the same reason -- it authorises nobody -- and
+        the way to run no check is ``None``.
+
+        When a set is given and ``record.party`` is outside it, verification
+        refuses with :attr:`AbortReason.UNAUTHORISED_VERIFIER` **before every
+        check that reads the evidence**, so a party the round did not authorise
+        does not learn this verifier's matched count by asking for a verdict.
+        The checks that raise run earlier still, so a mis-wired call is a
+        ``ValueError`` and not a refusal: the pairing check compares the message
+        bit and the key length, and ``check_against`` compares the log length
+        and the measurement bases against ``params``. None of those is a count,
+        and a party holding the record and the declaration already holds them.
+
+        What is tested is the identity the record declares, and that is the
+        whole of the check's reach: a leaked genuine record still names its
+        owner, passes here, and verifies exactly as its owner would, so this
+        refuses the party who holds no distribution data and nothing else. See
+        :attr:`AbortReason.UNAUTHORISED_VERIFIER` for the three routes and which
+        of them this closes. With the shipped
+        :class:`~sih141.protocol.params.Party` the reachable case is a round
+        that authorises one of the two recipients --
+        ``frozenset({Party.BOB})`` refuses Charlie's record -- since
+        :data:`~sih141.protocol.params.VERIFIERS` authorises both and so decides
+        nothing.
 
     Returns
     -------
@@ -3176,20 +3310,25 @@ def verify(
     ------
     TypeError
         If any argument is of the wrong type, including a
-        ``counterpart_matched`` that is neither ``None`` nor an integer and a
-        ``ledger`` that is neither ``None`` nor a :class:`ConsumedRecords`.
+        ``counterpart_matched`` that is neither ``None`` nor an integer, a
+        ``ledger`` that is neither ``None`` nor a :class:`ConsumedRecords`, an
+        ``authorised`` that is neither ``None`` nor a :class:`frozenset`, and a
+        member of ``authorised`` that is neither a :class:`Party` nor a party's
+        name.
     ValueError
         If the signature and the record describe different runs (different
         message bit or length), if either does not belong to ``params``, if
-        ``counterpart_matched`` exceeds the key length, or if ``ledger``
-        belongs to a different party. These are wiring errors.
+        ``counterpart_matched`` exceeds the key length, if ``ledger``
+        belongs to a different party, or if ``authorised`` is empty or holds a
+        string naming no party. These are wiring errors.
     MatchedSetTooSmall
         A :class:`ValueError` subclass, if any of the checks above refuses --
         including the ``0/0`` case, a counterpart count computed against another
-        declaration, a declaration naming another distribution round, and a
-        round this verifier has already decided. This is a plumbing failure
-        rather than a signature failure, is explained at length in the module
-        docstring, and must never be recorded as a rejection.
+        declaration, a declaration naming another distribution round, a round
+        this verifier has already decided, and a record whose party is outside
+        ``authorised``. This is a plumbing failure rather than a signature
+        failure, is explained at length in the module docstring, and must never
+        be recorded as a rejection.
 
     See Also
     --------
@@ -3262,6 +3401,36 @@ def verify(
         raise TypeError(
             f"params must be a ProtocolParams, got {type(params).__name__}"
         )
+    resolved_authorised: frozenset[Party] | None = None
+    if authorised is not None:
+        if not isinstance(authorised, frozenset):
+            raise TypeError(
+                f"authorised must be a frozenset of Party or None, got "
+                f"{type(authorised).__name__}. Frozen because it is the "
+                f"round's recipient set, fixed before any declaration arrives; "
+                f"None runs no authorisation check, which is the default."
+            )
+        if not authorised:
+            raise ValueError(
+                "authorised must name at least one recipient. An empty set "
+                "authorises nobody, so every verifier is refused with "
+                "unauthorised-verifier -- a structural reason, which "
+                "sih141.detect.statistics reports at a false-positive "
+                "probability of exactly zero -- and a run that authorised "
+                "nobody would be published as a run that caught somebody. To "
+                "run no authorisation check, pass authorised=None, which is "
+                "the default."
+            )
+        # Coerce the members, not just the container. Checking only the
+        # frozenset type lets frozenset({'bob'}) or frozenset({1}) through, and
+        # neither matches any record.party: the call then refuses every
+        # verifier, with the reason detector.py maps to SignalKind.LEDGER and
+        # thresholds_structural quotes at exactly zero. A mis-wired call must
+        # raise the way verify_all raises on a mis-keyed record, not answer
+        # with a security finding.
+        resolved_authorised = frozenset(
+            _as_party(member) for member in authorised
+        )
     if ledger is not None and not isinstance(ledger, ConsumedRecords):
         raise TypeError(
             f"ledger must be a ConsumedRecords or None, got "
@@ -3272,6 +3441,37 @@ def verify(
     _check_pairing(signature, record)
     signature.check_against(params)
     record.check_against(params)
+    # Before anything that reads the evidence, so that a party the round did
+    # not authorise learns no count -- but after every check that raises, so
+    # that a mis-wired call is still reported as the caller's bug it is. The
+    # rejected alternative is leaving check_against below this refusal: the
+    # Raises block promises ValueError for a record that does not belong to
+    # params, and a call naming an authorised set would then answer a caller's
+    # typo with a security finding instead. None of the three leaks a count.
+    # _check_pairing compares the message bit and the key length; check_against
+    # compares the log length and the measurement bases against params, and a
+    # party who holds the record and the declaration already holds all of them.
+    # The check is off unless the caller named a set, and it tests the identity
+    # the record declares: see AbortReason.UNAUTHORISED_VERIFIER for what that
+    # refuses and what it cannot.
+    if (
+        resolved_authorised is not None
+        and record.party not in resolved_authorised
+    ):
+        raise MatchedSetTooSmall(
+            VerificationAbort(
+                party=record.party,
+                reason=AbortReason.UNAUTHORISED_VERIFIER,
+                # No count was taken; 0 records that, and the reason is what
+                # says so. minimum_matched and the honest mean are the
+                # parameter set's own numbers, carried for a reader.
+                matched_count=0,
+                minimum_matched=minimum_matched_count(params),
+                expected_matched=params.expected_matched,
+                key_length=params.key_length,
+                message_bit=record.message_bit,
+            )
+        )
     # Read the provenance off the count *before* coercing it: _as_count returns
     # a plain int, and the declaration a count was computed against is the one
     # thing that cannot be recovered afterwards.
@@ -3359,6 +3559,7 @@ def verify_or_abort(
     *,
     counterpart_matched: int | None = None,
     ledger: ConsumedRecords | None = None,
+    authorised: frozenset[Party] | None = None,
 ) -> VerificationResult | VerificationAbort:
     """Score a signature, returning the refusal instead of raising it.
 
@@ -3392,6 +3593,11 @@ def verify_or_abort(
         when a verdict is returned, so the refusals this function hands back
         leave the ledger untouched -- which is what lets a harness retry a run
         that aborted for an unrelated reason.
+    authorised : frozenset of Party or None, optional
+        Keyword-only, forwarded to :func:`verify` unchanged: the round's
+        authorised recipient set, or ``None`` -- the default -- for no
+        authorisation check. A party outside the set comes back as a
+        :class:`VerificationAbort` here rather than raising.
 
     Returns
     -------
@@ -3434,6 +3640,7 @@ def verify_or_abort(
             params,
             counterpart_matched=counterpart_matched,
             ledger=ledger,
+            authorised=authorised,
         )
     except MatchedSetTooSmall as too_small:
         return too_small.abort
@@ -3447,6 +3654,7 @@ def verify_all(
     require_symmetrised: bool = True,
     exchange_counts: bool = True,
     ledgers: Mapping[Party | str, ConsumedRecords] | None = None,
+    authorised: frozenset[Party] | None = None,
 ) -> dict[Party, VerificationResult]:
     """Verify one signature against every recipient's record.
 
@@ -3506,6 +3714,11 @@ def verify_all(
         the mapping are verified without one, and ``None`` -- the default --
         keeps every verification pure, which is what a caller scoring a run once
         wants.
+    authorised : frozenset of Party or None, optional
+        Keyword-only, forwarded to every :func:`verify` call unchanged: the
+        round's authorised recipient set, or ``None`` -- the default -- for no
+        authorisation check. One set for the pair, since it is a property of the
+        round rather than of a verifier.
 
     Returns
     -------
@@ -3638,6 +3851,7 @@ def verify_all(
             params,
             counterpart_matched=reported.get(party),
             ledger=by_party.get(party),
+            authorised=authorised,
         )
         for party, record in checked.items()
     }

@@ -565,7 +565,10 @@ class SignalKind(enum.StrEnum):
         adversary there is Bob, or whoever holds the Bob-to-Charlie hop.
     LEDGER
         A round presented twice: a replay refusal, a session identifier that
-        does not bind, or a record already verified.
+        does not bind, or a record already verified. Also a verifier outside the
+        round's authorised recipient set, on a call that named one: the question
+        is the same one -- who presented this, and was it his to present -- and
+        the answer comes from the same bookkeeping rather than from any count.
     CHANNEL
         Any member of the per-link channel screen -- QBER, CHSH, fidelity,
         purity, concurrence. **Also produced by a noisy honest link**, so like
@@ -2001,6 +2004,7 @@ _REASON_KINDS: Final[Mapping[AbortReason, SignalKind]] = {
     AbortReason.BELOW_FLOOR: SignalKind.EVIDENCE_SHORTFALL,
     AbortReason.POOLED_BELOW_FLOOR: SignalKind.EVIDENCE_SHORTFALL,
     AbortReason.COUNTERPART_BELOW_FLOOR: SignalKind.EVIDENCE_SHORTFALL,
+    AbortReason.UNAUTHORISED_VERIFIER: SignalKind.LEDGER,
 }
 
 

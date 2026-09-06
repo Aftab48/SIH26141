@@ -5,12 +5,14 @@ know, where it attaches, what stops it, and what it measured. Five adversaries a
 outside forgery, recipient forgery, replay, channel manipulation and count starvation.
 Impersonation is a sixth entry of a different kind, because one of its scopes is excluded by a
 stated assumption rather than defeated by a mechanism, and this document never lets an exclusion
-sit in a table looking like a defence.
+sit in a table looking like a defence. Unauthorised verification is a seventh, of a third kind
+again: one threat with three routes into it, ending in a measurement, an assumption and a
+reduction to an adversary already recorded here.
 
 No number below was written by hand. Each one comes from a committed table under
 [`tables/`](tables), a doctest inside the package that `pytest` runs on every commit, a named test
 in `tests/`, or a closed form evaluated from the parameter set, and the source is printed beside
-it. That rule is **D9**, and §9 collects the commands into one table.
+it. That rule is **D9**, and §10 collects the commands into one table.
 
 Two sibling documents complete the submission. The closed forms and bounds quoted here are derived
 in [`MODELLING.md`](MODELLING.md), which owns the mathematics; what the whole record adds up to as
@@ -96,7 +98,7 @@ is the model correctly declining to describe an experiment it is not about. The 
 falls inside only because `1.4002e-02` has already dropped below the `0.0163` that 400 trials can
 resolve, so its agreement is arithmetic about the sample size and not a validation.
 
-One more thing about those zeros, because §7 is about exactly this failure mode. The `before` rows
+One more thing about those zeros, because §8 is about exactly this failure mode. The `before` rows
 report `0/400` acceptances by an adversary that certainly acted: read off the forger's own log,
 `bob96before` substituted 51 to 80 positions per run and `bob1200before` 758 to 847, on every one
 of the 400 runs of each. A zero from an arm that never fired would look identical in the
@@ -180,7 +182,7 @@ against `1/2` for anything else, and flipping an eigenvalue is strictly worse.
 His per-position mismatch rate is `1/12 = 0.0833` against Charlie's cut of `1/16 = 0.0625`, so
 acceptance needs a downward fluctuation and its probability decays exponentially in Charlie's
 matched count. The exact in-model probability is `4.0360e-02` at `L = 768` and `2.1726e-105` at
-production parameters, where the KL bound over it is `1.1238e-103`; §8 says why the estimator has
+production parameters, where the KL bound over it is `1.1238e-103`; §9 says why the estimator has
 to be named every time. Before any of that arithmetic is reached, the provenance half of the count
 exchange refuses him outright (§1).
 
@@ -620,7 +622,99 @@ their own counts and re-check their own arithmetic at import.
 
 ---
 
-## 7. Every zero in this document, checked against the adversary's own log
+## 7. Unauthorised verification, in three routes
+
+The problem statement's Objective 2 names *unauthorized verification attempts*. Until this entry
+the repository had no vocabulary for one: `Party` admits Alice, Bob and Charlie, so a party outside
+the authorised set was not representable and there was nothing to measure.
+
+**What the adversary assumes.** He is outside the round's authorised recipient set and wants a
+verdict on Alice's declaration. He knows the protocol, the parameters and the message. He does not
+hold a distribution round of his own, and that is the whole of his problem: verification consumes
+exactly one resource, a `RecipientRecord` bound to a round, so the threat is not one adversary but
+three, indexed by how he gets one.
+
+**Where it attaches: nowhere, and that is the finding.** The other six entries in this document
+mount on a keyword-only seam of `QDSSession`. This one mounts on none, because `verify` takes a
+declaration, a record and a parameter set and touches no seam at all. An adversary who cannot be
+attached to the session is an adversary the seam vocabulary cannot describe, so the module
+enumerates the routes to the resource instead.
+
+| route | how he gets a record | what happens | recorded as |
+| --- | --- | --- | --- |
+| U1 fabricated | invents the entries | his verdict carries no information about the signature | a measurement, below |
+| U2 leaked | a recipient's log, taken outside the protocol | byte-identical to the owner's verification | assumption **(RECORD SECRECY)** |
+| U3 tapped | measures the Phase A wire | intercept-resend, with its disturbance | reduced to §4 |
+
+**U1: what was run.** 200 independent honest sessions at `L = 192`, message bit 0, both verifiers
+scored in each session so the two rows are paired. In each session three verifications happen: the
+genuine record against the genuine declaration, as the control; a fabricated record against that
+same declaration; and the same fabricated record against a declaration Alice never made, which is
+the arm that turns a rejection into a statement about information. The fabricator draws every
+entry from its own generator seeded `ATTACK_SEED = 4242` (D3), and the harness draws its control
+declaration from a third stream so that the adversary's records do not shift with how many numbers
+the harness happened to want.
+
+**What it measured**, at 95% Wilson throughout:
+
+| verifier | genuine record accepts | fabricated record accepts | matched fraction | mismatch, genuine declaration | mismatch, a declaration Alice never made |
+| --- | --- | --- | --- | --- | --- |
+| Bob, `s_a = 1/64` | `200/200` | `0/200 = 0.0000 [0.0000, 0.0188]` | `12883/38400 = 0.3355` | `6434/12883 = 0.4994 [0.4908, 0.5081]` | `6499/12864 = 0.5052 [0.4966, 0.5138]` |
+| Charlie, `s_v = 1/16` | `200/200` | `0/200 = 0.0000 [0.0000, 0.0188]` | `12774/38400 = 0.3327` | `6442/12774 = 0.5043 [0.4956, 0.5130]` | `6378/12649 = 0.5042 [0.4955, 0.5129]` |
+
+> Source: doctest on `sih141.attacks.unauthorised.shipped_summary`, run by
+> `python -m pytest sih141/attacks/unauthorised.py --doctest-modules`
+
+**What it means, and it is not "he is caught".** `DEFAULT_BASES` is `(X, Y, Z)`, so an invented
+basis coincides with the declared one at rate `1/3`, and on those positions an invented eigenvalue
+is a fair coin against a declaration he had no hand in. Both thresholds are noise budgets measured
+from an exact zero, so `0/200` accepted follows and is the dull half of the table. The result is
+the last two columns: the same fabricated record scores a genuine declaration and a declaration
+nobody distributed states for at rates whose intervals overlap, so the rate does not depend on what
+the declaration says and his accept-or-reject is a function of his own coins. His verification is
+*void* rather than merely unauthorised, and publishing his rejection as a detection would publish
+the outcome of an experiment that never ran. The matched-fraction column says it from the other
+side: an invented log is scored on as many positions as an honest one, because inventing values
+does not change the sampling law over bases, so `1/3` is not a signal either. The `1/2` is §2.1's
+number reached from the opposite direction, and the `200/200` control column is what stops the
+comparison being vacuous.
+
+**U2: no rate is published, and the omission is the point.** `verify` is a pure function of the
+declaration, the record and the parameters, so a thief holding a genuine log returns the owner's
+eight `VerificationResult` fields and writes a transcript byte-identical to the owner's. A count
+here would compare one verdict against another verdict reached from the same three objects, which
+evaluates a premise twice while carrying the authority of a measurement. Nor does it parallel §6's
+`200/200` under (AUTH): there Mallory runs a whole distribution and a signing with a key of her own
+and the verifiers accept, which is an experiment that could have come out the other way. This one
+could not. The route produces assumption **(RECORD SECRECY)** in [`SECURITY.md`](SECURITY.md) §2
+and nothing else.
+
+**U3: reduced, not re-measured.** No-cloning forbids copying the travelling half, so an eigenvalue
+learned off the Phase A wire is an eigenvalue destroyed on it, and the party assembling a record
+that way is `InterceptResend` on the `ResourceFactory` seam. The resource he leaves has a QBER of
+`1/3 = 0.333333` against a per-link screen sized to resolve `s_a = 1/64` to a quarter of itself,
+and §4's campaigns are his end-to-end numbers. Building a second detector would publish a second
+rate for one adversary. `tapped_record_reduction()` states the correspondence as data and computes
+that QBER from `qber_from_tensor(collapse_tensor(PAULI_AXES))` rather than quoting it, so it moves
+if the channel model moves. It is an argument with a measured anchor: the QBER is measured, the
+step that says he has no other route to an eigenvalue is argued.
+
+**What an enforcement layer buys.** `verify` gained an optional `authorised` set of parties and
+refuses a record whose party is outside it, before any count is read, as
+`AbortReason.UNAUTHORISED_VERIFIER`. It tests the identity the record declares, and
+`RecipientRecord.party` is written by whoever built the record, so it refuses U1 at the interface
+and is powerless against U2, whose record still names its owner. The refusal is an abort and never
+a rejection, by the rule at the top of this document. It is also off unless a caller names a set:
+`authorised=None` is the default, `QDSSession` never names one, and no other number in this
+document was produced with the check live.
+
+```
+python -c "from sih141.attacks.unauthorised import shipped_summary; print(*shipped_summary(), sep=chr(10))"
+```
+
+---
+
+## 8. Every zero in this document, checked against the adversary's own log
 
 An arm that reports a clean zero because the adversary never engaged is not a defended attack. It
 is a broken experiment that looks like a triumph, and this project has shipped one.
@@ -643,6 +737,7 @@ Since then, every zero gets read against the adversary's own bookkeeping before 
 | `l768` repudiation, `0/400` | the tilt replaced 42 to 88 states per run, 63.5 on average, on all 400 |
 | `tol-p05` / `tol-p20` / `tol-p35`, `0/40` detected | touched 27 to 50, 128 to 180 and 241 to 301 hops per run |
 | impersonation `full`, `0` detections | **not a zero**: `undetectable-by-construction` under (AUTH) |
+| unauthorised U1, `0/200` accepted per verifier | invented 192 entries in each of the 400 records, and was scored on 12,883 matched positions against Bob and 12,774 against Charlie |
 
 The `tol-` rows are the uncomfortable ones and they stay in. Those cells score a depolariser
 against the link's own true error rate rather than a noiseless null, and at or near the tolerated
@@ -658,7 +753,7 @@ silent arm.
 
 ---
 
-## 8. What these measurements cannot reach
+## 9. What these measurements cannot reach
 
 Stated here rather than left for a judge to find, because each one is worse discovered than
 declared.
@@ -706,7 +801,7 @@ part company by 74 decades over the same quantity is [`MODELLING.md`](MODELLING.
 
 ---
 
-## 9. Reproducing every figure in this document
+## 10. Reproducing every figure in this document
 
 | figure | command |
 | --- | --- |
@@ -715,6 +810,7 @@ part company by 74 decades over the same quantity is [`MODELLING.md`](MODELLING.
 | the repudiation `0/400` at `L = 768` and its unsymmetrised controls | `python tools/sweep.py reduce repudiation-curve` |
 | the Phase 3 per-position arms: outside forgery, recipient forgery, symmetrisation contrast, replay, channel campaigns, starvation | `python -m pytest tests/test_phase3_integration.py` |
 | the impersonation scope table | `python -m pytest sih141/attacks/impersonation.py` |
+| the U1 table and the U3 reduction's QBER | `python -m pytest sih141/attacks/unauthorised.py tests/test_attack_unauthorised.py` |
 | the payload-line invisibility figures | `python -m pytest sih141/attacks/channel.py` |
 | the replay ledger and identifier arms | `python -m pytest tests/test_attack_replay.py` |
 | the starvation boundary rule and selective policy | `python -m pytest tests/test_attack_starvation.py` |

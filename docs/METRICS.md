@@ -2,16 +2,16 @@
 
 **SIH26141**: Quantum-Inspired Cyber Threat Detection for Digital Signature Security
 
-Generated `2026-09-06 05:02 UTC` by `tools/metrics.py`. Every figure is computed from the
+Generated `2026-09-06 11:07 UTC` by `tools/metrics.py`. Every figure is computed from the
 repository, so do not edit by hand, re-run the script.
 
 ## Test suite
 
 ```
-3819 passed in 1465.05s (0:24:25)
+3904 passed in 2382.51s (0:39:42)
 ```
 
-- Doctests collected from package modules: **481**
+- Doctests collected from package modules: **499**
 - `--doctest-modules` is enabled over `testpaths = ["tests", "sih141"]`, so every
   numeric claim written in a docstring is an executable test. Documentation that
   lies fails the suite.
@@ -37,8 +37,8 @@ repository, so do not edit by hand, re-run the script.
 | `sih141/protocol/signature.py` | 955 | 179 | 646 | 4 | 16 | 1 |
 | `sih141/protocol/symmetrise.py` | 554 | 79 | 407 | 2 | 4 | 1 |
 | `sih141/protocol/tally.py` | 1344 | 293 | 885 | 12 | 24 | 3 |
-| `sih141/protocol/verify.py` | 3703 | 796 | 2397 | 90 | 49 | 6 |
-| `sih141/attacks/__init__.py` | 329 | 196 | 108 | 9 | 0 | 0 |
+| `sih141/protocol/verify.py` | 3917 | 866 | 2502 | 123 | 49 | 6 |
+| `sih141/attacks/__init__.py` | 385 | 221 | 124 | 23 | 0 | 0 |
 | `sih141/attacks/channel.py` | 2056 | 443 | 1299 | 21 | 50 | 6 |
 | `sih141/attacks/forgery.py` | 1679 | 474 | 985 | 26 | 29 | 3 |
 | `sih141/attacks/impersonation.py` | 2019 | 560 | 1149 | 48 | 55 | 5 |
@@ -46,12 +46,13 @@ repository, so do not edit by hand, re-run the script.
 | `sih141/attacks/replay.py` | 2328 | 682 | 1317 | 51 | 36 | 3 |
 | `sih141/attacks/starvation.py` | 1678 | 333 | 1115 | 21 | 27 | 4 |
 | `sih141/attacks/statistics.py` | 570 | 158 | 323 | 3 | 14 | 1 |
+| `sih141/attacks/unauthorised.py` | 1751 | 482 | 995 | 44 | 37 | 4 |
 | `sih141/detect/__init__.py` | 572 | 263 | 259 | 8 | 2 | 1 |
-| `sih141/detect/detector.py` | 2658 | 927 | 1394 | 85 | 27 | 8 |
-| `sih141/detect/statistics.py` | 3326 | 963 | 1939 | 61 | 56 | 10 |
+| `sih141/detect/detector.py` | 2662 | 928 | 1397 | 85 | 27 | 8 |
+| `sih141/detect/statistics.py` | 3337 | 964 | 1947 | 63 | 56 | 10 |
 | `sih141/detect/thresholds_channel.py` | 2905 | 591 | 1865 | 81 | 34 | 3 |
 | `sih141/detect/thresholds_rate.py` | 3216 | 753 | 2003 | 73 | 43 | 4 |
-| `sih141/detect/thresholds_structural.py` | 3138 | 668 | 2024 | 51 | 43 | 8 |
+| `sih141/detect/thresholds_structural.py` | 3181 | 678 | 2054 | 54 | 43 | 8 |
 | `sih141/eval/__init__.py` | 286 | 200 | 76 | 0 | 0 | 0 |
 | `sih141/eval/experiments.py` | 900 | 284 | 494 | 6 | 16 | 2 |
 | `sih141/eval/manifest.py` | 516 | 191 | 269 | 0 | 11 | 1 |
@@ -64,16 +65,16 @@ repository, so do not edit by hand, re-run the script.
 | `sih141/eval/seeds.py` | 363 | 58 | 246 | 0 | 6 | 1 |
 | `sih141/eval/store.py` | 448 | 82 | 299 | 0 | 16 | 1 |
 | `sih141/web/__init__.py` | 145 | 34 | 96 | 0 | 0 | 0 |
-| `sih141/web/__main__.py` | 357 | 97 | 190 | 21 | 4 | 0 |
-| `sih141/web/api.py` | 937 | 350 | 443 | 35 | 16 | 3 |
+| `sih141/web/__main__.py` | 405 | 131 | 197 | 27 | 4 | 0 |
+| `sih141/web/api.py` | 1151 | 380 | 590 | 43 | 19 | 3 |
 | `sih141/web/catalogue.py` | 583 | 317 | 207 | 7 | 5 | 1 |
 | `sih141/web/driver.py` | 1250 | 512 | 562 | 40 | 12 | 3 |
 | `sih141/web/limits.py` | 1070 | 277 | 578 | 78 | 14 | 2 |
 | `sih141/web/payload.py` | 696 | 277 | 341 | 10 | 9 | 0 |
-| **total** | **74848** | **20173** | **44118** | **1605** | **1151** | **134** |
+| **total** | **77189** | **20826** | **45429** | **1715** | **1191** | **138** |
 
-Tests: **48892 lines** across **43 files**, **2348 test functions** defined.
-Test-lines to code-lines ratio: **2.42 : 1**
+Tests: **50290 lines** across **45 files**, **2422 test functions** defined.
+Test-lines to code-lines ratio: **2.41 : 1**
 
 ## Live security parameters
 
@@ -99,29 +100,28 @@ actually computes today, not what a document once claimed.
 
 | File | Words |
 | --- | ---: |
-| `README.md` | 6513 |
-| `JOURNAL.md` | 92394 |
-| `docs/ATTACKS.md` | 7940 |
-| `docs/METRICS.md` | 1479 |
-| `docs/MODELLING.md` | 7809 |
+| `README.md` | 7049 |
+| `docs/ATTACKS.md` | 9119 |
+| `docs/METRICS.md` | 1494 |
+| `docs/MODELLING.md` | 8175 |
 | `docs/PHASE1.md` | 4038 |
-| `docs/PHASE2.md` | 9968 |
-| `docs/PHASE3.md` | 14827 |
-| `docs/PHASE4.md` | 9650 |
+| `docs/PHASE2.md` | 10044 |
+| `docs/PHASE3.md` | 14885 |
+| `docs/PHASE4.md` | 9670 |
 | `docs/PHASE5.md` | 12630 |
-| `docs/PHASE6.md` | 12343 |
-| `docs/QDS.md` | 5640 |
-| `docs/SECURITY.md` | 6198 |
-| **total** | **191429** |
-
-Working-journal entries: **239** (temporary; deleted at the end of Phase 7).
+| `docs/PHASE6.md` | 12382 |
+| `docs/QDS.md` | 5883 |
+| `docs/SECURITY.md` | 8639 |
+| **total** | **104008** |
 
 ## Repository
 
-- Commits: **33**
+- Commits: **35**
 
 | Commit | Subject |
 | --- | --- |
+| `e38d413` | Untrack the working journal and editor config, add the problem statement |
+| `7b7b93e` | Add the Phase 7 submission documents: modelling, security analysis, attack record |
 | `91f3e18` | Re-measure the calibration panel from a clean tree |
 | `b52a2a9` | Measure the dashboard's calibration panel to the D9 standard |
 | `3484427` | Close the whole-project audit: 32 of 35 defects fixed, three deferred |
@@ -145,5 +145,3 @@ Working-journal entries: **239** (temporary; deleted at the end of Phase 7).
 | `f4544fc` | Reconcile the two hardening fixes and re-measure what moved |
 | `9c00d5f` | Make the check set uninferable and the isolation check bite |
 | `885f342` | Close Phase 3: propagate check-round sifting, fix stale figures |
-| `e36e7b1` | Add channel monitor, restrict signer seam, build and verify five attacks |
-| `658f2ff` | Add sampled check rounds for channel parameter estimation |

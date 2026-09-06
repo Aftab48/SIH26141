@@ -1,4 +1,4 @@
-"""The four endpoints and the static host, driven through FastAPI's TestClient.
+"""The five endpoints and the static host, driven through FastAPI's TestClient.
 
 No browser is needed on this side, which is the point: the frontend is being
 built in parallel against the same fixed contract, and this file pins the
@@ -713,7 +713,14 @@ def test_the_server_refuses_rather_than_queues_when_it_is_at_capacity():
 # --------------------------------------------------------------------------- #
 
 
-ENDPOINTS = ("/api/health", "/api/attacks", "/api/defaults", "/openapi.json", "/")
+ENDPOINTS = (
+    "/api/health",
+    "/api/attacks",
+    "/api/defaults",
+    "/api/events",
+    "/openapi.json",
+    "/",
+)
 
 #: Substrings that would mean a payload pointed a browser at somewhere else.
 REMOTE_MARKERS = ("http://", "https://", "//cdn.", "//fonts.", "//unpkg.")
@@ -1463,3 +1470,52 @@ def test_a_busy_port_fails_before_any_address_is_announced(capsys):
     # The one thing that must NOT be there: an address that was never bound.
     assert "http://" not in printed
     assert "shutdown complete" not in printed
+
+
+def test_an_unwritable_audit_log_path_fails_and_announces_no_address(
+    tmp_path, capsys
+):
+    """The other way a start can fail, held to the same rule as a busy port.
+
+    ``--audit-log`` names the one file this server can be asked to write, and a
+    path inside a directory that does not exist cannot be opened. The operator
+    is told that, and is not handed an address belonging to a process which is
+    about to exit.
+    """
+    from sih141.web.__main__ import main
+
+    missing = tmp_path / "no-such-directory" / "events.jsonl"
+    status = main(["--port", "0", "--audit-log", str(missing)])
+
+    assert status == 1
+    printed = capsys.readouterr().out
+    assert "COULD NOT START" in printed
+    assert "http://" not in printed
+    assert not missing.parent.exists()
+
+
+def test_a_start_that_could_not_bind_leaves_no_audit_log_file(
+    tmp_path, capsys
+):
+    """A start that failed wrote nothing to the operator's disk.
+
+    :class:`~sih141.audit.AuditLog` opens its file at construction, which
+    creates it. Building the log before the bind therefore left an empty JSON
+    Lines file behind on every run that then found the port busy: a run whose
+    own message read ``Nothing is serving`` and which had already written. So
+    the port is tried first.
+    """
+    from sih141.web.__main__ import main, open_listeners
+
+    path = tmp_path / "run-events.jsonl"
+    held, _bound, _skipped = open_listeners("127.0.0.1", 0)
+    try:
+        port = held[0].getsockname()[1]
+        status = main(["--port", str(port), "--audit-log", str(path)])
+    finally:
+        for listener in held:
+            listener.close()
+
+    assert status == 1
+    assert "COULD NOT START" in capsys.readouterr().out
+    assert not path.exists()

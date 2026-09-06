@@ -88,10 +88,11 @@ through a bookkeeping statistic, which is not a thing it should be able to do.
 
 Derivation 1: the structural aborts, and why the bound is exactly zero
 -----------------------------------------------------------------------
-:data:`~sih141.detect.statistics.STRUCTURAL_ABORT_REASONS` holds the four
-refusals that make no claim about how much evidence a run produced. Each is
-decided by an **equality test on data the honest protocol fixes**, so no
-randomness enters and there is no tail to bound:
+:data:`~sih141.detect.statistics.STRUCTURAL_ABORT_REASONS` holds the five
+refusals that make no claim about how much evidence a run produced. Four are
+decided by an **equality test on data the honest protocol fixes** and the fifth
+by set membership on an argument the caller supplies; in none of them does
+randomness enter, so there is no tail to bound:
 
 ``SESSION_MISMATCH``
     The declaration and the record are stamped with the same session identifier
@@ -108,8 +109,19 @@ randomness enters and there is no tail to bound:
 ``COUNTS_FROM_TWO_DECLARATIONS``
     One declaration exists on an honest run, so the two digests are two hashes
     of one object.
+``UNAUTHORISED_VERIFIER``
+    An honest run authorises the recipients it distributed to, and the check is
+    set membership on the party the record names
+    (:class:`~sih141.protocol.verify.AbortReason`). It is also off unless the
+    caller passes ``authorised``, so on the shipped session it never runs at
+    all. This is the one member whose zero is conditional on something outside
+    the protocol: a caller who names a set omitting a recipient the signer
+    distributed to refuses him on every run, honest or not, and the refusal is
+    counted here as structural. The set is checked to hold parties, and an empty
+    one is refused outright (:func:`~sih141.protocol.verify.verify`), which
+    closes the wiring mistakes but not a set that is well-formed and wrong.
 
-None of the four is a function of the key material, the bases, the eigenvalues
+None of the five is a function of the key material, the bases, the eigenvalues
 or the channel. The honest run's outcome space does not contain
 ``aborts.structural >= 1`` at all, so
 
@@ -263,11 +275,11 @@ open afterwards is *whose*, and that is attribution rather than detection:
 :func:`attribute_aborts` reads it off the reason and the shortfall, which is all
 the transcript carries and all it needs to.
 
-**How strong, per reason**, is :func:`abort_reason_bound`: four of the eight are
+**How strong, per reason**, is :func:`abort_reason_bound`: five of the nine are
 exactly zero, one is the exact ``(1 - p)^n`` of an empty matched set, and the
 remaining three are the two floor tails seen from three sides. Note what may
 *not* be done with them: ``COUNTERPART_BELOW_FLOOR`` at Bob and ``BELOW_FLOOR``
-at Charlie are the **same event**, so the eight are not a partition and totalling
+at Charlie are the **same event**, so the nine are not a partition and totalling
 them over-counts. The run-level bound is the union over the three *events*,
 which is :func:`evidence_abort_bound`; the per-reason numbers are for saying how
 strong one observed refusal is.
@@ -285,12 +297,14 @@ strong one observed refusal is.
                                                               verifier spend the round
     COUNT_OF_UNRECORDED_PROVENANCE  nobody -- no count       the counterpart, by omission
     COUNTS_FROM_TWO_DECLARATIONS    nobody -- no count       the forwarding hop
+    UNAUTHORISED_VERIFIER           nobody -- no count       nobody: the caller names
+                                                              the authorised set
 
 That table is a reading of the protocol's own control flow -- which check sits
 where, and which party supplies its input -- not a summary of measurements, and
 nothing in this module was chosen from it.
 
-**Induced at will, and deterministically.** Two of the eight cost their
+**Induced at will, and deterministically.** Two of the nine cost their
 adversary no probability whatever. A recipient denies his counterpart by
 declaring any count below the headroom
 (:ref:`sih141.attacks.starvation <starvation-headroom>`), which forces
@@ -508,6 +522,10 @@ class StructuralCheck(enum.StrEnum):
         A refusal whose reason is in
         :data:`~sih141.detect.statistics.STRUCTURAL_ABORT_REASONS`. Point-mass
         null, false-positive probability exactly zero (:ref:`structural-null`).
+        Four of the five reasons are equality tests on data the honest protocol
+        fixes; the fifth is unreachable unless a caller names an authorised
+        recipient set, and its zero holds only for a set containing the
+        recipients the signer distributed to.
     EVIDENCE_ABORT
         A refusal whose reason is in
         :data:`~sih141.detect.statistics.EVIDENCE_ABORT_REASONS`. The only check
@@ -1521,13 +1539,13 @@ def abort_reason_bound(
 ) -> float:
     """Bound the honest-run probability of **one** abort reason.
 
-    "How strong is an abort?" has eight answers, not one, and summing them would
-    quote the weakest for all eight. Each reason is bounded as tightly as its
+    "How strong is an abort?" has nine answers, not one, and summing them would
+    quote the weakest for all nine. Each reason is bounded as tightly as its
     own event allows:
 
     .. code-block:: text
 
-        the four structural reasons     0            exactly; outside the
+        the five structural reasons     0            exactly; outside the
                                                      honest outcome space
         EMPTY_MATCHED_SET               (1 - p)^n    exactly; the event is
                                                      {count = 0}
@@ -1536,8 +1554,8 @@ def abort_reason_bound(
         POOLED_BELOW_FLOOR              b(2n, M_min)
 
     ``b`` is the same per-check term :func:`evidence_abort_bound` sums, so the
-    run-level union is the sum of the three *events* and not of the eight
-    reasons -- four of which are zero and three of which describe the same two
+    run-level union is the sum of the three *events* and not of the nine
+    reasons -- five of which are zero and three of which describe the same two
     events from different sides.
 
     Parameters
@@ -1548,7 +1566,7 @@ def abort_reason_bound(
         The reason to bound.
     exact : bool, optional
         Keyword-only. Sum the tail exactly rather than bounding it. Has no
-        effect on the five reasons whose answer is already exact.
+        effect on the six reasons whose answer is already exact.
 
     Returns
     -------
@@ -1592,6 +1610,7 @@ def abort_reason_bound(
     counts-from-two-declarations                 0.0000e+00
     pooled-matched-count-below-floor             5.4210e-20
     counterpart-matched-count-below-floor        5.4210e-20
+    unauthorised-verifier                        0.0000e+00
 
     The empty matched set reads ``0`` there only because ``(2/3)**115200``
     underflows a float; at a length where it does not, it is exact and far
@@ -1980,11 +1999,15 @@ def point_mass_threshold(
 def structural_abort_threshold(eps: float) -> StructuralThreshold:
     """Return the derived threshold on structural aborts.
 
-    Null: point mass at ``0``. The four reasons in
-    :data:`~sih141.detect.statistics.STRUCTURAL_ABORT_REASONS` are each decided
-    by an equality test on data the honest protocol fixes, so the event is
-    outside the honest run's outcome space and its probability is exactly zero
-    -- not small, zero. :ref:`structural-null` names the four tests.
+    Null: point mass at ``0``. Four of the five reasons in
+    :data:`~sih141.detect.statistics.STRUCTURAL_ABORT_REASONS` are decided by an
+    equality test on data the honest protocol fixes, and the fifth by set
+    membership on an authorised recipient set the caller supplies; no randomness
+    enters any of them, so the event is outside the honest run's outcome space
+    and its probability is exactly zero -- not small, zero. The fifth carries
+    that zero only for a set containing the recipients the signer distributed
+    to, and is unreachable on a call that names no set at all.
+    :ref:`structural-null` names the five tests.
 
     Parameters
     ----------
@@ -2018,18 +2041,25 @@ def structural_abort_threshold(eps: float) -> StructuralThreshold:
     >>> loose.false_positive_bound
     0.0
     """
+    # The null below is quoted verbatim in the recorded transcripts under
+    # sih141/web/static/data/recorded/ and in the Phase 4 table, so a reword
+    # here is a re-record there: python tools/phase6_fixtures.py.
     return point_mass_threshold(
         StructuralCheck.STRUCTURAL_ABORT,
         eps,
         statistic="aborts.structural",
         null=(
-            "point mass at 0: each of the four structural reasons is an "
-            "equality test on data the honest protocol fixes"
+            "point mass at 0: each of the five structural reasons is decided "
+            "without a random draw, four by an equality test on data the "
+            "honest protocol fixes and the fifth by set membership on an "
+            "authorised set the caller supplies"
         ),
         detail=(
             "a session mismatch, a re-presented round, a count with no "
             "provenance and two counts from two declarations cannot occur on "
-            "an honest run at any key length"
+            "an honest run at any key length, and neither can a verifier "
+            "outside the authorised set once that set names the recipients "
+            "the signer distributed to"
         ),
         derivation="sih141.detect.thresholds_structural, structural-null",
     )
@@ -2488,7 +2518,7 @@ def run_shape_violations(stats: TranscriptStatistics) -> tuple[str, ...]:
 
 #: Which party's count each abort reason is a statement about, as a function of
 #: the refusing party. ``None`` marks a reason that names no count at all -- the
-#: four structural ones and the pooled one, which is about the pair. Read off
+#: five structural ones and the pooled one, which is about the pair. Read off
 #: the protocol's own control flow (:class:`~sih141.protocol.verify.AbortReason`
 #: and :attr:`~sih141.protocol.verify.VerificationAbort.shortfall`), not off any
 #: measurement.
@@ -2501,6 +2531,7 @@ _SHORT_PARTY: Final[Mapping[AbortReason, str]] = {
     AbortReason.RECORD_ALREADY_VERIFIED: "none",
     AbortReason.COUNT_OF_UNRECORDED_PROVENANCE: "none",
     AbortReason.COUNTS_FROM_TWO_DECLARATIONS: "none",
+    AbortReason.UNAUTHORISED_VERIFIER: "none",
 }
 
 #: Which position in the threat model can force each reason, and whether it can
@@ -2537,6 +2568,11 @@ _FORCED_BY: Final[Mapping[AbortReason, str]] = {
         "the forwarding hop, with probability 1: a substituted declaration "
         "makes the two counts describe two declarations"
     ),
+    AbortReason.UNAUTHORISED_VERIFIER: (
+        "nobody in the threat model: the authorised set is the caller's, the "
+        "check is off unless he names one, and a party holding a leaked record "
+        "passes it under its owner's name"
+    ),
 }
 
 
@@ -2563,7 +2599,7 @@ class AbortAttribution:
         reasons, the *other* verifier for
         :attr:`~sih141.protocol.verify.AbortReason.COUNTERPART_BELOW_FLOOR`,
         and ``None`` for the pooled reason -- which is about the pair -- and for
-        the four structural reasons, which name no count.
+        the five structural reasons, which name no count.
     shortfall : int
         Distance below the floor the reason names, as the run recorded it.
         ``0`` on every reason that names no floor.
@@ -2571,7 +2607,14 @@ class AbortAttribution:
         The proven bound on an honest run producing *this* refusal:
         ``0.0`` for a structural reason, and the Chernoff lower tail at the
         observed count for a reason that names a floor -- which is at or below
-        the floor's own ``2**-64``, and tighter the deeper the shortfall.
+        the floor's own ``2**-64``, and tighter the deeper the shortfall. One
+        of the structural zeros carries a precondition:
+        :attr:`~sih141.protocol.verify.AbortReason.UNAUTHORISED_VERIFIER` is
+        unreachable unless a caller names an authorised recipient set, and its
+        zero holds for a set containing the recipients the signer distributed
+        to. A caller who names some other set refuses an honest verifier, and
+        that refusal is filed here under ``"structural"`` like any other. See
+        :class:`StructuralCheck` and ``forced_by``.
     forced_by : str
         Which position in the threat model can force this reason, from
         :ref:`induced`. A reading of the protocol, not a measurement.

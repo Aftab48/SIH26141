@@ -204,15 +204,21 @@ accept  iff  r_R ≤ threshold(R),   threshold(Bob) = s_a,  threshold(Charlie) =
 
 `m_min` is the per-verifier floor (`verify.minimum_matched_count`), `1` for short keys and
 `36555` at `DEFAULT_PARAMS`; `M_min` is the pooled floor
-(`verify.minimum_pooled_matched_count`), `74190` there. The four checks are tested in that
-order so that a failure is attributed to the smallest thing that explains it, and each
-carries its own `AbortReason`. Three of them are counting floors; the second is a
+(`verify.minimum_pooled_matched_count`), `74190` there. The four checks that read the evidence
+are tested in that order so that a failure is attributed to the smallest thing that explains
+it, and each carries its own `AbortReason`. Three of them are counting floors; the second is a
 *provenance* check, and it exists because `m_{R̄}` is only meaningful when it was counted
 against the same declaration this verifier is scoring; otherwise the pooled sum is a
 mixture of two runs and the floor is enforced on a quantity that is no run's pooled count.
 The last is the joint consequence, and it is what makes "Bob accepted" imply "Charlie
 reached a verdict": Section 6b-iv shows that without it no choice of floors closes the
 split-coin route.
+
+A fifth check was added to `verify` after this phase and is deliberately not one of the four:
+it refuses a record naming a party outside a caller-supplied authorised set, before any of the
+four reads a count, and it does not run unless that set is passed. It decides who is asking
+rather than what the evidence says, so it enters none of the arithmetic above;
+[SECURITY.md](SECURITY.md) §9 is its reach.
 
 Bob verifies, then forwards the declaration, never his evidence, to Charlie, who scores
 his own log at the looser cut.

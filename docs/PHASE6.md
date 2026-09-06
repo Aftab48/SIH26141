@@ -94,7 +94,7 @@ server and invisible in the browser, and the page was verified against a stale c
 
 ## 1. The API as shipped
 
-Six endpoints. `/docs` is deliberately **off**, because Swagger UI loads its own assets from a
+Seven endpoints. `/docs` is deliberately **off**, because Swagger UI loads its own assets from a
 CDN, which would put a network fetch on the one page that must never make one.
 
 | Method | Path            | Returns |
@@ -103,6 +103,7 @@ CDN, which would put a network fetch on the one page that must never make one.
 | `GET`  | `/api/attacks`  | 11 rows: `key`, `label`, `summary`, `detectable`, `assumption` |
 | `GET`  | `/api/defaults` | `params`, `bounds`, `limits`, `eps_default`, `live_key_length_max`, and the caps |
 | `POST` | `/api/run`      | `{detection, run, ground_truth, timings}` |
+| `GET`  | `/api/events`   | the security event log: `events`, `count`, `recorded`, `dropped`, `capacity`, `persisted`, `note` |
 | `GET`  | `/`             | the frontend |
 | `GET`  | `/static/…`     | its assets |
 
@@ -1146,13 +1147,14 @@ CSS property that produced it.
 
 | path | what |
 |---|---|
-| `sih141/web/__main__.py` | the one command; `--host`, `--port`, `--log-level` |
-| `sih141/web/api.py` | `create_app()`, the six endpoints, the concurrency gate |
+| `sih141/web/__main__.py` | the one command; `--host`, `--port`, `--audit-log`, `--log-level` |
+| `sih141/web/api.py` | `create_app()`, the seven endpoints, the concurrency gate |
 | `sih141/web/limits.py` | every cap, `RequestRefused`, `json_safe`, `safe_text` |
 | `sih141/web/driver.py` | mounts an adversary, runs a session, splits ground truth out |
 | `sih141/web/catalogue.py` | the attack roster and its `detectable`/`assumption` fields |
 | `sih141/web/payload.py` | the `run` object the screen reads, and `nulls_stated()` |
 | `sih141/web/static/` | the frontend: 26 files, nothing fetched |
+| `sih141/audit.py` | the security event log: one line per verdict, bounded, ordered by a counter and never a clock |
 | `tools/phase6_fixtures.py` | records the 13 walk-through runs through `TestClient`, verbatim |
 | `tests/test_web_api.py` | the API, the caps, the abuse sweep |
 | `tests/test_web_contract.py` | the four top-level keys, and ground truth staying separate |

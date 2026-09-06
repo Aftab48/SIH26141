@@ -24,7 +24,7 @@
     "critical": 1.0,
     "false_positive_bound": 0.0,
     "is_detection": true,
-    "claim": "structural-abort: fires when aborts.structural >= 1; under point mass at 0: each of the four structural reasons is an equality test on data the honest protocol fixes, this fires with probability at most 0.0000e+00, by none -- point mass at 0."
+    "claim": "structural-abort: fires when aborts.structural >= 1; under point mass at 0: each of the five structural reasons is decided without a random draw, four by an equality test on data the honest protocol fixes and the fifth by set membership on an authorised set the caller supplies, this fires with probability at most 0.0000e+00, by none -- point mass at 0."
    }
   ],
   "false_positive_bound": 3.8649211592196904e-10,
@@ -645,8 +645,8 @@
   }
  },
  "timings": {
-  "session_ms": 402.9160000027332,
-  "detect_ms": 5.118500001117354
+  "session_ms": 419.134199997643,
+  "detect_ms": 5.531200004043058
  },
  "error": null
 }

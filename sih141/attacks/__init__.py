@@ -1,10 +1,12 @@
-"""Phase 3: the five adversaries, and the rule that keeps their numbers honest.
+"""The six adversaries, and the rule that keeps their numbers honest.
 
-Every attack here mounts on :class:`~sih141.protocol.session.QDSSession` through
-its keyword-only seams (:ref:`sih141.protocol.session <phase3-seams>`). **Not one
-of them needed a protocol edit to be mounted**, which is the property the seams
-exist for: an attack that had to change the protocol to attach to it would be an
-attack on a protocol nobody ships.
+Five of them are Phase 3's, and every one of those mounts on
+:class:`~sih141.protocol.session.QDSSession` through its keyword-only seams
+(:ref:`sih141.protocol.session <phase3-seams>`). **Not one of them needed a
+protocol edit to be mounted**, which is the property the seams exist for: an
+attack that had to change the protocol to attach to it would be an attack on a
+protocol nobody ships. The sixth was added later and mounts on no seam at all,
+for a reason given where it is listed below.
 
 Mounting an adversary and *measuring* it are not the same thing, and one gap
 turned up between them. The forging recipient could be mounted but not scored,
@@ -16,8 +18,8 @@ Which declaration each recipient counts is now a named configuration
 and the rate agrees with the closed form. That is a new *experiment*, not a new
 mechanism: on an honest run the two orderings agree position for position.
 
-The five, by the seam each one sits on
---------------------------------------
+The six, by the seam each one sits on
+-------------------------------------
 :mod:`sih141.attacks.forgery` -- ``signer`` and ``forwarder``
     :class:`~sih141.attacks.forgery.OutsideForger` substitutes Alice's
     declaration outright and is measured against both thresholds at once.
@@ -53,6 +55,20 @@ The five, by the seam each one sits on
     verdict. Free, deterministic, and selective -- and it cannot be done
     quietly: the quietest denying declaration sits ``-11.54`` honest standard
     deviations below the mean at *every* key length.
+
+:mod:`sih141.attacks.unauthorised` -- no seam, and that is the finding
+    A party outside the round's authorised recipient set reaching a verdict on
+    Alice's declaration. There is nothing to mount him on: verification takes a
+    declaration, a record and the parameters and touches no seam of the session,
+    so the threat decomposes by how he obtains a record rather than by where he
+    attaches. Inventing one puts him on ``1/2`` for the outside forger's reason,
+    which makes his verdict void rather than merely wrong, and that is the arm
+    this module measures. Holding a genuine recipient's leaked log is
+    undetectable by construction and is assumption **(RECORD SECRECY)** of
+    ``docs/SECURITY.md`` section 2 rather than a number. Building one off the
+    Phase A wire is intercept-resend and already
+    :mod:`sih141.attacks.channel`'s, so it is reduced and cited rather than
+    measured a second time.
 
 The two things every one of them has to satisfy
 ------------------------------------------------
@@ -218,6 +234,33 @@ from sih141.attacks.statistics import (
     two_sided_z,
     wilson_bounds,
 )
+# Its ``MEASURED``, ``MEASUREMENT_PARAMS``, ``shipped_summary`` and
+# ``ATTACK_SEED`` are deliberately not lifted here. Two of them would collide
+# outright: ``sih141.attacks.MEASURED`` and ``sih141.attacks.shipped_summary``
+# already resolve to impersonation's, lifted in the block above. The other two
+# reach this namespace from nowhere and are held back anyway, because the
+# spelling is what misleads and both spellings are already taken elsewhere.
+# ``MEASUREMENT_PARAMS`` is also impersonation's, one level down, and the two
+# hold equal parameter sets (``key_length=192`` each), so quoting the wrong one
+# breaks nothing and stays wrong. ``ATTACK_SEED`` is what two attack test
+# modules call their own harness seed, one of them at the same ``4242``.
+# Lifting the two that fit would also split one table's four names across two
+# import paths, and a reader who finds half of them here will look for the rest
+# here too. Import all four from the module.
+from sih141.attacks.unauthorised import (
+    FABRICATED_MATCHED_FRACTION,
+    FABRICATED_MISMATCH_RATE,
+    TAPPED_LINK_QBER,
+    UnauthorisedFabricator,
+    UnauthorisedHolder,
+    UnauthorisedMeasurement,
+    UnauthorisedTrial,
+    fabricator_probe,
+    measure_unauthorised,
+    run_unauthorised,
+    tapped_record_reduction,
+    verdict_digest,
+)
 
 __all__ = [
     # -- D6: the check every published rate depends on ------------------------ #
@@ -326,4 +369,17 @@ __all__ = [
     "measure_starvation",
     "pooled_branch_requirement",
     "probe_messages",
+    # -- unauthorised verification: no seam, three routes to a record --------- #
+    "FABRICATED_MATCHED_FRACTION",
+    "FABRICATED_MISMATCH_RATE",
+    "TAPPED_LINK_QBER",
+    "UnauthorisedFabricator",
+    "UnauthorisedHolder",
+    "UnauthorisedMeasurement",
+    "UnauthorisedTrial",
+    "fabricator_probe",
+    "measure_unauthorised",
+    "run_unauthorised",
+    "tapped_record_reduction",
+    "verdict_digest",
 ]

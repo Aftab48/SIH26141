@@ -9,6 +9,11 @@ requirements.txt``, run this, open the printed address.
     python -m sih141.web                    # http://127.0.0.1:8141
     python -m sih141.web --port 9000
     python -m sih141.web --host 0.0.0.0     # deliberate, and not the default
+    python -m sih141.web --audit-log run-events.jsonl
+
+The last of those is the one thing this server can be asked to write. Without
+it the security event log is kept in memory and dies with the process
+(:ref:`sih141.web.api <the-server-now-keeps-something>`).
 
 The default host is ``127.0.0.1`` and not ``0.0.0.0``. This server runs
 unauthenticated quantum simulation on request; binding it to every interface is
@@ -65,6 +70,7 @@ from typing import Sequence
 import uvicorn
 
 from sih141 import __version__
+from sih141.audit import DEFAULT_CAPACITY, AuditLog
 from sih141.web.api import STATIC_DIR, create_app
 from sih141.web.limits import (
     LIVE_KEY_LENGTH_MAX,
@@ -285,6 +291,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--port", type=int, default=8141, help="TCP port.")
     parser.add_argument(
+        "--audit-log",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Append the security event log to this file, as JSON Lines, one "
+            "line per verification outcome. Without it the log is kept in "
+            "memory only and dies with the process; either way it retains at "
+            f"most {DEFAULT_CAPACITY} events and GET /api/events serves them."
+        ),
+    )
+    parser.add_argument(
         "--log-level",
         default="info",
         choices=("critical", "error", "warning", "info", "debug", "trace"),
@@ -307,8 +324,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     Returns
     -------
     int
-        Process exit status. ``1`` when the port could not be bound, with a
-        message naming it and **no address line at all**.
+        Process exit status. ``1`` when the port could not be bound or the
+        ``--audit-log`` path could not be opened, with a message naming which
+        of the two and **no address line at all**. The port is tried first, so
+        a start that fails there leaves no log file behind.
     """
     args = build_parser().parse_args(argv)
     try:
@@ -322,6 +341,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"deliberately: an instance you started earlier may still be "
             f"holding this port and answering on it. Stop that one, or pass "
             f"--port with a free port.",
+            flush=True,
+        )
+        return 1
+    # AFTER the bind, and this order was chosen rather than fallen into.
+    # `AuditLog` opens its file at construction, which creates it, so a log
+    # built first left an empty JSON Lines file on the operator's disk every
+    # time the port turned out to be busy -- a run that printed "Nothing is
+    # serving" and had already written. Both failures still return before the
+    # banner, so no address is announced for a server that is not up.
+    try:
+        audit = AuditLog(path=args.audit_log)
+    except OSError as failure:
+        for listener in sockets:
+            listener.close()
+        print(
+            f"SIH26141 {__version__} -- COULD NOT START.\n"
+            f"  the security event log cannot be written to "
+            f"{args.audit_log}: {failure.strerror or failure}\n"
+            f"  Nothing is serving. Pass a path in a directory that exists, "
+            f"or drop --audit-log and the log is kept in memory.",
             flush=True,
         )
         return 1
@@ -342,12 +381,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"  concurrent runs at most {MAX_CONCURRENT_RUNS}\n"
         f"  request body    at most {MAX_REQUEST_BYTES} bytes; larger is 413 "
         f"before the app sees it\n"
+        f"  security log    "
+        + (
+            f"appended to {audit.path} and "
+            if audit.path is not None
+            else "in memory only, "
+        )
+        + f"at most {audit.capacity} events; GET /api/events\n"
         f"  network         nothing is fetched; /docs is off because Swagger "
         f"UI loads from a CDN",
         flush=True,
     )
     server = uvicorn.Server(
-        uvicorn.Config(create_app(), log_level=args.log_level)
+        uvicorn.Config(
+            create_app(audit_log=audit), log_level=args.log_level
+        )
     )
     server.run(sockets=sockets)
     return 0

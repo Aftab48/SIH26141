@@ -74,6 +74,7 @@ from sih141.protocol import (
     verify_or_abort,
 )
 from sih141.protocol.verify import (
+    _IDENTITY_REASONS,
     _OWN_COUNT_REASONS,
     _PAIR_REASONS,
     _ROUND_REASONS,
@@ -1002,7 +1003,12 @@ def test_every_abort_reason_belongs_to_exactly_one_group() -> None:
     ``is_pooled`` and ``shortfall`` both switch on these sets, and a Phase 4 or
     Phase 5 table that reads them would misreport a member nobody placed.
     """
-    groups = (_ROUND_REASONS, _OWN_COUNT_REASONS, _PAIR_REASONS)
+    groups = (
+        _ROUND_REASONS,
+        _IDENTITY_REASONS,
+        _OWN_COUNT_REASONS,
+        _PAIR_REASONS,
+    )
     for reason in AbortReason:
         assert sum(reason in group for group in groups) == 1, (
             f"{reason.value!r} is in {sum(reason in g for g in groups)} "

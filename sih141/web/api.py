@@ -1,7 +1,43 @@
 """The JSON API and the static host: one process, one command, no network.
 
-Four endpoints and a file server, over :mod:`sih141.web.driver`. Nothing here
+Five endpoints and a file server, over :mod:`sih141.web.driver`. Nothing here
 computes a protocol quantity; it validates, it serialises, and it refuses.
+
+.. _the-server-now-keeps-something:
+
+The one thing the server keeps, and what bounds it
+--------------------------------------------------
+Every API answer is sent ``Cache-Control: no-store`` and, until the security
+event log, the process kept nothing at all between requests. A log is a
+deliberate reversal of that, so it is bounded in three directions at once.
+
+**In size.** :class:`~sih141.audit.AuditLog` retains
+:data:`~sih141.audit.DEFAULT_CAPACITY` events and drops the oldest past that,
+reporting how many it dropped. Two events per run, so a demonstration cannot
+grow the process without limit and a reader cannot mistake a truncated log for
+a whole one. The cap is on what the process holds and what ``/api/events``
+serves; a file, where one is configured, receives every event and is not
+trimmed by anything here.
+
+**In lifetime.** The log lives in memory and dies with the process unless a
+caller hands :func:`create_app` one built with a ``path``. Nothing here chooses
+to write to a disk.
+
+**In content.** An event carries the party, the four-valued outcome, the abort
+reason, the sifted length, the check fraction and the hypotheses the detector
+named. It carries no client address, no header and no cookie, and of the
+request only the check fraction, which the verdict cannot be read without: not
+the seed, not the transcript, not one entry of a recipient record. So the log
+holds nothing that identifies who asked for a run and nothing that would let
+one reader reconstruct another's. ``session_id`` is a digest of the resolved
+request and of nothing else, present so that the two verifiers of one run
+group together; nothing of the request it digests is recorded beside it except
+the check fraction named above, which is one of nine fields and reveals none
+of the other eight.
+
+What is *not* logged is as deliberate: a body refused for its size or its
+range, and a run that failed before a verdict, produce no event. The log is one
+line per verification outcome, so a count taken from it is a count of verdicts.
 
 .. _nothing-is-fetched:
 
@@ -79,10 +115,24 @@ A run above the ceiling is refused, and the refusal names the ceiling:
 >>> refused = client.post("/api/run", json={"key_length": 100000})
 >>> refused.status_code, refused.json()["cap"]
 (400, 1024)
+
+A run that reached verdicts leaves one event per verifier behind. The refusal
+above left none, because nothing verified
+(:ref:`the-server-now-keeps-something`):
+
+>>> client.post("/api/run", json={"key_length": 96, "seed": 4}).status_code
+200
+>>> events = client.get("/api/events").json()
+>>> [(event["party"], event["verdict"]) for event in events["events"]]
+[('Bob', 'accepted'), ('Charlie', 'accepted')]
+>>> events["dropped"], events["persisted"]
+(0, False)
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import threading
 from pathlib import Path
@@ -96,6 +146,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
 from sih141 import __version__
+from sih141.audit import AuditLog
 from sih141.detect import family_budget
 from sih141.eval.security import FLOOR_CROSSOVER, security_claim_at
 from sih141.protocol.params import (
@@ -158,7 +209,9 @@ __all__ = ["STATIC_DIR", "RunBody", "create_app", "defaults_payload"]
 
 #: Notes: :class:`_BodyLimit` and :func:`_refuse_oversized` are private and are
 #: exercised through :func:`create_app`, which installs the first as the
-#: outermost middleware.
+#: outermost middleware. :func:`_run_digest` and :func:`_record_verdicts` are
+#: private for the same reason and are exercised through ``POST /api/run``,
+#: which is the only thing in the repository that writes to a log.
 
 
 #: Where the frontend lives. Served from disk; nothing is fetched
@@ -182,6 +235,7 @@ the dashboard itself: no <code>index.html</code> was found in
  <li><code>GET /api/attacks</code></li>
  <li><code>GET /api/defaults</code></li>
  <li><code>POST /api/run</code></li>
+ <li><code>GET /api/events</code></li>
  <li><code>GET /openapi.json</code> &mdash; generated in-process, fetches nothing</li>
 </ul>
 <p>This page is served from memory and loads no scripts, fonts or stylesheets
@@ -702,13 +756,115 @@ def defaults_payload() -> dict[str, Any]:
     }
 
 
-def create_app(static_dir: Path | None = None) -> FastAPI:
+def _run_digest(request: dict[str, Any]) -> str:
+    """Return the identifier the log groups one run's events under.
+
+    A digest of the **resolved request** and of nothing else. It is not a
+    protocol session identifier: the dashboard keeps no ledger and sets no
+    ``run_id`` on its sessions, so there is no round name to carry, and this is
+    the only sense in which two of its events belong together. It identifies
+    the run, never the requester -- no address, no header and no cookie reaches
+    it, and of the request it digests only the check fraction is written to the
+    log beside it, so an event cannot be replayed from one.
+
+    Parameters
+    ----------
+    request : dict
+        :meth:`~sih141.web.driver.RunRequest.to_dict`.
+
+    Returns
+    -------
+    str
+        Sixteen hexadecimal characters.
+
+    Examples
+    --------
+    >>> from sih141.web.api import _run_digest
+    >>> first = _run_digest({"attack": "honest", "seed": 1})
+    >>> len(first), first == _run_digest({"seed": 1, "attack": "honest"})
+    (16, True)
+
+    A different run is a different identifier, which is what makes it a
+    grouping key rather than a label:
+
+    >>> first == _run_digest({"attack": "honest", "seed": 2})
+    False
+    """
+    canonical = json.dumps(request, sort_keys=True, default=str)
+    return hashlib.blake2s(
+        canonical.encode("utf-8"), digest_size=8
+    ).hexdigest()
+
+
+def _record_verdicts(log: AuditLog, payload: dict[str, Any]) -> None:
+    """Append one security event per verification outcome.
+
+    Called on the way out of ``POST /api/run`` and nowhere else. A run that
+    reached no verdict at all -- a refused request, an adversary that raised --
+    writes nothing, so a count taken from the log is a count of verdicts
+    (:ref:`the-server-now-keeps-something`).
+
+    Parameters
+    ----------
+    log : sih141.audit.AuditLog
+    payload : dict
+        The response body, already built. Read only for the fields the event
+        names; the payload is not modified and the response does not change
+        shape because a log is present.
+
+    Notes
+    -----
+    ``key_length`` on the event is
+    :attr:`~sih141.detect.detector.Detection.key_length`, the **sifted** length
+    every null and every floor was stated over, and not the length the caller
+    asked for. A verdict read against the requested length would be read
+    against a threshold that was never applied to it.
+    """
+    detection = payload.get("detection")
+    if detection is None:
+        return
+    request = payload["request"]
+    by_party = (payload.get("run") or {}).get("aborts", {}).get("by_party", {})
+    session_id = _run_digest(request)
+    named = tuple(detection.get("named", ()))
+    for party, outcome in sorted(detection.get("outcomes", {}).items()):
+        log.record(
+            party=party,
+            verdict=outcome,
+            session_id=session_id,
+            # The SIFTED length, off the detection, beside the check fraction
+            # the caller asked for. Neither is defaulted: a wrong number in an
+            # audit record is worse than a missing one, and both of these
+            # fields are present on every response that carries a detection.
+            key_length=detection["key_length"],
+            check_fraction=request["check_fraction"],
+            abort_reason=by_party.get(party),
+            hypotheses=named,
+        )
+
+
+def create_app(
+    static_dir: Path | None = None, audit_log: AuditLog | None = None
+) -> FastAPI:
     """Build the application: the JSON API plus the static frontend.
 
     Parameters
     ----------
     static_dir : pathlib.Path or None, optional
         Where the frontend lives. Defaults to :data:`STATIC_DIR`.
+    audit_log : sih141.audit.AuditLog or None, optional
+        Where verification outcomes are recorded. ``None`` -- the default --
+        gives this application its own log, in memory, at
+        :data:`~sih141.audit.DEFAULT_CAPACITY` events. Pass one built with a
+        ``path`` to have the events appended to a file as well; that is the
+        only way anything here writes to a disk
+        (:ref:`the-server-now-keeps-something`).
+
+        The default is a log rather than no log because an endpoint that serves
+        one has to have one to serve. This function is the only place that
+        builds one unasked: no module under :mod:`sih141.protocol`,
+        :mod:`sih141.detect`, :mod:`sih141.eval` or :mod:`sih141.attacks`
+        imports :mod:`sih141.audit` at all.
 
     Returns
     -------
@@ -755,6 +911,9 @@ def create_app(static_dir: Path | None = None) -> FastAPI:
     # Non-blocking, so an over-capacity request is refused immediately rather
     # than parked behind seconds of simulation with nothing on the screen.
     gate = threading.BoundedSemaphore(MAX_CONCURRENT_RUNS)
+    # Per application, so two `create_app()` calls are two logs and a test
+    # cannot read events another test wrote.
+    log = AuditLog() if audit_log is None else audit_log
 
     @app.exception_handler(RequestRefused)
     async def _refused(
@@ -903,9 +1062,64 @@ def create_app(static_dir: Path | None = None) -> FastAPI:
                 },
             }
         try:
-            return run_once(request).to_dict()
+            payload = run_once(request).to_dict()
         finally:
             gate.release()
+        _record_verdicts(log, payload)
+        return payload
+
+    @app.get("/api/events")
+    def events(response: Response) -> dict[str, Any]:
+        """Serve the security event log, oldest event first.
+
+        Read-only. There is no endpoint that clears it and none that writes to
+        it: ``POST /api/run`` is the only producer.
+
+        Parameters
+        ----------
+        response : fastapi.Response
+            Used to forbid caching, like every other API answer here.
+
+        Returns
+        -------
+        dict
+            ``events`` (one object per verification outcome), ``count``
+            (retained), ``recorded`` (over the process's whole life),
+            ``dropped``, ``capacity``, ``persisted`` and ``note``.
+
+            ``events``, ``count``, ``recorded`` and ``dropped`` come from one
+            call to :meth:`~sih141.audit.AuditLog.snapshot`, so a run landing
+            mid-request cannot produce a document whose list and counters
+            disagree.
+
+            ``dropped`` is published rather than inferred. Past ``capacity``
+            the oldest event goes, and a reader who cannot tell a truncated log
+            from a whole one has a log that lies by omission.
+
+            ``persisted`` is a boolean and never the path. Whether the
+            operator configured a file is a fact about the deployment; where
+            that file is on their disk is not one this endpoint hands out.
+        """
+        response.headers["Cache-Control"] = "no-store"
+        retained, recorded, dropped = log.snapshot()
+        return {
+            "events": [event.to_dict() for event in retained],
+            "count": len(retained),
+            "recorded": recorded,
+            "dropped": dropped,
+            "capacity": log.capacity,
+            "persisted": log.path is not None,
+            "note": (
+                "One event per verification outcome. A request refused for "
+                "its size or its range, and a run that failed before a "
+                "verdict, appear nowhere here, so a count of these events is "
+                "a count of verdicts. The party is SELF-DECLARED: a verifier "
+                "using a recipient record obtained outside the protocol "
+                "produces an event no field of which differs from the one its "
+                "owner would have produced, and nothing in this log detects "
+                "that."
+            ),
+        }
 
     if root.is_dir():
         app.mount(

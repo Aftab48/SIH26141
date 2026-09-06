@@ -2950,7 +2950,7 @@ class SessionTranscript:
             )
         if self.aborted:
             # Name the reason each verifier actually gave. A hardcoded cause here
-            # was wrong for six of the eight AbortReason members, and on an
+            # was wrong for six of the AbortReason members then defined, and on an
             # altered-forwarding run it read "the matched set was below the floor"
             # two lines under "Every floor met." -- the reason must come from the
             # abort, never from an assumption about which one fired.

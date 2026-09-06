@@ -27,7 +27,7 @@ it.
 2. [The physical layer](#2-the-physical-layer)
 3. [A key, a signature, a verdict](#3-a-key-a-signature-a-verdict)
 4. [Correctness, exactly](#4-correctness-exactly)
-5. [Two assumptions, named where they bite](#5-two-assumptions-named-where-they-bite)
+5. [Three assumptions, named where they bite](#5-three-assumptions-named-where-they-bite)
 6. [Unforgeability: two adversaries, one of which binds](#6-unforgeability)
 7. [Non-repudiation: the argument over the coins](#7-non-repudiation)
 8. [Four times we broke it](#8-four-times-we-broke-it)
@@ -171,11 +171,17 @@ abort   if  m_other < m_min               his counterpart cannot score either
 accept  iff r_R <= threshold(R),  threshold(Bob) = s_a,  threshold(Charlie) = s_v
 ```
 
-The four checks run in that order so a failure is attributed to the smallest thing that
-explains it, and each carries its own `AbortReason`. Three of them are counting floors; the
-second is a provenance check, and it is there because `m_other` means nothing unless it was
-counted against the same declaration this verifier is scoring, otherwise the pooled sum
-mixes two runs and the floor gets enforced on a quantity that is no run's pooled count.
+The four checks that read the evidence run in that order so a failure is attributed to the
+smallest thing that explains it, and each carries its own `AbortReason`. Three of them are
+counting floors; the second is a provenance check, and it is there because `m_other` means
+nothing unless it was counted against the same declaration this verifier is scoring, otherwise
+the pooled sum mixes two runs and the floor gets enforced on a quantity that is no run's pooled
+count.
+
+A fifth check exists in the code and is outside this model. `verify` takes an optional set of
+authorised parties and refuses a record naming a party outside it, before any of the four reads
+a count. It tests the identity a record declares rather than any quantity defined here, it runs
+only when a caller supplies the set, and its reach is [`SECURITY.md`](SECURITY.md) §9.
 
 **Only matched positions may be scored, and this is the classic implementation bug of the
 family.** On an unmatched position the recipient measured an observable conjugate to the one
@@ -221,12 +227,12 @@ python -c "from sih141.protocol.params import DEFAULT_PARAMS as P; from sih141.p
 
 ---
 
-## 5. Two assumptions, named where they bite
+## 5. Three assumptions, named where they bite
 
-Both are stated here because both are load-bearing and neither is a theorem about the
+All three are stated here because each is load-bearing and none is a theorem about the
 protocol. Two more carry the security argument without touching the mathematics below, namely
 that the symmetrisation coins stay private and that the recipients report their counts
-honestly; all four sit in one table with what each failure costs in
+honestly; all five sit in one table with what each failure costs in
 [`SECURITY.md`](SECURITY.md) §2.
 
 > **(IND)** The declaration `(d_i, w_i)` is statistically independent of the recipients'
@@ -253,6 +259,34 @@ defect of ours, and it is excluded by assumption; wherever the exclusion is used
 assumption is named beside it. *Partial* impersonation is a different thing entirely and is
 caught cold, at `0/200` accepted on either seam. All four scopes, with the pair of controls
 that keep that comparison from being vacuous, are [`ATTACKS.md`](ATTACKS.md) §6.
+
+> **(RECORD SECRECY)** A recipient's measurement record is held only by the recipient it
+> names.
+
+Nothing in the model binds a record to a holder. A record is an index-keyed basis column and
+an eigenvalue column, plus the party label whoever built it wrote there, and verification is a
+function of the declaration, the record and the parameters and of nothing else. So a party
+holding a copy of Bob's record computes Bob's verdict exactly, in all eight fields of the
+result, and there is no statistic over one party's holdings that separates the copy from the
+original, because the two are the same object. This is the same shape of exclusion as (AUTH):
+a property of the deployment, out of model by assumption rather than defended against, and
+named wherever the exclusion is used.
+
+What it does *not* exclude is a party who holds no record at all and invents one. That case is
+inside the model, and it is Section 6.1's arithmetic read in the other direction. His
+fabricated `c_i` agrees with the declared `d_i` with probability `1/n`, and on those positions
+his fabricated eigenvalue is a fair coin against a declaration he had no hand in, so
+
+```
+P(o_i != w_i | i in M_R) = 1/2     whatever the declaration says
+```
+
+which is the same `1/2` Eve meets in 6.1, reached the same way, by independence between a
+column he chose and a column he did not. The consequence is stronger than "he is rejected":
+the rate does not depend on the declaration's contents, so his verdict is not a reading of the
+signature at all. Measured over 200 sessions at `L = 192` in [`ATTACKS.md`](ATTACKS.md) §7,
+with what an authorisation check can and cannot do about it in
+[`SECURITY.md`](SECURITY.md) §9.
 
 ---
 

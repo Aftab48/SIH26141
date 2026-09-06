@@ -27,9 +27,11 @@ figure is derived elsewhere it is cited rather than re-derived.
 6. [Non-repudiation](#6-non-repudiation)
 7. [The headline limitation](#7-the-headline-limitation)
 8. [Transferability](#8-transferability)
-9. [Robustness: what an honest run costs](#9-robustness)
-10. [The detector's false-alarm claim](#10-the-detectors-false-alarm-claim)
-11. [Known limitations, re-checked](#11-known-limitations-re-checked)
+9. [Unauthorised verification](#9-unauthorised-verification)
+10. [Robustness: what an honest run costs](#10-robustness)
+11. [The detector's false-alarm claim](#11-the-detectors-false-alarm-claim)
+12. [Known limitations, re-checked](#12-known-limitations-re-checked)
+13. [Objective 2, threat by threat](#13-objective-2-threat-by-threat)
 
 ---
 
@@ -53,11 +55,16 @@ the 12 runs it described. The habit that follows is tedious and is the point:
 - Every measurement names its denominator and its interval. `0/400` is written
   `0/400 = 0.0000 [0.0000, 0.0163]` at 99% Wilson, because the zero is the least informative part
   of it.
-- A refusal to judge is never counted as a rejection. The verifier has eight distinct abort
+- A refusal to judge is never counted as a rejection. The verifier has nine distinct abort
   reasons (`python -c "from sih141.protocol.verify import AbortReason; print(list(AbortReason))"`)
-  and a run that ends on any of them has produced no verdict at all. Folding those into
-  "rejected" would turn a denial of service into a detection, which is how a security table
-  flatters itself.
+  and a run that ends on any of them has produced no verdict at all. Eight need no extra argument
+  from the caller, though four of those eight need the Phase C′ count exchange to have run. The
+  ninth, `unauthorised-verifier`, needs a caller who names an authorised recipient set, is
+  unreachable on a run that does not, and settles only the identity a record declares: a leaked
+  record still names its owner, so that reason refuses the party holding no distribution data and
+  nobody else. It is not evidence that the recipient set was respected; see **(RECORD SECRECY)**
+  in §2. Folding any of the nine into "rejected" would turn a denial of service into a detection,
+  which is how a security table flatters itself.
 
 Convention **D9** governs the rest: a published number must be reproducible from a recorded seed
 and a committed command, and the command sits next to it. Where a figure comes from a committed
@@ -68,15 +75,17 @@ that redraws it.
 
 ## 2. What is assumed
 
-Four assumptions carry the security argument. Three of them are checked nowhere in the code, which
-is why they are named rather than implied.
+Five assumptions carry the security argument. Four of them are checked nowhere in the code, which
+is why they are named rather than implied. The exception is exchange honesty, which a single-run
+z-score on the declared count does test (§12).
 
 | Name | Statement | If it fails |
 | --- | --- | --- |
 | **(AUTH)** | The classical and quantum channels from Alice are authenticated: a recipient knows the states he measured and the declaration he scores both came from Alice. | Full impersonation succeeds with probability 1. Measured, not argued: `200/200` accepted by both verifiers at `L = 192`, mismatch rate exactly `0.0000`, identical to the honest control in every transcript field. |
 | **(IND)** | The declaration `(d_i, w_i)` is statistically independent of the recipients' logged bases `c_i`. | Every bound obtained by *averaging over* a matched count becomes false, not merely loose. Whoever chooses `d` while knowing `c` chooses the matched set, and picks it small. Bounds conditioned on the *observed* count survive untouched. |
 | **Private coins** | The symmetrisation coins of Phase A′ are known only to Bob and Charlie. | Non-repudiation collapses. Our own attack harness once leaked them through a shared generator and repudiated `5/5` at production parameters with every floor met. |
-| **Exchange honesty** | Recipients report their matched counts truthfully in Phase C′. | A liar forces aborts. That is denial of service rather than forgery, and it is priced in §11. |
+| **Exchange honesty** | Recipients report their matched counts truthfully in Phase C′. | A liar forces aborts. That is denial of service rather than forgery, and it is priced in §12. |
+| **(RECORD SECRECY)** | A `RecipientRecord` is held only by the recipient it names. | An unauthorised party verifying with a leaked record is byte-indistinguishable from its owner in every transcript field, so nothing in this repository detects it. The `authorised` argument to `sih141.protocol.verify.verify` tests a self-declared identity: it refuses the party who holds no distribution data, whose verdict was worthless anyway at a mismatch rate near `1/2`, and it decides nothing about a party holding a genuine log. The three routes to a record, and which of them is measured, are worked in `sih141.attacks.unauthorised`. |
 
 (AUTH) is inherent to measurement-based QDS rather than a defect here. Dunjko, Wallden and
 Andersson, and Amiri and co-authors, both assume authenticated channels from the signer and derive
@@ -542,7 +551,113 @@ python tools/sweep.py reduce honest
 
 ---
 
-## 9. Robustness
+## 9. Unauthorised verification
+
+**The threat, and where it comes from.** The problem statement's Objective 2 names *unauthorized
+verification attempts* among what has to be detected. An unauthorised verification attempt is a
+party outside the round's authorised recipient set reaching a verdict on Alice's declaration.
+Verification consumes exactly one resource, a `RecipientRecord` bound to a distribution round, so
+the threat decomposes by how that party obtains one, and the three routes have three different
+answers: he invents a record, he holds a recipient's stolen one, or he builds one off the Phase A
+wire.
+
+**The control, and what it cannot do, said together.** `sih141.protocol.verify.verify` takes an
+optional `authorised` set of parties and refuses a record whose party is outside it, before any
+count is read, as `AbortReason.UNAUTHORISED_VERIFIER`. What it tests is the identity the record
+*declares*, and `RecipientRecord.party` is written by whoever built the record. So it refuses the
+party who holds no distribution data and had to invent an identity along with the entries, and it
+is powerless against a party holding a genuine recipient's log, because that log still says "Bob"
+and passes the check its owner passes. Route one is refused at the interface. Route two is
+assumption **(RECORD SECRECY)** in §2, and nothing in this repository detects it. Route three is a
+channel attack wearing a different name and is already screened as one. No field in a record binds
+it to a holder, none is derivable from its two columns, and the round identifier binds a
+declaration to a *round* rather than to a person, so the second of those is a property of the
+scheme and not an implementation gap waiting on a later phase.
+
+The whole control is off by default. `authorised=None` runs no check, `QDSSession` never names a
+set, and no other number in this document was produced with one.
+
+**U1, the fabricated record.** The party invents `(index, basis, eigenvalue)` entries and scores
+the real declaration against them. `DEFAULT_BASES` is `(X, Y, Z)` so `|B| = 3`: his invented basis
+coincides with the declared one at rate `1/3`, and on those positions his invented eigenvalue is a
+fair coin against a declaration he had no hand in, so his mismatch rate concentrates on `1/2`. Both
+thresholds are noise budgets measured from an exact zero, `s_a = 1/64` and `s_v = 1/16`, so he
+rejects a genuine signature with overwhelming probability. The table below measures that rather
+than proving it, and its `0/200` carries a 95% Wilson upper limit of `0.0188`. At `L = 192` over
+200 independent sessions, 95% Wilson throughout:
+
+| verifier | genuine record accepts | fabricated record accepts | matched fraction | mismatch, genuine declaration | mismatch, a declaration Alice never made |
+| --- | --- | --- | --- | --- | --- |
+| Bob, `s_a = 1/64` | `200/200` | `0/200 = 0.0000 [0.0000, 0.0188]` | `12883/38400 = 0.3355` | `6434/12883 = 0.4994 [0.4908, 0.5081]` | `6499/12864 = 0.5052 [0.4966, 0.5138]` |
+| Charlie, `s_v = 1/16` | `200/200` | `0/200 = 0.0000 [0.0000, 0.0188]` | `12774/38400 = 0.3327` | `6442/12774 = 0.5043 [0.4956, 0.5130]` | `6378/12649 = 0.5042 [0.4955, 0.5129]` |
+
+> Source: doctest on `sih141.attacks.unauthorised.shipped_summary` and the `MEASURED` table it
+> prints, run by `python -m pytest sih141/attacks/unauthorised.py --doctest-modules`
+
+**That he rejects is the uninteresting half.** The last two columns are the result: the same
+fabricated record scores a genuine declaration and a declaration nobody distributed states for at
+rates whose intervals overlap, because neither rate depends on what the declaration says. His
+accept-or-reject is a function of his own coins, so his verification is *void* rather than merely
+unauthorised, and reporting his rejection as a detection would report the outcome of an experiment
+that was never run. The matched-fraction column says the same thing from the other side: an
+invented log is scored on as many positions as an honest one, `1/3` either way, because inventing
+values does not change the sampling law over bases. The `1/2` is §4's arithmetic reached from the
+opposite direction, an outsider scoring a real declaration against an invented log rather than
+declaring a key against a real one, and independence between the two columns gives a fair coin
+either way. The genuine-record column is what stops the table being vacuous: the same declaration,
+scored against the log the round actually produced, is accepted 200 times out of 200.
+
+**U2, the leaked record.** The party holds a genuine recipient's log, obtained by any means outside
+the protocol. `verify` is a pure function of the declaration, the record and the parameters, so two
+calls on the same three arguments return the same eight `VerificationResult` fields and a
+transcript written by the thief is byte-identical to one written by the owner. **No rate is
+published for this route, deliberately.** A count would compare one verdict against another verdict
+reached from the same three objects, which evaluates a premise twice rather than observing
+anything, and it would carry the authority of a measurement while doing so. The parity with the
+`200/200` impersonation figure in §2's (AUTH) row does not hold either: there Mallory runs a whole
+distribution and a signing with a key of her own and both verifiers accept, which is an experiment
+that could have come out the other way. That the stolen record still names its owner is also not a
+count. `QDSSession.distribute` refuses a record tagged with another party, so it is an invariant
+enforced upstream, and running it 200 times would repeat a structural identity 200 times.
+
+**U3, the tapped record.** The party assembles his own record by intercepting the teleported qubits
+in Phase A. No-cloning forbids copying the travelling half, so to learn an eigenvalue he has to
+measure it, and measuring one half of a Bell pair collapses both. That is
+`sih141.attacks.channel.InterceptResend` on the same seam, `ResourceFactory`, with the same physics
+and the same damage, and the resource he leaves behind has a QBER of `1/3 = 0.333333` against a
+per-link screen sized to resolve `s_a = 1/64` to a quarter of itself. So there is no second
+detector here and no second rate: the end-to-end numbers for this adversary are the channel
+campaigns of [`ATTACKS.md`](ATTACKS.md) §4. What is *measured* is the QBER the collapsed resource
+produces, computed on the spot from `qber_from_tensor(collapse_tensor(PAULI_AXES))` rather than
+quoted. What is *argued* is the step before it, that a party building a record off the wire has no
+route to an eigenvalue except the measurement which destroys it.
+
+**How the refusal is counted.** `UNAUTHORISED_VERIFIER` sits in `STRUCTURAL_ABORT_REASONS`, whose
+members carry a false-positive probability of exactly zero under the honest null, and it is the one
+member of the five whose zero is conditional. The other four are equality tests on data the honest
+protocol fixes. This one is set membership on an argument the caller supplies, so the zero holds
+only for a set naming the recipients the signer actually distributed to; a set that omits one
+refuses him on every honest run, and that refusal is counted the same way an adversarial one is.
+The detector maps the reason to `SignalKind.LEDGER`, beside replay and the already-verified record,
+because the question is the same one and the answer comes from bookkeeping rather than from a
+count. It remains a refusal and not a rejection, under the rule in §1: a run ending on it has
+produced no verdict, and the fabricator whose verdict it withholds was carrying no information
+about the signature anyway. **No operator of the shipped server ever sees one.** `sih141/audit.py` records
+one event per verification outcome with the abort reason on it and `GET /api/events` serves them,
+but the only writer of those events is `POST /api/run`, which runs a `QDSSession`, and the session
+names no authorised set: no call site under `sih141/web/` passes `authorised` at all, and the
+dashboard never fetches that endpoint. The reason is reachable from a direct caller of
+`sih141.protocol.verify.verify` and from nowhere else in this repository, which is the same fact as
+the paragraph above stated from the operator's side.
+
+```
+python -c "from sih141.attacks.unauthorised import shipped_summary; print(*shipped_summary(), sep=chr(10))"
+python -c "from sih141.attacks.unauthorised import tapped_record_reduction; print(tapped_record_reduction()['qber'])"
+```
+
+---
+
+## 10. Robustness
 
 A scheme that rejects everything is trivially unforgeable and worthless, so the failure probability
 of an honest run belongs in a security document rather than beside it.
@@ -581,7 +696,7 @@ repudiation, which is what "three quarters of the floor" is protecting.
 
 ---
 
-## 10. The detector's false-alarm claim
+## 11. The detector's false-alarm claim
 
 Three families of derived thresholds sit under the composite rule, and firing when any of them fires
 inflates the family-wise error rate. The correction is a union bound, chosen over Sidak because
@@ -625,7 +740,7 @@ python tools/sweep.py reduce roc
 
 ---
 
-## 11. Known limitations, re-checked
+## 12. Known limitations, re-checked
 
 Each of these was re-derived from the current tree rather than copied forward.
 
@@ -657,7 +772,7 @@ from sih141.protocol.params import DEFAULT_PARAMS, ProtocolParams
 print(least_implausible_z(DEFAULT_PARAMS), least_implausible_z(ProtocolParams(key_length=600)))"
 ```
 
-**The noiseless null is not the truth on a noisy link.** Holds, and §10 gives the cost: the
+**The noiseless null is not the truth on a noisy link.** Holds, and §11 gives the cost: the
 detector's mismatch members fire correctly on honest runs when the link is genuinely noisy, and
 every reduced table therefore carries `null_is_noiseless` as a caveat on the row rather than as a
 detail. At demo scale the mismatch-rate detector adds nothing over a verifier's own cut once the
@@ -672,9 +787,86 @@ and the acceptance rate is `0/400`; move the count exchange after forwarding and
 with a real rate. Both are true of the same code. Any figure quoted without its ordering is a figure
 about a protocol nobody runs.
 
-**The problem statement's deliverables table was left blank** by the organisation. Not a security
-property, and recorded here only because our scope is our own documented reading of the stated
-objectives rather than an inherited list.
+**An unauthorised verifier holding a leaked record is undetectable.** Holds, and it is the boundary
+of the `authorised` control §9 adds. That check tests the identity a record declares, a leaked
+record declares its owner's, and no transcript field written by the thief differs from one written
+by the owner. It is assumption **(RECORD SECRECY)** in §2 rather than a gap a later phase closes.
+§9 works the three routes to a record and says which one is measured, which is excluded by
+assumption, and which reduces to the channel screen.
+
+**"The problem statement's deliverables table was left blank."** Does not hold, and this entry is
+what re-checking it produced. `SIH26141-problem-statement.pdf` in the repository root is image-only
+with no text layer, so no grep over the tree could contradict the claim and nobody rendered it;
+page 2 carries a populated **Delivery Table (Expected Deliverables)** whose rows are S.No 1, 2, 3,
+4 and 6, the single irregularity being that 5 is skipped in the numbering. Row 6, *Software
+Framework / Prototype*, names four key components, of which the two this document touches are the
+threat detection dashboard and logging of security events: Phase 6 and `sih141/audit.py` (§9).
+Our scope is still our own reading, because a table of deliverables is not an order to build them
+in, but it is a reading of a table and not of a placeholder. Checking it needs a PDF renderer,
+which is not a project dependency; with PyMuPDF installed the page comes out as
+
+```
+python -c "import pymupdf; d = pymupdf.open('SIH26141-problem-statement.pdf'); d[1].get_pixmap(dpi=150).save('page2.png')"
+```
+
+---
+
+## 13. Objective 2, threat by threat
+
+Objective 2 of the problem statement, page 1, reads *"Detect digital signature forgery,
+impersonation, replay attacks, and unauthorized verification attempts."* Three of its four
+threats are detected. The fourth is decomposed and answered rather than detected. The material is
+all in §9 and [`ATTACKS.md`](ATTACKS.md) §7; what those two do not do is put the objective's four
+items in one list with what each one got, which is what a reader checking the brief against the
+repository needs.
+
+**Forgery and replay.** Detected by a derived threshold at a stated false-positive bound, with a
+measured rate. At `L = 384`, `eps = 1e-9`, 40 runs per arm, the composite proven bound is
+`3.3964e-10` (§11) and the sweep measures `40/40 = 1.000 [0.858, 1.000]` at 99% Wilson on outside
+forgery, on recipient forgery in both count orderings, and on replay. What fires is a *group* of
+hypotheses rather than a name: a transcript-only detector cannot separate the five that a
+substituted declaration leaves standing, and [`PHASE4.md`](PHASE4.md) §5 lists which group each
+arm produced.
+
+**Impersonation, with an asterisk that is not a footnote.** One seam alone is detected: the
+signing seam at `40/40 = 1.000 [0.858, 1.000]` in the same sweep, the distribution seam at the
+same rate in the Phase 4 campaign. Both seams at once is not. Mallory holding both is accepted
+`200/200` by both verifiers at mismatch rates of exactly `0.0000`, identical to the honest control
+in every transcript field, and that cell is recorded as `undetectable-by-construction` rather than
+as a rate because there is nothing in the recipients' logs to disagree with. It is assumption
+**(AUTH)** in §2 rather than a miss, and the scope it excludes is the strongest one. *Three of
+four detected* is true only with that sentence attached to it.
+
+**Unauthorized verification attempts: decomposed and answered, not detected.** Verification
+consumes one resource, a `RecipientRecord`, so §9 splits the threat by how an unauthorised party
+gets one. A party who **fabricates** a record is refused at the interface by the optional
+`authorised` check, and the result that matters is not the refusal: his verdict carries no
+information about the signature at all. Over 200 sessions at `L = 192` he accepts `0/200`, and his
+mismatch rate on Alice's genuine declaration (`0.4994` Bob, `0.5043` Charlie) and on a declaration
+Alice never made (`0.5052`, `0.5042`) have overlapping intervals, so the rate does not depend on
+what the declaration says. A party who verifies with a **leaked** recipient record is
+byte-indistinguishable from its owner in every transcript field, and is excluded by assumption
+**(RECORD SECRECY)**. A party who builds a record off the **Phase A wire** is intercept-resend
+under another name and is caught at `40/40 = 1.000 [0.8577, 1.0000]` on both check fractions the
+Phase 4 campaign ran: on the `channel` and `mismatch` signals at `0.25`, and on `mismatch` alone at
+`0.0`, where there are no check rounds and the channel family is withheld
+([`PHASE4.md`](PHASE4.md) §5). No detector in this repository fires on an unauthorised
+verification attempt as such.
+
+**What the `authorised` argument is, and what it is not.** It is not a defence in the shipped
+system. `authorised=None` is the default, `QDSSession` never passes a set, no path under
+`sih141/web/` passes one, and no published number anywhere in this repository was produced with
+the check live. It is an interface a deployment could use, and it tests a self-declared identity:
+it refuses the party who holds no distribution data and decides nothing about the party who holds
+a genuine log. Calling it enforcement would describe a configuration nobody in this repository
+runs.
+
+> Sources: [`tables/roc.md`](tables/roc.md) at `eps = 1e-9`, regenerated with
+> `python tools/sweep.py reduce roc`; the impersonation and unauthorised-verifier rates from the
+> doctests on `sih141.attacks.impersonation.shipped_summary` and
+> `sih141.attacks.unauthorised.shipped_summary`, run by
+> `python -m pytest sih141/attacks/impersonation.py sih141/attacks/unauthorised.py --doctest-modules`;
+> the distribution-seam and intercept-resend arms from [`PHASE4.md`](PHASE4.md) §5.
 
 ---
 

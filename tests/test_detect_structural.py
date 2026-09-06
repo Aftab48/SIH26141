@@ -265,10 +265,10 @@ def test_the_evidence_bound_is_the_union_of_the_three_tails() -> None:
 
 
 def test_each_abort_reason_carries_its_own_bound_and_they_are_not_summed() -> None:
-    """Eight reasons, eight answers, and the union is over three events not eight.
+    """Nine reasons, nine answers, and the union is over three events not nine.
 
-    Summing the eight would count the same two floor events three times and
-    quote the weakest bound for the four that cost nothing. The per-reason
+    Summing the nine would count the same two floor events three times and
+    quote the weakest bound for the five that cost nothing. The per-reason
     function exists so a report can say how strong *this* abort is.
     """
     params = ProtocolParams(key_length=LENGTH)
@@ -289,7 +289,7 @@ def test_each_abort_reason_carries_its_own_bound_and_they_are_not_summed() -> No
         == HONEST_ABORT_BUDGET
     )
     # COUNTERPART_BELOW_FLOOR at Bob and BELOW_FLOOR at Charlie are the *same
-    # event* seen from two sides, so the eight reason bounds are not a partition
+    # event* seen from two sides, so the nine reason bounds are not a partition
     # to be summed: the run-level union is over the three floor events, and
     # totalling the reasons over-counts.
     assert abort_reason_bound(
@@ -461,6 +461,25 @@ def test_the_three_point_mass_checks_cost_exactly_zero_at_every_budget() -> None
             assert threshold.fires_at == 1
             assert threshold.admissible
             assert threshold.inequality == "none -- point mass at 0"
+
+
+def test_the_structural_null_string_counts_the_reasons_it_describes() -> None:
+    """The null names a number of reasons, and the set holds a number of them.
+
+    Nothing else in the suite compares the two, so the string went stale the
+    day ``UNAUTHORISED_VERIFIER`` joined
+    :data:`~sih141.detect.statistics.STRUCTURAL_ABORT_REASONS` and no test
+    noticed. The null is quoted verbatim in ``docs/PHASE4.md`` and in two
+    recorded transcripts under ``sih141/web/static/data/recorded/``, so a sixth
+    member fails here and the fix is a reword plus
+    ``python tools/phase6_fixtures.py``.
+    """
+    words = ("zero", "one", "two", "three", "four", "five", "six", "seven")
+    expected = words[len(STRUCTURAL_ABORT_REASONS)]
+    assert (
+        f"each of the {expected} structural reasons"
+        in structural_abort_threshold(1e-9).null
+    )
 
 
 def test_a_withheld_check_abstains_rather_than_firing() -> None:

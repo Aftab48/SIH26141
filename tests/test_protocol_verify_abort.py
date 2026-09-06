@@ -1,7 +1,7 @@
 """The matched-count abort rule, and the no-verdict outcome it produces.
 
 Companion to ``tests/test_protocol_verify.py``, kept separate because it pins a
-*new* protocol control rather than the counting rule those tests cover. Six
+*new* protocol control rather than the counting rule those tests cover. Seven
 things are asserted here and nowhere else:
 
 1. A declaration that starves the matched set can no longer crash a run.
@@ -36,6 +36,14 @@ things are asserted here and nowhere else:
    The counts are bound to the declaration they were computed against, and a
    run whose forwarding hop altered the declaration after the exchange is
    refused rather than evaluated on a mixed total.
+7. The authorisation refusal, which is off unless the caller names an
+   authorised recipient set. Off by default, first when it is on -- an
+   unauthorised party is not told the size of the evidence he asked about --
+   and inert for a record that names a party in the set. Also that a set whose
+   members are not parties raises rather than refusing everyone, which is the
+   one way this control can manufacture a security finding out of a typo. What
+   it does *not* do is not testable from here and is stated where the reason
+   is defined: a leaked record still names its owner and passes.
 
 The security point of (2) is easy to miss and is pinned by
 ``test_a_starved_matched_set_that_would_have_been_accepted_now_aborts``: a
@@ -58,6 +66,7 @@ from sih141.protocol.keys import KeyElement, PrivateKey, generate_private_key
 from sih141.protocol.params import (
     DEFAULT_PARAMS,
     DEMO_PARAMS,
+    VERIFIERS,
     Party,
     ProtocolParams,
 )
@@ -1566,3 +1575,220 @@ def test_an_unaltered_hop_is_scored_exactly_as_before() -> None:
         assert transcript.transferable
     assert not rebuilt.forwarding_altered_signature
     assert plain == rebuilt
+
+
+# ==========================================================================
+# 7. Who is asking, on a call that says who may
+# ==========================================================================
+
+
+def _pair_of_records(
+    key: PrivateKey, params: ProtocolParams, *, matched: int
+) -> dict[Party, RecipientRecord]:
+    """Return one symmetrised log per verifier, each matching at ``matched``."""
+    return {
+        party: RecipientRecord(
+            party=party,
+            message_bit=key.message_bit,
+            entries=_record_matching_exactly(
+                key, params, matched=matched, party=party
+            ).entries,
+            symmetrised=True,
+        )
+        for party in VERIFIERS
+    }
+
+
+def test_the_authorisation_check_is_off_unless_the_caller_names_a_set() -> None:
+    """Default ``None``, so every call written before it existed is unchanged.
+
+    Pinned as an equality between the two verdicts rather than as two separate
+    assertions: a check that quietly altered a threshold, a count or a party
+    would pass "still accepted" and fail this.
+    """
+    params = ProtocolParams(key_length=600)
+    key = generate_private_key(params, 0, rng=np.random.default_rng(SEED + 32))
+    signature = sign(0, key, params)
+    record = _record_matching_exactly(
+        key, params, matched=200, party=Party.CHARLIE
+    )
+
+    unchecked = verify(signature, record, params)
+    named = verify(signature, record, params, authorised=frozenset(VERIFIERS))
+    assert unchecked == named
+    assert unchecked.accepted
+
+
+def test_a_party_outside_the_authorised_set_reaches_no_verdict() -> None:
+    """The refusal names him and quotes no count, because none was taken.
+
+    ``matched_count`` is ``0`` here on a record whose matched set holds 200
+    positions, which is exactly the point: the number is not a measurement, and
+    :attr:`AbortReason.UNAUTHORISED_VERIFIER` is what says so. A summary reading
+    ``0/600 positions matched`` would be read as an empty matched set.
+    """
+    params = ProtocolParams(key_length=600)
+    key = generate_private_key(params, 0, rng=np.random.default_rng(SEED + 33))
+    signature = sign(0, key, params)
+    record = _record_matching_exactly(
+        key, params, matched=200, party=Party.CHARLIE
+    )
+    assert len(matched_positions(signature, record)) == 200
+
+    abort = verify_or_abort(
+        signature, record, params, authorised=frozenset({Party.BOB})
+    )
+    assert isinstance(abort, VerificationAbort)
+    assert abort.reason is AbortReason.UNAUTHORISED_VERIFIER
+    assert abort.party is Party.CHARLIE
+    assert abort.matched_count == 0
+    assert abort.shortfall == 0
+    assert not abort.is_pooled
+    assert "positions matched" not in abort.summary()
+    assert "no count was taken" in abort.summary()
+
+    with pytest.raises(MatchedSetTooSmall) as excinfo:
+        verify(signature, record, params, authorised=frozenset({Party.BOB}))
+    message = str(excinfo.value)
+    assert "not in the authorised recipient set" in message
+    assert "not a signature failure" in message
+
+
+def test_the_authorisation_check_runs_before_the_session_and_floor_checks() -> None:
+    """An unauthorised party is not told how much evidence the record holds.
+
+    The probe record fails every other check too -- it is starved *and* stamped
+    with another round -- so the reason that comes back says which check ran
+    first. Both of the others would put a real matched count on the refusal.
+    """
+    params = ProtocolParams(key_length=600)
+    key = generate_private_key(params, 0, rng=np.random.default_rng(SEED + 34))
+    starved = _record_matching_exactly(
+        key, params, matched=1, party=Party.CHARLIE
+    )
+    bound = starved.with_session_id(
+        Signature(0, key, session_opening="round-a").session_id
+    )
+    elsewhere = sign(0, key, params, session_opening="round-b")
+
+    # Without the set, this record refuses on the round it was made in, and a
+    # record of the right round refuses on its floor.
+    assert (
+        verify_or_abort(elsewhere, bound, params).reason
+        is AbortReason.SESSION_MISMATCH
+    )
+    here = sign(0, key, params, session_opening="round-a")
+    on_floor = verify_or_abort(here, bound, params)
+    assert on_floor.reason is AbortReason.BELOW_FLOOR
+    assert on_floor.matched_count == 1
+
+    for declaration in (elsewhere, here):
+        abort = verify_or_abort(
+            declaration, bound, params, authorised=frozenset({Party.BOB})
+        )
+        assert abort.reason is AbortReason.UNAUTHORISED_VERIFIER
+        assert abort.matched_count == 0
+
+
+def test_an_authorised_party_is_scored_exactly_as_without_the_set() -> None:
+    """The check decides nothing about a record that names a party in the set.
+
+    Through :func:`verify_all`, which is where a run passes one set for the
+    pair: the two verdicts are identical with and without it, and naming only
+    one recipient takes the other's verdict away.
+    """
+    params = ProtocolParams(key_length=600)
+    key = generate_private_key(params, 0, rng=np.random.default_rng(SEED + 35))
+    signature = sign(0, key, params)
+    records = _pair_of_records(key, params, matched=200)
+
+    unchecked = verify_all(signature, records, params)
+    named = verify_all(
+        signature, records, params, authorised=frozenset(VERIFIERS)
+    )
+    assert unchecked == named
+    assert all(result.accepted for result in named.values())
+
+    with pytest.raises(MatchedSetTooSmall) as excinfo:
+        verify_all(
+            signature, records, params, authorised=frozenset({Party.BOB})
+        )
+    assert excinfo.value.abort.reason is AbortReason.UNAUTHORISED_VERIFIER
+    assert excinfo.value.abort.party is Party.CHARLIE
+
+
+def test_an_authorised_set_must_be_frozen() -> None:
+    """A mutable set is a wiring error: the round's is fixed before Phase C."""
+    params = ProtocolParams(key_length=600)
+    key = generate_private_key(params, 0, rng=np.random.default_rng(SEED + 36))
+    record = _record_matching_exactly(key, params, matched=200)
+
+    with pytest.raises(TypeError, match="authorised must be a frozenset"):
+        verify(sign(0, key, params), record, params, authorised={Party.BOB})
+
+
+def test_a_member_that_names_no_party_raises_instead_of_refusing_everyone() -> (
+    None
+):
+    """A mis-wired set must be the caller's bug, never a security finding.
+
+    This is the failure the container-type check alone let through. A member
+    that is not a ``Party`` matches no ``record.party``, so *every* verifier
+    would be refused with ``unauthorised-verifier`` -- a reason
+    ``sih141.detect.statistics`` counts as structural and
+    ``sih141.detect.thresholds_structural`` reports at a false-positive
+    probability of exactly zero. A typo would arrive in a Phase 4 table as an
+    adversarial event no honest run can produce.
+    """
+    params = ProtocolParams(key_length=600)
+    key = generate_private_key(params, 0, rng=np.random.default_rng(SEED + 37))
+    signature = sign(0, key, params)
+    record = _record_matching_exactly(key, params, matched=200)
+
+    with pytest.raises(TypeError, match="party must be a Party"):
+        verify(signature, record, params, authorised=frozenset({1}))
+    with pytest.raises(TypeError, match="party must be a Party"):
+        verify(signature, record, params, authorised=frozenset({None}))
+    with pytest.raises(ValueError, match="unknown party 'dave'"):
+        verify(signature, record, params, authorised=frozenset({"dave"}))
+
+
+def test_an_authorised_set_names_parties_the_way_every_other_argument_does() -> (
+    None
+):
+    """``frozenset({"bob"})`` is the same set as ``frozenset({Party.BOB})``.
+
+    Coerced rather than compared raw, which is the rule ``verify_all`` already
+    applies to the keys of ``records`` and ``ledgers``. Pinned as an equality
+    between the two verdicts: a set that silently failed to match would refuse
+    instead, and refusing is exactly what must not happen here.
+    """
+    params = ProtocolParams(key_length=600)
+    key = generate_private_key(params, 0, rng=np.random.default_rng(SEED + 38))
+    signature = sign(0, key, params)
+    record = _record_matching_exactly(key, params, matched=200)
+
+    spelled = verify(signature, record, params, authorised=frozenset({"bob"}))
+    member = verify(
+        signature, record, params, authorised=frozenset({Party.BOB})
+    )
+    assert spelled == member
+    assert spelled.accepted
+
+
+def test_an_empty_authorised_set_is_a_wiring_error_not_a_refusal() -> None:
+    """Authorising nobody is refused the way ``verify_all`` refuses no records.
+
+    An empty set reaches no verdict for anyone, and every one of those refusals
+    would be recorded at a false-positive probability of exactly zero. The way
+    to run no authorisation check is ``None``, which is the default.
+    """
+    params = ProtocolParams(key_length=600)
+    key = generate_private_key(params, 0, rng=np.random.default_rng(SEED + 39))
+    signature = sign(0, key, params)
+    record = _record_matching_exactly(key, params, matched=200)
+
+    with pytest.raises(ValueError, match="at least one recipient"):
+        verify(signature, record, params, authorised=frozenset())
+    with pytest.raises(ValueError, match="at least one recipient"):
+        verify_or_abort(signature, record, params, authorised=frozenset())
