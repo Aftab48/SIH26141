@@ -638,17 +638,33 @@ def defaults_payload() -> dict[str, Any]:
         "noise_null_calibration": {
             "kind": "measured",
             "what": (
-                "honest runs scored against the default noiseless null "
-                "(channel_error_rate = 0.0), both verifiers accepting, "
-                "depolarising noise on the wire only"
+                "honest runs over a depolarising wire, scored against the "
+                "default noiseless null (channel_error_rate = 0.0). The "
+                "denominator is EVERY run at that level, not only the runs "
+                "both verifiers accepted: an honest run over a noisy link "
+                "can still be rejected on its rate, and at the design "
+                "level 16 of the 60 verifier verdicts are rejections. "
+                "Filtering to accepting runs would change what the rate "
+                "means without changing the number printed beside it."
             ),
             "runs_per_level": 30,
-            "source": "Phase 4, Detection.channel_error_rate",
+            "key_length": 384,
+            "check_fraction": 0.25,
+            "source": (
+                "Phase 5 experiment 'noise', 6 cells x 30 trials at "
+                "L = 384, check_fraction 0.25. Every trial's seed is a "
+                "pure function of (experiment, cell, index); see "
+                "docs/tables/noise.md for the provenance commit."
+            ),
+            "regenerate": (
+                "python tools/sweep.py run noise && "
+                "python tools/sweep.py reduce noise"
+            ),
             "levels": [
                 {"noise": 0.0, "detected": 0},
-                {"noise": 0.0025, "detected": 13},
-                {"noise": 0.005, "detected": 17},
-                {"noise": 0.01, "detected": 27},
+                {"noise": 0.0025, "detected": 14},
+                {"noise": 0.005, "detected": 23},
+                {"noise": 0.01, "detected": 28},
                 {"noise": 0.015, "detected": 30},
                 {"noise": 0.03125, "detected": 30},
             ],

@@ -28,14 +28,17 @@
  },
  "noise_null_calibration": {
   "kind": "measured",
-  "source": "Phase 4, the docstring of Detection.channel_error_rate",
-  "what": "Honest runs over a depolarising wire, BOTH VERIFIERS ACCEPTING, scored against detect()'s default noiseless null (channel_error_rate = 0.0). Not a detection rate for any adversary: there is no adversary in any of these runs.",
+  "source": "Phase 5 experiment 'noise', 6 cells x 30 trials at L = 384, check_fraction 0.25. See docs/tables/noise.md for the provenance commit.",
+  "regenerate": "python tools/sweep.py run noise && python tools/sweep.py reduce noise",
+  "key_length": 384,
+  "check_fraction": 0.25,
+  "what": "Honest runs over a depolarising wire, scored against detect()'s default noiseless null (channel_error_rate = 0.0). The denominator is EVERY run at that level, not only the runs both verifiers accepted: at the design level 16 of the 60 verifier verdicts are rejections, because a link that noisy also moves the signature. Not a detection rate for any adversary: there is no adversary in any of these runs.",
   "runs_per_level": 30,
   "levels": [
    {"noise": 0.0, "detected": 0},
-   {"noise": 0.0025, "detected": 13},
-   {"noise": 0.005, "detected": 17},
-   {"noise": 0.01, "detected": 27},
+   {"noise": 0.0025, "detected": 14},
+   {"noise": 0.005, "detected": 23},
+   {"noise": 0.01, "detected": 28},
    {"noise": 0.015, "detected": 30},
    {"noise": 0.03125, "detected": 30}
   ],

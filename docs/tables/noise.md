@@ -2,9 +2,11 @@
 
 **Provenance.**
 
-- commit: `f94d9feb73be`
-- worker counts: [20]
+- commit: **`348442771d75`, `f94d9feb73be`** -- these results span more than one commit, so the table has more than one meaning
+- **the working tree was dirty for at least one run**, so the commit above does not fully describe the code that ran
+- worker counts: [8, 20]
 - produced by: `python tools/sweep.py run noise --workers 20`
+- produced by: `python tools/sweep.py run noise --workers 8`
 
 ### Run outcomes, by cell and count ordering
 
@@ -14,6 +16,8 @@
 | p0025 | before-forwarding | 30 | 60 | 60 | 0 | 0 | 0 |
 | p005 | before-forwarding | 30 | 60 | 60 | 0 | 0 | 0 |
 | p010 | before-forwarding | 30 | 60 | 59 | 1 | 0 | 0 |
+| p015 | before-forwarding | 30 | 60 | 51 | 9 | 0 | 0 |
+| p03125 | before-forwarding | 30 | 60 | 44 | 16 | 0 | 0 |
 
 Regenerate: `python tools/sweep.py reduce noise --results 'C:\Users\Aftab\.sih141\results'`
 
@@ -30,6 +34,8 @@ Regenerate: `python tools/sweep.py reduce noise --results 'C:\Users\Aftab\.sih14
 | p0025 | before-forwarding | channel-noise | 30 | 30 | 14/30 = 0.467 [0.260, 0.685] | no trials | 0 | 3.396e-10 | yes | not evaluated (1) |
 | p005 | before-forwarding | channel-noise | 30 | 30 | 23/30 = 0.767 [0.532, 0.905] | no trials | 0 | 3.396e-10 | yes | not evaluated (1) |
 | p010 | before-forwarding | channel-noise | 30 | 30 | 28/30 = 0.933 [0.723, 0.987] | no trials | 0 | 3.396e-10 | yes | - |
+| p015 | before-forwarding | channel-noise | 30 | 30 | 30/30 = 1.000 [0.819, 1.000] | no trials | 0 | 3.396e-10 | yes | - |
+| p03125 | before-forwarding | channel-noise | 30 | 30 | 30/30 = 1.000 [0.819, 1.000] | no trials | 0 | 3.396e-10 | yes | - |
 
 Regenerate: `python tools/sweep.py reduce noise --results 'C:\Users\Aftab\.sih141\results'`
 
@@ -49,6 +55,8 @@ Regenerate: `python tools/sweep.py reduce noise --results 'C:\Users\Aftab\.sih14
 | p0025 | 384 | 30 | 61.32 | 2.044 | 0.0235 | 5.323 |
 | p005 | 384 | 30 | 60.33 | 2.011 | 0.0228 | 5.237 |
 | p010 | 384 | 30 | 60.97 | 2.032 | 0.0210 | 5.292 |
+| p015 | 384 | 30 | 32.18 | 1.073 | 0.0150 | 2.793 |
+| p03125 | 384 | 30 | 37.19 | 1.240 | 0.0150 | 3.228 |
 
 Regenerate: `python tools/sweep.py reduce noise --results 'C:\Users\Aftab\.sih141\results'`
 

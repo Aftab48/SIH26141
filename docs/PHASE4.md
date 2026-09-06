@@ -793,16 +793,22 @@ the `detect()` docstring, in finding F6, and in `dominance_noise_level()`. The d
 disclosure lives entirely in **prose**, while the machine-readable headline fields carry nothing
 about it. `Detection.to_dict()` has 19 keys and `channel_error_rate` is not one of them.
 
-Reproduced independently at `2e75d91`, honest parties, depolarising noise on the wire only:
+Reproduced independently at `2e75d91`, honest parties, depolarising noise on the wire only.
+**These figures are superseded.** They were measured by an ad-hoc probe with no recorded seed
+and no committed command, which the whole-project audit raised as a D9 failure on the one table
+the dashboard renders as science. Phase 5's `noise` experiment re-measured the same six levels
+at `L = 384`, `check_fraction = 0.25`, 30 trials a level, and the shipped numbers are now those:
+see [docs/tables/noise.md](tables/noise.md), regenerated with `python tools/sweep.py run noise`
+and `python tools/sweep.py reduce noise`. The middle rows moved; the shape did not.
 
-| link error rate | false alarms (n=30) |
-|---|---|
-| 0.00000 | 0/30 |
-| 0.00250 | 13/30 |
-| 0.00500 | 17/30 |
-| 0.01000 | 27/30 |
-| 0.01500 | 30/30 |
-| 0.03125 (= `2*s_a`, the design noise level) | 30/30 |
+| link error rate | false alarms (n=30), as measured here | superseded by |
+|---|---|---|
+| 0.00000 | 0/30 | 0/30 |
+| 0.00250 | 13/30 | 14/30 |
+| 0.00500 | 17/30 | 23/30 |
+| 0.01000 | 27/30 | 28/30 |
+| 0.01500 | 30/30 | 30/30 |
+| 0.03125 (= `2*s_a`, the design noise level) | 30/30 | 30/30 |
 
 Every one of those runs reports `false_positive_bound = 2.7818e-10` and
 `bound_is_unconditional = True`, on runs where **both verifiers accepted**. Passing the true rate

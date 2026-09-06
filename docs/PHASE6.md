@@ -281,8 +281,8 @@ Verified live. `attack = honest`, `noise = 0.03125` (the design level `2·s_a`),
   is mounted. What fired is the null being wrong about the wire."*
 * The ground-truth box: `adversary: none mounted`, and `do the nulls match the link? NO: the
   wire departs from the law the detector was given`.
-* The Phase 4 calibration table sits beside it, every row `MEASURED` with its sample size:
-  `0.0 → 0/30`, `0.0025 → 13/30`, `0.005 → 17/30`, `0.01 → 27/30`, `0.015 → 30/30`,
+* The calibration table sits beside it, every row `MEASURED` with its sample size:
+  `0.0 → 0/30`, `0.0025 → 14/30`, `0.005 → 23/30`, `0.01 → 28/30`, `0.015 → 30/30`,
   `0.03125 → 30/30`, and the line *"0/30 at every level when the link's true rate is passed to
   detect()"*.
 

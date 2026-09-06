@@ -183,7 +183,12 @@ def test_defaults_publishes_the_caps_and_the_headline_bounds(client):
     assert [
         level["detected"]
         for level in payload["noise_null_calibration"]["levels"]
-    ] == [0, 13, 17, 27, 30, 30]
+    ] == [0, 14, 23, 28, 30, 30]
+    # D9: the panel names the parameters it was measured at and the command
+    # that regenerates it. Before the whole-project audit it carried neither.
+    assert payload["noise_null_calibration"]["key_length"] == 384
+    assert payload["noise_null_calibration"]["check_fraction"] == 0.25
+    assert "tools/sweep.py" in payload["noise_null_calibration"]["regenerate"]
 
 
 def test_the_demo_set_is_published_with_its_own_uselessness_attached(client):

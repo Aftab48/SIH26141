@@ -1133,6 +1133,6 @@ Seven experiments ship:
 | `forgery-curve` | Can a declaration be forged, outside and by a recipient, under both count orderings. §8. |
 | `roc` | Detection against a swept false-positive budget, per adversary. §9. |
 | `honest` | Honest runs on a noiseless link at three key lengths. The false-positive arm. |
-| `noise` | Honest parties over a depolarising wire at four strengths, scored against the noiseless null. The arm where `null_is_noiseless` decides whether a row is a false claim. |
+| `noise` | Honest parties over a depolarising wire at six strengths, scored against the noiseless null. The arm where `null_is_noiseless` decides whether a row is a false claim. |
 | `scaling` | Throughput against key length, run through the real runner so the timing table can be checked against the manifest. |
 | `smoke` | Four trials at `L = 96`, for exercising the harness. |

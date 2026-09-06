@@ -1553,12 +1553,18 @@ class Detection:
         over a *noisy* link departs from it and is correctly reported as a
         detection: the arithmetic is right and the row is still a false claim
         if the table does not say which null it was scored against. Measured
-        on honest runs with both verifiers accepting, depolarising noise on
-        the wire only, 30 runs per level: ``0.0`` fires ``0/30``, ``0.0025``
-        fires ``13/30``, ``0.005`` fires ``17/30``, ``0.01`` fires ``27/30``,
-        and from ``0.015`` up -- including the design noise level
-        ``2 s_a = 0.03125`` -- ``30/30``. Passing the true rate gives
-        ``0/30`` at every level. See also :attr:`null_is_noiseless` and
+        by the Phase 5 ``noise`` experiment at ``L = 384``,
+        ``check_fraction = 0.25``, depolarising noise on the wire only,
+        six levels and 30 runs per level, regenerated with
+        ``python tools/sweep.py run noise &&
+        python tools/sweep.py reduce noise``: ``0.0`` fires ``0/30``,
+        ``0.0025`` fires ``14/30``, ``0.005`` fires ``23/30``, ``0.01``
+        fires ``28/30``, and from ``0.015`` up -- including the design noise
+        level ``2 s_a = 0.03125`` -- ``30/30``. The denominator is every run
+        at the level, NOT only the runs both verifiers accepted: at
+        ``0.03125`` sixteen of the sixty verifier verdicts are rejections,
+        because a link that noisy also moves the signature. Passing the true
+        rate gives ``0/30`` at every level. See also :attr:`null_is_noiseless` and
         :func:`sih141.detect.thresholds_rate.dominance_noise_level`.
 
         Phase 4's audit raised this as finding A3-1: the behaviour was

@@ -59,10 +59,12 @@ True
 Every ``noise`` cell but the first departs from the noiseless null the detector
 defaults to, which is exactly the situation Phase 4 audit finding A3-1 is about:
 
->>> [(c.name, c.channel_error_rate) for c in experiment("noise").cells]
-[('clean', 0.0), ('p0025', 0.0), ('p005', 0.0), ('p010', 0.0)]
+>>> [c.name for c in experiment("noise").cells]
+['clean', 'p0025', 'p005', 'p010', 'p015', 'p03125']
+>>> {c.channel_error_rate for c in experiment("noise").cells}
+{0.0}
 >>> [c.scenario_options["strength"] for c in experiment("noise").cells]
-[0.0, 0.0025, 0.005, 0.01]
+[0.0, 0.0025, 0.005, 0.01, 0.015, 0.03125]
 
 One trial, end to end, seeds in and a labelled record out. The detector's
 ``key_length`` is the *signing* length, 72 of the cell's 96 positions, because
@@ -714,7 +716,7 @@ def _noise_experiment() -> Experiment:
     Returns
     -------
     Experiment
-        Honest parties over a depolarising wire at four strengths, every cell
+        Honest parties over a depolarising wire at six strengths, every cell
         scored against the **noiseless** null. That is deliberate and is the
         arm that reproduces Phase 4 audit finding A3-1: an honest run over a
         noisy link departs from a noiseless null and is reported as a
@@ -723,7 +725,17 @@ def _noise_experiment() -> Experiment:
         rather than decorative.
     """
     params = ProtocolParams(key_length=384, check_fraction=0.25)
-    levels = (("clean", 0.0), ("p0025", 0.0025), ("p005", 0.005), ("p010", 0.01))
+    # The last two carry the dashboard's calibration panel, whose figures had no
+    # recorded seed or command until they were measured here. 0.03125 is 2*s_a,
+    # the design noise level, and is the row the panel's warning is about.
+    levels = (
+        ("clean", 0.0),
+        ("p0025", 0.0025),
+        ("p005", 0.005),
+        ("p010", 0.01),
+        ("p015", 0.015),
+        ("p03125", 0.03125),
+    )
     return Experiment(
         name="noise",
         description=(
