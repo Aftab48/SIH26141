@@ -2,10 +2,8 @@
 
 **Provenance.**
 
-- commit: **`348442771d75`, `f94d9feb73be`** -- these results span more than one commit, so the table has more than one meaning
-- **the working tree was dirty for at least one run**, so the commit above does not fully describe the code that ran
-- worker counts: [8, 20]
-- produced by: `python tools/sweep.py run noise --workers 20`
+- commit: `b52a2a9eaccd`
+- worker counts: [8]
 - produced by: `python tools/sweep.py run noise --workers 8`
 
 ### Run outcomes, by cell and count ordering
@@ -51,12 +49,12 @@ Regenerate: `python tools/sweep.py reduce noise --results 'C:\Users\Aftab\.sih14
 
 | cell | key_length | trials | session s (total) | session s (mean) | detect s (mean) | ms/position |
 | --- | --- | --- | --- | --- | --- | --- |
-| clean | 384 | 30 | 59.78 | 1.993 | 0.0296 | 5.189 |
-| p0025 | 384 | 30 | 61.32 | 2.044 | 0.0235 | 5.323 |
-| p005 | 384 | 30 | 60.33 | 2.011 | 0.0228 | 5.237 |
-| p010 | 384 | 30 | 60.97 | 2.032 | 0.0210 | 5.292 |
-| p015 | 384 | 30 | 32.18 | 1.073 | 0.0150 | 2.793 |
-| p03125 | 384 | 30 | 37.19 | 1.240 | 0.0150 | 3.228 |
+| clean | 384 | 30 | 32.40 | 1.080 | 0.0149 | 2.812 |
+| p0025 | 384 | 30 | 39.07 | 1.302 | 0.0156 | 3.392 |
+| p005 | 384 | 30 | 37.74 | 1.258 | 0.0134 | 3.276 |
+| p010 | 384 | 30 | 38.30 | 1.277 | 0.0154 | 3.325 |
+| p015 | 384 | 30 | 39.63 | 1.321 | 0.0159 | 3.440 |
+| p03125 | 384 | 30 | 39.95 | 1.332 | 0.0165 | 3.468 |
 
 Regenerate: `python tools/sweep.py reduce noise --results 'C:\Users\Aftab\.sih141\results'`
 

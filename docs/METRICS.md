@@ -2,13 +2,13 @@
 
 **SIH26141**: Quantum-Inspired Cyber Threat Detection for Digital Signature Security
 
-Generated `2026-09-06 00:16 UTC` by `tools/metrics.py`. Every figure is computed from the
+Generated `2026-09-06 03:04 UTC` by `tools/metrics.py`. Every figure is computed from the
 repository, so do not edit by hand, re-run the script.
 
 ## Test suite
 
 ```
-3819 passed in 1487.01s (0:24:47)
+3819 passed in 1474.29s (0:24:34)
 ```
 
 - Doctests collected from package modules: **481**
@@ -47,13 +47,13 @@ repository, so do not edit by hand, re-run the script.
 | `sih141/attacks/starvation.py` | 1678 | 333 | 1115 | 21 | 27 | 4 |
 | `sih141/attacks/statistics.py` | 570 | 158 | 323 | 3 | 14 | 1 |
 | `sih141/detect/__init__.py` | 572 | 263 | 259 | 8 | 2 | 1 |
-| `sih141/detect/detector.py` | 2652 | 927 | 1388 | 85 | 27 | 8 |
+| `sih141/detect/detector.py` | 2658 | 927 | 1394 | 85 | 27 | 8 |
 | `sih141/detect/statistics.py` | 3326 | 963 | 1939 | 61 | 56 | 10 |
 | `sih141/detect/thresholds_channel.py` | 2905 | 591 | 1865 | 81 | 34 | 3 |
 | `sih141/detect/thresholds_rate.py` | 3216 | 753 | 2003 | 73 | 43 | 4 |
 | `sih141/detect/thresholds_structural.py` | 3138 | 668 | 2024 | 51 | 43 | 8 |
 | `sih141/eval/__init__.py` | 286 | 200 | 76 | 0 | 0 | 0 |
-| `sih141/eval/experiments.py` | 888 | 277 | 492 | 3 | 16 | 2 |
+| `sih141/eval/experiments.py` | 900 | 284 | 494 | 6 | 16 | 2 |
 | `sih141/eval/manifest.py` | 516 | 191 | 269 | 0 | 11 | 1 |
 | `sih141/eval/perf.py` | 1119 | 431 | 527 | 10 | 11 | 1 |
 | `sih141/eval/records.py` | 791 | 227 | 473 | 0 | 16 | 2 |
@@ -65,15 +65,15 @@ repository, so do not edit by hand, re-run the script.
 | `sih141/eval/store.py` | 448 | 82 | 299 | 0 | 16 | 1 |
 | `sih141/web/__init__.py` | 145 | 34 | 96 | 0 | 0 | 0 |
 | `sih141/web/__main__.py` | 357 | 97 | 190 | 21 | 4 | 0 |
-| `sih141/web/api.py` | 921 | 334 | 443 | 35 | 16 | 3 |
+| `sih141/web/api.py` | 937 | 350 | 443 | 35 | 16 | 3 |
 | `sih141/web/catalogue.py` | 583 | 317 | 207 | 7 | 5 | 1 |
 | `sih141/web/driver.py` | 1250 | 512 | 562 | 40 | 12 | 3 |
 | `sih141/web/limits.py` | 1070 | 277 | 578 | 78 | 14 | 2 |
 | `sih141/web/payload.py` | 696 | 277 | 341 | 10 | 9 | 0 |
-| **total** | **74813** | **20149** | **44110** | **1602** | **1151** | **134** |
+| **total** | **74847** | **20172** | **44118** | **1605** | **1151** | **134** |
 
-Tests: **48887 lines** across **43 files**, **2348 test functions** defined.
-Test-lines to code-lines ratio: **2.43 : 1**
+Tests: **48892 lines** across **43 files**, **2348 test functions** defined.
+Test-lines to code-lines ratio: **2.42 : 1**
 
 ## Live security parameters
 
@@ -101,24 +101,26 @@ actually computes today, not what a document once claimed.
 | --- | ---: |
 | `README.md` | 6378 |
 | `JOURNAL.md` | 92394 |
-| `docs/METRICS.md` | 1461 |
+| `docs/METRICS.md` | 1478 |
 | `docs/PHASE1.md` | 4038 |
 | `docs/PHASE2.md` | 9968 |
 | `docs/PHASE3.md` | 14827 |
-| `docs/PHASE4.md` | 9547 |
+| `docs/PHASE4.md` | 9650 |
 | `docs/PHASE5.md` | 12630 |
-| `docs/PHASE6.md` | 12345 |
+| `docs/PHASE6.md` | 12343 |
 | `docs/QDS.md` | 5458 |
-| **total** | **169046** |
+| **total** | **169164** |
 
 Working-journal entries: **239** (temporary; deleted at the end of Phase 7).
 
 ## Repository
 
-- Commits: **30**
+- Commits: **32**
 
 | Commit | Subject |
 | --- | --- |
+| `b52a2a9` | Measure the dashboard's calibration panel to the D9 standard |
+| `3484427` | Close the whole-project audit: 32 of 35 defects fixed, three deferred |
 | `37454a5` | Update the docs to the latest data |
 | `98d55cb` | Re-run the Phase 5 sweep from a clean tree: same results, provable provenance |
 | `f94d9fe` | Close the Phase 5 audit: nine defects fixed, the sweep run end to end |
@@ -142,5 +144,3 @@ Working-journal entries: **239** (temporary; deleted at the end of Phase 7).
 | `e36e7b1` | Add channel monitor, restrict signer seam, build and verify five attacks |
 | `658f2ff` | Add sampled check rounds for channel parameter estimation |
 | `ea5ba71` | Add replay defence: session binding and consumed-records ledger |
-| `5983c00` | Enforce declaration binding and add attack randomness isolation |
-| `cf35087` | Close Phase 2: fix stale claims and verify at full scale |
