@@ -216,7 +216,10 @@ def main() -> int:
     add("| File | Words |")
     add("| --- | ---: |")
     doc_total = 0
-    candidates = [ROOT / "README.md", ROOT / "JOURNAL.md", *sorted((ROOT / "docs").glob("*.md"))]
+    # JOURNAL.md is deliberately absent: it still exists on disk for whoever is
+    # working here, but Phase 7 took it out of the repository, and a generated
+    # table that counts untracked files describes something a clone does not get.
+    candidates = [ROOT / "README.md", *sorted((ROOT / "docs").glob("*.md"))]
     for f in candidates:
         if f.exists():
             words = len(f.read_text(encoding="utf-8").split())
@@ -224,12 +227,6 @@ def main() -> int:
             add(f"| `{f.relative_to(ROOT).as_posix()}` | {words} |")
     add(f"| **total** | **{doc_total}** |")
     add("")
-
-    entries = ROOT / "journal" / "entries"
-    if entries.is_dir():
-        add(f"Working-journal entries: **{len(list(entries.glob('*.md')))}** "
-            "(temporary; deleted at the end of Phase 7).")
-        add("")
 
     # ------------------------------------------------------------------- git
     add("## Repository")

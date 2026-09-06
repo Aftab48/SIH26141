@@ -12,6 +12,13 @@ results/
 sweep-results/
 .sih141/
 
-# Working-journal entry files: the rendered JOURNAL.md is tracked instead.
-# Both are temporary and get dropped at the end of Phase 7.
-journal/entries/
+# The working journal: individual entries under `journal/entries/` and the
+# `JOURNAL.md` that `tools/journal.py render` builds from them. It was the
+# build-time decision log and Phase 7 ended it, so it leaves the repository
+# rather than shipping 92k words of scaffolding to a reader. Both stay on disk.
+journal/
+JOURNAL.md
+
+# Editor and dev-server configuration. `launch.json` names a local port for the
+# preview pane, which is tooling for whoever is working on this, not part of it.
+.claude/

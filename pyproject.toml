@@ -19,7 +19,7 @@ addopts = "-q --strict-markers --doctest-modules"
 [tool.pyright]
 # Pyright (the engine behind Pylance in the editor) is not a gate: it is not in
 # `requirements.txt`, nothing runs it in CI, and the suite's authority is the
-# 3460 tests. It is configured because a second, independent checker is worth
+# 3819 tests. It is configured because a second, independent checker is worth
 # having -- but only if its output is short enough to read. Unconfigured it
 # reports 519 errors, not one of which is a runtime bug, and a checker nobody
 # reads catches nothing.

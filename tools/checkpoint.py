@@ -14,14 +14,14 @@ DECISION RULES
 1. Nothing changed              -> do nothing, report, exit 0.
 2. Only ignorable churn changed -> do nothing, report, exit 0.
    ("ignorable" = files the project regenerates or that carry no source meaning:
-    JOURNAL.md and docs/METRICS.md on their own are not a reason to commit, though
-    they ARE included once something else justifies the commit.)
+    docs/METRICS.md on its own is not a reason to commit, though it IS included
+    once something else justifies the commit.)
 3. Suite is red                 -> do NOT commit, report loudly, exit 0 unless
                                    --strict. Never push a broken tree.
 4. Otherwise                    -> stage all, commit with the one-line label, push.
 
 The commit subject is exactly --label, capped at 72 characters and never given a body.
-Detail belongs in JOURNAL.md and docs/PHASE*.md, not in git history.
+Detail belongs in docs/PHASE*.md, not in git history.
 """
 
 from __future__ import annotations
@@ -36,8 +36,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 MAX_SUBJECT = 72
 
-# Changed on their own, these do not justify a commit; alongside real work they ride along.
-IGNORABLE = {"JOURNAL.md", "docs/METRICS.md"}
+# Changed on its own, this does not justify a commit; alongside real work it rides along.
+# JOURNAL.md used to be here too, until Phase 7 took the journal out of the repository:
+# it is gitignored now, so it can no longer reach `git status` for this set to catch.
+IGNORABLE = {"docs/METRICS.md"}
 
 
 def git(*args: str, check: bool = False) -> tuple[int, str]:

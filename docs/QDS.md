@@ -691,5 +691,4 @@ codebase, including the live security parameters read straight out of the packag
 
 *Generated figures come from `docs/METRICS.md`. The submission documents are
 [MODELLING.md](MODELLING.md), [SECURITY.md](SECURITY.md) and [ATTACKS.md](ATTACKS.md).
-Per-phase engineering detail is in `docs/PHASE1.md` and `docs/PHASE2.md`. The running decision
-log is `JOURNAL.md`.*
+Per-phase engineering detail is in `docs/PHASE1.md` and `docs/PHASE2.md`.*
