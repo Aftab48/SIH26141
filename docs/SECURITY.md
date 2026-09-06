@@ -561,15 +561,26 @@ the threat decomposes by how that party obtains one, and the three routes have t
 answers: he invents a record, he holds a recipient's stolen one, or he builds one off the Phase A
 wire.
 
+**Three routes, three answers.** Route three, a record built off the Phase A wire, is a channel
+attack wearing a different name: no-cloning forbids copying the states, so he measures and
+disturbs, and §4's screen already catches him at `40/40`. Route one, an invented record, is refused
+at the interface and, more usefully, is answered by proof rather than by a rate: §9.1 measures his
+mismatch at `0.4994`/`0.5043` against Alice's genuine declaration and `0.5052`/`0.5042` against one
+she never made, so his verdict is independent of what the declaration says and there is no
+successful verification to detect. Route two, a stolen recipient log, is assumption **(RECORD
+SECRECY)** in §2, in the same table and the same register as **(AUTH)**.
+
 **The control, and what it cannot do, said together.** `sih141.protocol.verify.verify` takes an
 optional `authorised` set of parties and refuses a record whose party is outside it, before any
 count is read, as `AbortReason.UNAUTHORISED_VERIFIER`. What it tests is the identity the record
 *declares*, and `RecipientRecord.party` is written by whoever built the record. So it refuses the
 party who holds no distribution data and had to invent an identity along with the entries, and it
 is powerless against a party holding a genuine recipient's log, because that log still says "Bob"
-and passes the check its owner passes. Route one is refused at the interface. Route two is
-assumption **(RECORD SECRECY)** in §2, and nothing in this repository detects it. Route three is a
-channel attack wearing a different name and is already screened as one. No field in a record binds
+and passes the check its owner passes. For route two that limit is not this implementation's:
+verification is a pure function of a declaration, a record and the parameters, so separating the
+thief's run from the owner's would mean separating two evaluations of one function on one
+argument. The event worth catching there is the theft, which happens outside the protocol, which is
+why it is written as an assumption rather than left as a gap. No field in a record binds
 it to a holder, none is derivable from its two columns, and the round identifier binds a
 declaration to a *round* rather than to a person, so the second of those is a property of the
 scheme and not an implementation gap waiting on a later phase.

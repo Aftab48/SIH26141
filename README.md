@@ -44,7 +44,7 @@ inequalities. That yields a *provable* false-acceptance bound rather than an obs
 | **Replay** | Re-sends a previously valid (message, signature) pair | Consumed-records ledger; round identifier on every declaration | `100/100` → `0/100` with the defence; cross-session `0.115` → `0/100` | `40/40` both orderings, named with recipient forgery; both hold the forwarding hop |
 | **Channel manipulation** | Tampers with entanglement distribution (intercept-resend, kept share, injected noise) | Per-link QBER rises; CHSH falls from 2√2, and the *per-link* form is what names the compromised party | QBER `0.0994`/`0.3306`/`0.3335` on predictions `p/2`, `1/3`, `1/3` | `40/40` on all four attacks, at `check_fraction` `0.0` **and** `0.25` |
 | **Count starvation** | A recipient understates his own matched count and denies the other a verdict | The declared count as a z-score: any successful starvation sits below `−11.54` honest standard deviations, at every key length | denial `20/20`, deterministic and free, one integer | `40/40` both orderings, named **alone** |
-| **Unauthorised verification** | A party outside the round's authorised recipient set reaches a verdict on the declaration | None that is worth calling detection. Verification needs a recipient's record, and the three ways to get one end differently: an invented record, a stolen one, or one built off the wire | invented: `0/200` accepted at mismatch `0.4994`/`0.5043`, and the *same* record scores a declaration Alice never made at `0.5052`/`0.5042`, so his verdict is void rather than wrong | not a detector row. `verify(authorised=...)` refuses a party who does not claim to be a recipient; a **stolen record still names its owner**, so nothing here detects that, and it is assumption (RECORD SECRECY). A record built off the wire is intercept-resend and is the channel row above |
+| **Unauthorised verification** | A party outside the round's authorised recipient set reaches a verdict on the declaration | Three routes to a record, three answers. Built off the wire it is intercept-resend and the channel row above catches it; invented, the verdict is refused and proven to carry no information; stolen, it is assumption (RECORD SECRECY) | invented: `0/200` accepted at mismatch `0.4994`/`0.5043`, and the *same* record scores a declaration Alice never made at `0.5052`/`0.5042`, so his verdict is void rather than wrong | `40/40` on the wire route, via the channel screen. `verify(authorised=...)` refuses a party who does not claim to be a recipient, and the fabricated route is answered by proof rather than by a rate: his verdict is independent of the declaration. A **stolen record still names its owner**, so no check distinguishes it from its owner, which is what (RECORD SECRECY) states |
 
 **Objective 2 of the problem statement asks for four things, and this is what it gets.** It reads
 *"Detect digital signature forgery, impersonation, replay attacks, and unauthorized verification
@@ -52,15 +52,21 @@ attempts."* Forgery and replay are detected, at `40/40 = 1.000 [0.858, 1.000]` (
 a proven false-positive bound of `3.3964e-10`. Impersonation is detected at the same rate for
 either seam alone and **not detected for both seams at once**, which is
 `undetectable-by-construction` under assumption (AUTH); "three of four" carries that asterisk,
-because the scope the assumption excludes is the strongest one. The fourth, unauthorised
-verification, is **decomposed and answered rather than detected**: a fabricated record yields a
-verdict carrying no information about the signature (`0/200` accepted, and the same mismatch rate
-on a declaration Alice never made as on a genuine one), a leaked record is byte-indistinguishable
-from its owner's and is assumption (RECORD SECRECY), and a record built off the wire is
-intercept-resend and is the channel row above. **No detector in this repository fires on an
-unauthorised verification attempt as such.** The `authorised` argument that refuses the fabricator
-is off by default, is never passed by `QDSSession`, and produced no published number here, so it is
-an interface a deployment could use and not a defence this one runs. Long form:
+because the scope the assumption excludes is the strongest one. The fourth, unauthorised verification, **decomposes into three
+routes and all three are answered.** Verification consumes one resource, a recipient's record, so
+the routes are the ways of getting one. Built off the Phase A wire, it is intercept-resend and the
+channel screen detects it, `40/40`. Invented, the answer is stronger than a detection rate: his
+mismatch rate is `0.4994`/`0.5043` on Alice's genuine declaration and `0.5052`/`0.5042` on a
+declaration she never made, intervals overlapping, so his verdict is **statistically independent of
+whether the signature is real** and `verify(authorised=...)` refuses him at the interface besides.
+Stolen, the holder's verification is byte-identical to its owner's in every transcript field, and
+that is assumption **(RECORD SECRECY)** in the same table and the same register as (AUTH).
+
+Two things that reading leaves out, both stated wherever the claim appears. **No detector in this
+repository fires on an unauthorised verification attempt as such**, and for the leaked record none
+could: a check would have to separate two runs of one pure function on one argument. And the
+`authorised` argument is off by default, is never passed by `QDSSession`, and produced no published
+number here, so it is an interface a deployment could use and not a defence this one runs. Long form:
 [docs/SECURITY.md §13](docs/SECURITY.md#13-objective-2-threat-by-threat).
 
 ## Security claims, stated honestly
