@@ -69,6 +69,54 @@ const Fmt = (function () {
     return `${parts[0]}e${sign}${pad}${digits}`;
   }
 
+  /** Superscript glyphs for an exponent, so a bound reads as a number. */
+  const SUPERSCRIPT = {
+    0: "⁰",
+    1: "¹",
+    2: "²",
+    3: "³",
+    4: "⁴",
+    5: "⁵",
+    6: "⁶",
+    7: "⁷",
+    8: "⁸",
+    9: "⁹",
+    "-": "⁻",
+    "+": "",
+  };
+
+  /**
+   * Render a probability for a room to read: `3.86 × 10⁻¹⁰`.
+   *
+   * The same value `exp` renders as `3.8649e-10`, at three figures instead of
+   * five. That is the right trade on a screen someone reads from across a
+   * hall, and the wrong one in the full report, which is why this is a second
+   * function and `exp` is untouched: the report still prints the figure
+   * exactly as the detector's own summary does.
+   *
+   * @param {number|null|undefined} value
+   * @returns {string}
+   */
+  function sci(value) {
+    if (!present(value)) {
+      return ABSENT;
+    }
+    if (value === 0) {
+      return "0";
+    }
+    const parts = value.toExponential(2).split("e");
+    if (parts[1] === "+0") {
+      return parts[0];
+    }
+    const power = parts[1]
+      .split("")
+      .map(function (char) {
+        return SUPERSCRIPT[char];
+      })
+      .join("");
+    return `${parts[0]} × 10${power}`;
+  }
+
   /**
    * Render a value with a fixed number of decimal places.
    *
@@ -204,5 +252,6 @@ const Fmt = (function () {
     millis: millis,
     present: present,
     rate: rate,
+    sci: sci,
   };
 })();

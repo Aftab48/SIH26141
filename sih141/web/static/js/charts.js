@@ -150,17 +150,17 @@ const Charts = (function () {
       patternUnits: "userSpaceOnUse",
       patternTransform: "rotate(45)",
     });
+    // Colours are classes, not attributes, so the theme lives in app.css.
     pattern.appendChild(
-      el("rect", { width: 8, height: 8, fill: "#e8eaee" })
+      el("rect", { class: "hatch-ground", width: 8, height: 8 })
     );
     pattern.appendChild(
       el("line", {
+        class: "hatch-line",
         x1: 0,
         y1: 0,
         x2: 0,
         y2: 8,
-        stroke: "#8b93a1",
-        "stroke-width": 3,
       })
     );
     defs.appendChild(pattern);
@@ -377,5 +377,368 @@ const Charts = (function () {
     return svg;
   }
 
-  return { bars: bars };
+  /* ---------------------------------------------------------------------- *
+   * The bench
+   * ---------------------------------------------------------------------- */
+
+  const XLINK = "http://www.w3.org/1999/xlink";
+  const BENCH_WIDTH = 1000;
+  const BENCH_HEIGHT = 520;
+
+  /**
+   * Where the three parties are bolted down. Fixed, because three is not a
+   * variable: every claim the scheme makes is about a SECOND verifier, so a
+   * session always has both. The layout follows the signature's own path.
+   * Alice on the left, Bob top right because he is asked first, Charlie below
+   * him because what Charlie scores arrives through Bob.
+   */
+  const MOUNTS = {
+    alice: { x: 40, y: 190, w: 210, h: 140 },
+    bob: { x: 750, y: 24, w: 214, h: 132 },
+    charlie: { x: 750, y: 364, w: 214, h: 132 },
+  };
+
+  /**
+   * Every path a message can take, each drawn FROM its source TO its target.
+   *
+   * Direction lives in the geometry rather than in the animation, so a photon
+   * travelling `private-up` needs no second keyframe: it follows a path that
+   * already runs upward. `private-up` is never drawn as a line of its own, it
+   * is the same wire as `private-down` walked the other way.
+   */
+  const ROUTES = {
+    "beam-bob": { d: "M 250 222 C 500 222, 500 70, 750 70", kind: "beam" },
+    "cable-bob": { d: "M 250 262 C 520 262, 520 128, 750 128", kind: "cable" },
+    "beam-charlie": {
+      d: "M 250 298 C 500 298, 500 450, 750 450",
+      kind: "beam",
+    },
+    forward: { d: "M 800 156 L 800 364", kind: "cable" },
+    "private-down": { d: "M 910 156 L 910 364", kind: "private" },
+    "private-up": { d: "M 910 364 L 910 156", kind: "private", hidden: true },
+  };
+
+  /**
+   * The midpoint of each route, where a spliced-in adversary sits.
+   *
+   * Constants rather than a runtime bezier evaluation, and checked by hand:
+   * a cubic's midpoint is (P0 + 3 P1 + 3 P2 + P3) / 8, which for `beam-bob`
+   * is (500, 146). Evaluating it here instead would be arithmetic whose only
+   * output is a position that never changes.
+   */
+  const SLOTS = {
+    "beam-bob": [500, 146],
+    "cable-bob": [515, 195],
+    "beam-charlie": [500, 374],
+    forward: [800, 260],
+    "private-down": [910, 260],
+  };
+
+  /**
+   * Append the bench's shared definitions: hazard stripes, glow, arrowhead,
+   * and one addressable copy of every route for the particles to follow.
+   *
+   * @param {SVGElement} svg
+   * @param {number} serial
+   * @returns {void}
+   */
+  function benchDefs(svg, serial) {
+    const defs = el("defs", {});
+
+    const hazard = el("pattern", {
+      id: `hazard-${serial}`,
+      width: 12,
+      height: 12,
+      patternUnits: "userSpaceOnUse",
+      patternTransform: "rotate(45)",
+    });
+    hazard.appendChild(
+      el("rect", { class: "hazard-ground", width: 12, height: 12 })
+    );
+    hazard.appendChild(
+      el("rect", { class: "hazard-stripe", width: 6, height: 12 })
+    );
+    defs.appendChild(hazard);
+
+    const glow = el("filter", {
+      id: `glow-${serial}`,
+      x: "-100%",
+      y: "-100%",
+      width: "300%",
+      height: "300%",
+    });
+    glow.appendChild(
+      el("feGaussianBlur", { stdDeviation: 4, result: "blur" })
+    );
+    const merge = el("feMerge", {});
+    merge.appendChild(el("feMergeNode", { in: "blur" }));
+    merge.appendChild(el("feMergeNode", { in: "SourceGraphic" }));
+    glow.appendChild(merge);
+    defs.appendChild(glow);
+
+    const arrow = el("marker", {
+      id: `arrow-${serial}`,
+      viewBox: "0 0 10 10",
+      refX: 8,
+      refY: 5,
+      markerWidth: 6,
+      markerHeight: 6,
+      orient: "auto-start-reverse",
+    });
+    arrow.appendChild(
+      el("path", { class: "arrow-head", d: "M 0 0 L 10 5 L 0 10 z" })
+    );
+    defs.appendChild(arrow);
+
+    Object.keys(ROUTES).forEach(function (id) {
+      defs.appendChild(
+        el("path", { id: `route-${serial}-${id}`, d: ROUTES[id].d })
+      );
+    });
+
+    svg.appendChild(defs);
+  }
+
+  /**
+   * Put moving particles on one live route.
+   *
+   * Light is drawn as several glowing points close together and a classical
+   * message as fewer, flatter pulses, so the two kinds of channel read
+   * differently before anyone reads a label. Speed is a constant: nothing
+   * about how fast a particle moves is read off the run.
+   *
+   * @param {SVGElement} svg
+   * @param {Object} flow `{route}`.
+   * @param {number} serial
+   * @returns {void}
+   */
+  function particles(svg, flow, serial) {
+    const route = ROUTES[flow.route];
+    const href = `#route-${serial}-${flow.route}`;
+    const isBeam = route.kind === "beam";
+    const count = isBeam ? 4 : 2;
+    const seconds = isBeam ? 1.6 : 2.2;
+    for (let index = 0; index < count; index += 1) {
+      const node = isBeam
+        ? el("circle", {
+            class: "photon",
+            r: 5,
+            filter: `url(#glow-${serial})`,
+          })
+        : el("rect", {
+            class: `pulse is-${route.kind}`,
+            x: -10,
+            y: -4,
+            width: 20,
+            height: 8,
+            rx: 4,
+          });
+      const motion = el("animateMotion", {
+        dur: `${seconds}s`,
+        repeatCount: "indefinite",
+        begin: `${(-seconds / count) * index}s`,
+        rotate: "auto",
+      });
+      const mpath = el("mpath", { href: href });
+      mpath.setAttributeNS(XLINK, "xlink:href", href);
+      motion.appendChild(mpath);
+      node.appendChild(motion);
+      svg.appendChild(node);
+    }
+  }
+
+  /**
+   * Draw one party's mount.
+   *
+   * @param {SVGElement} svg
+   * @param {Object} party
+   * @param {number} serial
+   * @returns {void}
+   */
+  function mount(svg, party, serial) {
+    const box = MOUNTS[party.id];
+    if (!box) {
+      return;
+    }
+    svg.appendChild(
+      el("rect", {
+        class: `mount ${party.className || ""} ${
+          party.scanning ? "is-scanning" : ""
+        }`,
+        x: box.x,
+        y: box.y,
+        width: box.w,
+        height: box.h,
+        rx: 6,
+      })
+    );
+    if (party.impersonated) {
+      svg.appendChild(
+        el("rect", {
+          class: "mount-hazard",
+          x: box.x,
+          y: box.y,
+          width: box.w,
+          height: box.h,
+          rx: 6,
+          stroke: `url(#hazard-${serial})`,
+        })
+      );
+    }
+    // Bolt holes. Hardware on a breadboard is bolted at its corners, and the
+    // four dots are what make a rounded rectangle read as a mount rather than
+    // as one more card.
+    [
+      [box.x + 13, box.y + 13],
+      [box.x + box.w - 13, box.y + 13],
+      [box.x + 13, box.y + box.h - 13],
+      [box.x + box.w - 13, box.y + box.h - 13],
+    ].forEach(function (point) {
+      svg.appendChild(
+        el("circle", { class: "bolt", cx: point[0], cy: point[1], r: 3.5 })
+      );
+    });
+    svg.appendChild(
+      text(box.x + 26, box.y + 50, party.name, "mount-name", "start")
+    );
+    svg.appendChild(
+      text(box.x + 26, box.y + 74, party.role || "", "mount-role", "start")
+    );
+    if (party.stateLabel) {
+      svg.appendChild(
+        text(
+          box.x + 26,
+          box.y + box.h - 22,
+          party.stateLabel,
+          `mount-state ${party.className || ""}`,
+          "start"
+        )
+      );
+    }
+  }
+
+  /**
+   * Draw one adversary as a component spliced into the route it holds.
+   *
+   * @param {SVGElement} svg
+   * @param {Object} adversary `{route, label, className}`.
+   * @param {number} serial
+   * @returns {void}
+   */
+  function component(svg, adversary, serial) {
+    const slot = SLOTS[adversary.route];
+    if (!slot) {
+      return;
+    }
+    svg.appendChild(
+      el("rect", {
+        class: `adversary ${adversary.className || ""}`,
+        x: slot[0] - 66,
+        y: slot[1] - 20,
+        width: 132,
+        height: 40,
+        rx: 5,
+        stroke: `url(#hazard-${serial})`,
+      })
+    );
+    svg.appendChild(
+      text(
+        slot[0],
+        slot[1] + 5,
+        adversary.label || "",
+        "adversary-label",
+        "middle"
+      )
+    );
+  }
+
+  /**
+   * Draw the session on the bench.
+   *
+   * WHAT MOVES, AND WHAT IT MEANS. Particles travel the routes that are live in
+   * the current phase, in the direction the message goes. They carry the order
+   * of the protocol and the direction of each hop, both facts about the
+   * protocol. They encode no rate, no count and no verdict, and the page that
+   * uses this says so.
+   *
+   * WHAT IS HARNESS KNOWLEDGE. Adversaries, impersonation and a noisy link are
+   * what the simulator did, and the detector never sees any of them. The
+   * caller is responsible for labelling this drawing as the simulator's
+   * record and keeping the detector's conclusion in a separate pane.
+   *
+   * @param {Object} options
+   * @param {string} options.title Accessible title.
+   * @param {Array<Object>} options.parties `{id, name, role, stateLabel,
+   *   className, scanning, impersonated}`.
+   * @param {Array<Object>} options.live `{route}`: the routes carrying a
+   *   message in this phase.
+   * @param {Array<Object>} options.adversaries `{route, label, className}`.
+   * @param {Array<string>} options.noisy Route ids of links the simulator
+   *   ran with channel noise.
+   * @returns {SVGElement}
+   */
+  function bench(options) {
+    patternSerial += 1;
+    const serial = patternSerial;
+    const noisy = {};
+    (options.noisy || []).forEach(function (id) {
+      noisy[id] = true;
+    });
+
+    const svg = el("svg", {
+      class: "bench-svg",
+      viewBox: `0 0 ${BENCH_WIDTH} ${BENCH_HEIGHT}`,
+      role: "img",
+      "aria-label": options.title || "the session",
+    });
+    const titleNode = el("title", {});
+    titleNode.textContent = options.title || "the session";
+    svg.appendChild(titleNode);
+    benchDefs(svg, serial);
+
+    Object.keys(ROUTES).forEach(function (id) {
+      const route = ROUTES[id];
+      if (route.hidden) {
+        return;
+      }
+      svg.appendChild(
+        el("path", {
+          class: `route is-${route.kind} ${noisy[id] ? "is-noisy" : ""}`,
+          d: route.d,
+        })
+      );
+    });
+
+    (options.live || []).forEach(function (flow) {
+      const route = ROUTES[flow.route];
+      if (!route) {
+        return;
+      }
+      svg.appendChild(
+        el("path", {
+          class: `route-live is-${route.kind}`,
+          d: route.d,
+          "marker-end": `url(#arrow-${serial})`,
+        })
+      );
+    });
+
+    (options.live || []).forEach(function (flow) {
+      if (ROUTES[flow.route]) {
+        particles(svg, flow, serial);
+      }
+    });
+
+    (options.parties || []).forEach(function (party) {
+      mount(svg, party, serial);
+    });
+
+    (options.adversaries || []).forEach(function (adversary) {
+      component(svg, adversary, serial);
+    });
+
+    return svg;
+  }
+
+  return { bars: bars, bench: bench };
 })();

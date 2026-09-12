@@ -2317,18 +2317,1763 @@ const Render = (function () {
   }
 
   /* ---------------------------------------------------------------------- *
+   * The presentation layer: vocabulary
+   *
+   * Everything below this line is the screen a room looks at. Everything above
+   * it is the full report, kept whole, for the person who asks to check a
+   * number. The two share one rule and one source: every string is either the
+   * API's or `Fmt` applied to a value the API sent.
+   * ---------------------------------------------------------------------- */
+
+  /** A verifier's outcome in the words a room reads. Still four-valued. */
+  const OUTCOME_WORD = {
+    accepted: "Accepted",
+    rejected: "Rejected",
+    "refused-to-score": "No verdict",
+    "not-asked": "Not asked",
+  };
+
+  /**
+   * A status lamp: glyph, hue and word at once, so no state is carried by
+   * colour alone.
+   *
+   * @param {string} kind A key of `STATE`.
+   * @param {string} word
+   * @returns {HTMLElement}
+   */
+  function lamp(kind, word) {
+    const spec = STATE[kind] || STATE.neutral;
+    return h("span", { class: `lamp ${spec.css}` }, [
+      h("span", {
+        class: "lamp-glyph",
+        text: spec.glyph,
+        attrs: { "aria-hidden": "true" },
+      }),
+      h("span", { text: word }),
+    ]);
+  }
+
+  /**
+   * One verifier's outcome as a lamp.
+   *
+   * @param {string|null|undefined} outcome
+   * @returns {HTMLElement}
+   */
+  function outcomeLamp(outcome) {
+    const spec = OUTCOME_STATE[outcome];
+    if (!spec) {
+      return lamp("neutral", "Outcome not supplied");
+    }
+    return lamp(spec.kind, OUTCOME_WORD[outcome]);
+  }
+
+  /**
+   * The heading block at the top of a page.
+   *
+   * @param {string} title
+   * @param {string} lead
+   * @returns {HTMLElement}
+   */
+  function pageHead(title, lead) {
+    return h("header", { class: "page-head" }, [
+      h("h1", { text: title }),
+      h("p", { text: lead }),
+    ]);
+  }
+
+  /**
+   * One section of a page.
+   *
+   * @param {string} title
+   * @param {string|null} lead
+   * @param {Array<Node|null>} children
+   * @param {string} [cls]
+   * @returns {HTMLElement}
+   */
+  function sheet(title, lead, children, cls) {
+    const node = h("section", { class: `sheet ${cls || ""}` }, [
+      h("h2", { text: title }),
+    ]);
+    if (lead) {
+      node.appendChild(h("p", { class: "lead", text: lead }));
+    }
+    children.forEach(function (child) {
+      if (child) {
+        node.appendChild(child);
+      }
+    });
+    return node;
+  }
+
+  /**
+   * The argument behind a claim, one click away rather than on the page.
+   *
+   * @param {string} label
+   * @param {Array<Node|null>} children
+   * @returns {HTMLElement}
+   */
+  function why(label, children) {
+    const node = h("details", { class: "why" }, [
+      h("summary", { text: label }),
+    ]);
+    children.forEach(function (child) {
+      if (child) {
+        node.appendChild(child);
+      }
+    });
+    return node;
+  }
+
+  /**
+   * A PROVEN figure: derived from a stated null by a named inequality.
+   *
+   * The turnstile is the mark and it is never used for anything else, so a
+   * proven number and a measured one cannot be confused on sight.
+   *
+   * @param {string} value Pre-formatted.
+   * @param {string} [caption]
+   * @returns {HTMLElement}
+   */
+  function provenFigure(value, caption) {
+    return h("p", { class: "figure is-proven" }, [
+      h("span", {
+        class: "figure-mark",
+        text: "⊢",
+        attrs: { title: "Proven from a stated assumption" },
+      }),
+      h("span", { class: "figure-value", text: value }),
+      caption ? h("span", { class: "figure-caption", text: caption }) : null,
+    ]);
+  }
+
+  /**
+   * A block that stands where a measurement would be, saying there is none.
+   *
+   * @param {string} title
+   * @param {string} body
+   * @returns {HTMLElement}
+   */
+  function notEvaluated(title, body) {
+    return h("div", { class: "not-evaluated" }, [
+      lamp("withheld", title),
+      h("p", { text: body }),
+    ]);
+  }
+
+  /** How the detector's signal kinds read aloud, by `Signal.kind`. */
+  const SIGNAL_WORDS = {
+    mismatch: "Mismatches seen by",
+    "count-low": "Declared count too low at",
+  };
+
+  /** Signal kinds whose party is the subject of the sentence. */
+  const SIGNAL_VERBS = {
+    "evidence-shortfall": "refused: not enough evidence to score",
+    "forwarding-tamper": "refused: counts came from two different declarations",
+  };
+
+  /** Channel statistics, by the last segment of `Signal.name`. */
+  const CHANNEL_WORDS = {
+    min_fidelity: "Entanglement fidelity too low on",
+    qber_errors: "Too many check-round errors on",
+  };
+
+  /**
+   * A signal's name in words, read off its documented shape.
+   *
+   * `channel:<party>/<bit>:<statistic>` and `<family>:<kind>:<party>` are the
+   * shapes the detector documents. Anything else falls back to the raw name
+   * rather than a guess.
+   *
+   * @param {Object} signal
+   * @returns {string}
+   */
+  function signalLabel(signal) {
+    const parts = String(signal.name).split(":");
+    if (signal.family === "channel" && CHANNEL_WORDS[parts[2]]) {
+      const link = String(parts[1]).split("/");
+      return `${CHANNEL_WORDS[parts[2]]} ${Fmt.link(link[0], link[1])}`;
+    }
+    if (SIGNAL_VERBS[signal.kind] && parts[2]) {
+      return `${parts[2]} ${SIGNAL_VERBS[signal.kind]}`;
+    }
+    if (SIGNAL_WORDS[signal.kind] && parts[2]) {
+      return `${SIGNAL_WORDS[signal.kind]} ${parts[2]}`;
+    }
+    return String(signal.name);
+  }
+
+  /**
+   * A signal's value and threshold, in the format its statistic needs.
+   *
+   * @param {Object} signal
+   * @param {number|null} value
+   * @returns {string}
+   */
+  function signalValue(signal, value) {
+    if (String(signal.name).split(":")[2] === "min_fidelity") {
+      return Fmt.fixed(value, 4);
+    }
+    return Fmt.count(value);
+  }
+
+  /**
+   * A withheld check in words. The API's sentences pass through untouched;
+   * only the terse `channel:<party>/<bit>:chsh` form is read aloud.
+   *
+   * @param {*} item One entry of `detection.withheld`.
+   * @returns {string}
+   */
+  function withheldLabel(item) {
+    const text = String(item);
+    if (text.indexOf(" ") !== -1) {
+      return text;
+    }
+    const parts = text.split(":");
+    if (parts[0] === "channel" && parts[2] === "chsh") {
+      const link = String(parts[1]).split("/");
+      return `Bell test on ${Fmt.link(link[0], link[1])}`;
+    }
+    return text;
+  }
+
+  /**
+   * A hypothesis key in the roster's own words.
+   *
+   * @param {string} key
+   * @param {Array<Object>|null} attacks
+   * @returns {string}
+   */
+  function hypothesisLabel(key, attacks) {
+    let label = null;
+    (attacks || []).forEach(function (entry) {
+      if (label === null && (entry.hypothesis === key || entry.key === key)) {
+        label = entry.label;
+      }
+    });
+    return label || String(key).split("-").join(" ");
+  }
+
+  /**
+   * The assumption that excludes a hypothesis detection cannot, or null.
+   *
+   * @param {string} key
+   * @param {Array<Object>|null} attacks
+   * @returns {string|null}
+   */
+  function assumptionFor(key, attacks) {
+    let found = null;
+    (attacks || []).forEach(function (entry) {
+      if (found === null && entry.hypothesis === key && entry.assumption) {
+        found = entry.assumption;
+      }
+    });
+    return found;
+  }
+
+  /* ---------------------------------------------------------------------- *
+   * Warnings
+   * ---------------------------------------------------------------------- */
+
+  /**
+   * Split what `nullBanners` returns into warnings and evidence.
+   *
+   * A banner is a warning and belongs beside the verdict; the noise calibration
+   * table is a measured table with its sample size on it, which is evidence.
+   * Splitting on the class leaves `nullBanners` untouched.
+   *
+   * @param {Object} payload
+   * @param {Object} context
+   * @returns {{warnings: Array<Node>, evidence: Array<Node>}}
+   */
+  function splitBanners(payload, context) {
+    const warnings = [];
+    const evidence = [];
+    const abort = noVerdictBanner(payload);
+    if (abort) {
+      warnings.push(abort);
+    }
+    nullBanners(payload, context).forEach(function (node) {
+      if (node.classList.contains("banner")) {
+        warnings.push(node);
+        return;
+      }
+      evidence.push(node);
+    });
+    return { warnings: warnings, evidence: evidence };
+  }
+
+  /**
+   * The warning, in one sentence a judge can read, keyed off the same flags.
+   *
+   * Every branch reads a boolean Python computed (`run.nulls`, the verifier
+   * outcomes), in the same order `nullBanners` does, so this line and the
+   * banner beneath it cannot disagree. It is a paraphrase for the room; the
+   * banner, one click away, is the statement.
+   *
+   * @param {Object} payload
+   * @returns {string}
+   */
+  function plainWarning(payload) {
+    const detection = payload.detection || {};
+    const nulls = (payload.run && payload.run.nulls) || null;
+    const detected = detection.detected === true;
+    const lines = [];
+    if ((detection.not_scored || []).length !== 0) {
+      lines.push("A verifier reached no verdict, which is not a rejection.");
+    }
+    const bothDefault = nulls
+      ? nulls.both_are_default === true
+      : detection.null_is_noiseless === true;
+    const oneStated = nulls
+      ? nulls.both_are_default === false && nulls.both_are_stated === false
+      : false;
+    if (oneStated) {
+      lines.push(
+        "Only one of the two noise settings was given, so ordinary link noise " +
+          "can still raise this alarm."
+      );
+    } else if (bothDefault && detected) {
+      lines.push(
+        "Scored against a perfect link. Ordinary noise on a real link raises " +
+          "this alarm too, so check what actually happened before calling it " +
+          "an attack."
+      );
+    } else if (bothDefault) {
+      lines.push("Scored against a perfect link.");
+    } else {
+      lines.push("Scored against the noise levels the operator gave.");
+    }
+    return lines.join(" ");
+  }
+
+  /**
+   * The warnings as one disclosure: the plain sentence and the banner headings
+   * always visible, the argument behind a click.
+   *
+   * @param {Object} payload
+   * @param {Array<HTMLElement>} banners
+   * @returns {HTMLElement|null}
+   */
+  function alertShelf(payload, banners) {
+    if (banners.length === 0) {
+      return null;
+    }
+    const alarming = banners.some(function (node) {
+      return node.classList.contains("alarm");
+    });
+    const headings = banners.map(function (node) {
+      const heading = node.querySelector("h3");
+      return heading ? heading.textContent : "";
+    });
+    const shelf = h("details", {
+      class: `alert-shelf ${alarming ? "is-alarm" : ""}`,
+    });
+    shelf.appendChild(
+      h("summary", {}, [
+        h("span", {
+          class: "shelf-glyph",
+          text: alarming ? "⚠" : "ℹ",
+          attrs: { "aria-hidden": "true" },
+        }),
+        h("span", { class: "shelf-text" }, [
+          h("span", { class: "shelf-plain", text: plainWarning(payload) }),
+          h("span", { class: "shelf-headings", text: headings.join("; ") }),
+        ]),
+      ])
+    );
+    banners.forEach(function (node) {
+      shelf.appendChild(node);
+    });
+    return shelf;
+  }
+
+  /* ---------------------------------------------------------------------- *
+   * The session: phases
+   * ---------------------------------------------------------------------- */
+
+  /**
+   * One entry per step `QDSSession.run()` takes, in the protocol's own names.
+   *
+   * `live` lists the routes a message travels in that phase. A phase in which
+   * one party reads evidence it already holds moves nothing, and has no live
+   * route: the bench shows that party working instead of inventing an arrow.
+   */
+  const PHASES = {
+    distribute: {
+      tag: "Phase A",
+      title: "Distribute",
+      line:
+        "Alice sends quantum keys for both possible messages to Bob and to " +
+        "Charlie.",
+      live: ["beam-bob", "beam-charlie"],
+    },
+    symmetrise: {
+      tag: "Phase A'",
+      title: "Swap",
+      line:
+        "Bob and Charlie privately swap key positions, so Alice cannot tell " +
+        "which of them holds what.",
+      live: ["private-down", "private-up"],
+    },
+    sign: {
+      tag: "Phase B",
+      title: "Sign",
+      line:
+        "Alice announces which key she signed with, over an authenticated line " +
+        "to Bob.",
+      live: ["cable-bob"],
+    },
+    counts: {
+      tag: "Phase C'",
+      title: "Compare counts",
+      line:
+        "Bob and Charlie tell each other how many key positions each of them " +
+        "can check.",
+      live: ["private-down", "private-up"],
+    },
+    verifyBob: {
+      tag: "Phase C",
+      title: "Bob checks",
+      line:
+        "Bob checks the signature against his own key copy. Nothing moves: he " +
+        "reads what he already holds.",
+      live: [],
+      working: "bob",
+    },
+    forward: {
+      tag: "Phase C",
+      title: "Forward",
+      line:
+        "Bob passes the signature on to Charlie. A forging recipient would act " +
+        "here.",
+      live: ["forward"],
+    },
+    verifyCharlie: {
+      tag: "Phase C",
+      title: "Charlie checks",
+      line:
+        "Charlie checks what reached him against his own copy, with a slightly " +
+        "looser cut than Bob's.",
+      live: [],
+      working: "charlie",
+    },
+  };
+
+  /**
+   * The order this run performed its phases, which the timing control decides.
+   *
+   * `QDSSession.run()` moves the Bob-to-Charlie hop to before the count
+   * exchange when the timing is `after-forwarding`. The two orderings answer
+   * different questions, one a forgery and the other a denial of service, so
+   * the order is read off the payload rather than drawn the same for both.
+   *
+   * @param {string} timing `run.count_exchange_timing`.
+   * @returns {Array<string>}
+   */
+  function phaseOrder(timing) {
+    if (String(timing) === "after-forwarding") {
+      return [
+        "distribute",
+        "symmetrise",
+        "sign",
+        "forward",
+        "counts",
+        "verifyBob",
+        "verifyCharlie",
+      ];
+    }
+    return [
+      "distribute",
+      "symmetrise",
+      "sign",
+      "counts",
+      "verifyBob",
+      "forward",
+      "verifyCharlie",
+    ];
+  }
+
+  /**
+   * Walk a sequence without counting.
+   *
+   * `order[order.indexOf(id) + 1]` is arithmetic, which this file may not do
+   * (**D8**). Accumulating the answers once by iteration keeps the rule, and
+   * `next`, `prev` and `reached` are plain lookups afterwards.
+   *
+   * @param {Array<string>} ids
+   * @returns {{next: Object, prev: Object, reached: Object, last: string}}
+   */
+  function sequence(ids) {
+    const next = {};
+    const prev = {};
+    const reached = {};
+    let seen = {};
+    let previous = null;
+    ids.forEach(function (id) {
+      if (previous !== null) {
+        next[previous] = id;
+        prev[id] = previous;
+      }
+      const marks = {};
+      Object.keys(seen).forEach(function (key) {
+        marks[key] = true;
+      });
+      marks[id] = true;
+      reached[id] = marks;
+      seen = marks;
+      previous = id;
+    });
+    return { next: next, prev: prev, reached: reached, last: previous };
+  }
+
+  /** Which drawn route each seam puts an adversary on. */
+  const SEAM_ROUTES = {
+    signer: "cable-bob",
+    forwarder: "forward",
+    count_exchange: "private-down",
+  };
+
+  /** Each recipient's quantum link, by party name. */
+  const BEAM_OF = { Bob: "beam-bob", Charlie: "beam-charlie" };
+
+  /**
+   * Where the simulator put its adversary and its noise, from ground truth.
+   *
+   * Harness knowledge only, looked up from the seam names the harness itself
+   * reports. Nothing here is inferred from the detector's output, and the pane
+   * this feeds is labelled as the simulator's record.
+   *
+   * @param {Object} truth `ground_truth`.
+   * @returns {{adversaries: Array<Object>, impersonated: boolean,
+   *            noisy: Array<string>, present: boolean}}
+   */
+  function adversaryLayout(truth) {
+    const facts = truth || {};
+    const out = {
+      adversaries: [],
+      impersonated: false,
+      noisy: [],
+      present: facts.adversary_present === true,
+    };
+    const link = facts.link || {};
+    // `identical_to_honest` is the harness's own boolean for an adversary that
+    // was mounted and did nothing. Its link still reports the depolarising
+    // MODEL, at strength zero, so reading the model alone drew a noisy beam on
+    // a run whose transcript is byte-for-byte an honest one.
+    if (link.model === "depolarising" && facts.identical_to_honest !== true) {
+      out.noisy = BEAM_OF[link.targeted_party]
+        ? [BEAM_OF[link.targeted_party]]
+        : ["beam-bob", "beam-charlie"];
+    }
+    if (!out.present) {
+      return out;
+    }
+    const idle = facts.identical_to_honest === true;
+    const hidden = facts.detectable === "undetectable-by-construction";
+    let className = "";
+    if (idle) {
+      className = "is-idle";
+    } else if (hidden) {
+      className = "is-hidden";
+    }
+    const routes = {};
+    (facts.seams_held || []).forEach(function (seam) {
+      if (seam === "distributor") {
+        out.impersonated = true;
+        return;
+      }
+      if (seam === "resource_factory") {
+        const beams = {};
+        (facts.targeted_links || []).forEach(function (pair) {
+          if (BEAM_OF[pair[0]]) {
+            beams[BEAM_OF[pair[0]]] = true;
+          }
+        });
+        const chosen = Object.keys(beams);
+        (chosen.length === 0 ? ["beam-bob", "beam-charlie"] : chosen).forEach(
+          function (id) {
+            routes[id] = true;
+          }
+        );
+        return;
+      }
+      if (SEAM_ROUTES[seam]) {
+        routes[SEAM_ROUTES[seam]] = true;
+      }
+    });
+    // Full impersonation also holds the signing seam, but there the adversary
+    // IS Alice, and a second component on her own declaration would draw one
+    // adversary as two.
+    if (out.impersonated) {
+      delete routes["cable-bob"];
+    }
+    Object.keys(routes).forEach(function (id) {
+      out.adversaries.push({
+        route: id,
+        label: idle ? "Adversary, idle" : "Adversary",
+        className: className,
+      });
+    });
+    return out;
+  }
+
+  /* ---------------------------------------------------------------------- *
+   * The session view
+   * ---------------------------------------------------------------------- */
+
+  /** How long one phase holds during a replay, in ms. Presentation only. */
+  const PHASE_HOLD_MS = 1500;
+
+  /** The running replay, so a rebuilt view never leaves one behind. */
+  let playTimer = null;
+
+  /**
+   * Stop any replay in progress.
+   *
+   * @returns {void}
+   */
+  function stopPlayback() {
+    if (playTimer !== null) {
+      window.clearInterval(playTimer);
+      playTimer = null;
+    }
+  }
+
+  /**
+   * True when the viewer has asked the system for less motion.
+   *
+   * @returns {boolean}
+   */
+  function prefersStill() {
+    return Boolean(
+      window.matchMedia &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    );
+  }
+
+  /**
+   * The legend under the bench, listing only what this drawing contains.
+   *
+   * @param {Object} layout From `adversaryLayout`.
+   * @returns {HTMLElement}
+   */
+  function benchKey(layout) {
+    /**
+     * @param {string} kind
+     * @param {string} words
+     * @returns {HTMLElement}
+     */
+    function item(kind, words) {
+      return h("li", {}, [
+        h("span", {
+          class: `key-swatch is-${kind}`,
+          attrs: { "aria-hidden": "true" },
+        }),
+        h("span", { text: words }),
+      ]);
+    }
+    return h("ul", { class: "bench-key" }, [
+      item("beam", "Quantum keys, sent as light"),
+      item("cable", "Classical message"),
+      item("private", "Private line between Bob and Charlie"),
+      layout.noisy.length === 0 ? null : item("noisy", "Noisy link"),
+      layout.present ? item("hazard", "Adversary") : null,
+    ]);
+  }
+
+  /**
+   * One sentence of harness knowledge the drawing cannot carry on its own.
+   *
+   * Keyed off `ground_truth`'s booleans only, and shown on the truth pane,
+   * never beside the verdict.
+   *
+   * @param {Object} truth
+   * @param {Object} layout From `adversaryLayout`.
+   * @returns {HTMLElement|null}
+   */
+  function truthNote(truth, layout) {
+    const facts = truth || {};
+    let text = null;
+    if (facts.adversary_present === true && facts.identical_to_honest === true) {
+      text =
+        "The adversary was mounted and did not act, so the transcript is " +
+        "identical to an honest one. Nothing firing here is correct.";
+    } else if (facts.detectable === "undetectable-by-construction") {
+      text =
+        "Undetectable by design. This adversary is excluded only by assuming " +
+        "the classical channel is authentic, never by the evidence, so no " +
+        "alarm here is a proof rather than a miss.";
+    } else if (facts.adversary_present !== true && layout.noisy.length !== 0) {
+      text =
+        "No adversary. The link itself is noisy, and whatever the detector " +
+        "concludes about that is about the wire.";
+    }
+    return text === null ? null : h("p", { class: "truth-note", text: text });
+  }
+
+  /**
+   * What the detector concluded, from the transcript alone.
+   *
+   * @param {Object} payload
+   * @param {Object} context
+   * @returns {Array<HTMLElement>}
+   */
+  function readout(payload, context) {
+    const detection = payload.detection || {};
+    const run_ = payload.run || {};
+    const outcomes = detection.outcomes || {};
+    const detected = detection.detected === true;
+    const nodes = [];
+
+    nodes.push(
+      h("div", {
+        class: `verdict-lamp ${detected ? "is-detected" : "is-clean"}`,
+      }, [
+        h("span", {
+          class: "verdict-glyph",
+          text: detected ? STATE.detected.glyph : STATE.clean.glyph,
+          attrs: { "aria-hidden": "true" },
+        }),
+        h("div", {}, [
+          h("p", {
+            class: "verdict-word",
+            text: detected ? "Alarm raised" : "No alarm",
+          }),
+          h("p", {
+            class: "verdict-sub",
+            text: detected
+              ? "At least one threshold was crossed."
+              : "No threshold was crossed. A quiet detector is not proof " +
+                "that nothing happened.",
+          }),
+        ]),
+      ])
+    );
+
+    const shelf = alertShelf(payload, splitBanners(payload, context).warnings);
+    if (shelf) {
+      nodes.push(shelf);
+    }
+
+    if (detected) {
+      const list = h("ul", { class: "fired" });
+      (detection.signals || []).forEach(function (signal) {
+        if (signal.is_detection !== true) {
+          return;
+        }
+        const numbers =
+          Fmt.present(signal.observed) && Fmt.present(signal.critical)
+            ? h("p", {
+                class: "fired-numbers",
+                text: `${signalValue(signal, signal.observed)} against a ` +
+                  `threshold of ${signalValue(signal, signal.critical)}`,
+              })
+            : null;
+        list.appendChild(
+          h("li", {}, [
+            h("span", {
+              class: "fired-glyph",
+              text: STATE.detected.glyph,
+              attrs: { "aria-hidden": "true" },
+            }),
+            h("div", {}, [
+              h("p", { class: "fired-name", text: signalLabel(signal) }),
+              numbers,
+            ]),
+          ])
+        );
+      });
+      nodes.push(
+        h("div", { class: "readout-block" }, [
+          h("h3", { text: "What crossed a threshold" }),
+          list,
+        ])
+      );
+    }
+
+    const verifiers = h("dl", { class: "verifiers" });
+    (run_.verifiers || []).forEach(function (row) {
+      verifiers.appendChild(h("dt", { text: row.party }));
+      const cell = h("dd", {}, [outcomeLamp(outcomes[row.party])]);
+      if (row.scored === false) {
+        cell.appendChild(
+          h("p", {
+            class: "verifier-note",
+            text: "Denied the evidence, so there was nothing to score.",
+          })
+        );
+      }
+      verifiers.appendChild(cell);
+    });
+    nodes.push(
+      h("div", { class: "readout-block" }, [
+        h("h3", { text: "Each verifier's decision" }),
+        verifiers,
+      ])
+    );
+
+    // A quiet detector over checks that never ran is the easiest thing on
+    // this screen to misread as a clean run, so what was not evaluated sits
+    // beside the verdict rather than two views away.
+    if (run_.security_claim === false) {
+      nodes.push(
+        notEvaluated(
+          "No security claim at this key length",
+          "The evidence minimums collapse at this length, so nothing here is " +
+            "a security statement."
+        )
+      );
+    }
+    const withheld = detection.withheld || [];
+    if (withheld.length !== 0) {
+      nodes.push(
+        h("div", { class: "readout-block" }, [
+          h("h3", { text: "Checks that could not run" }),
+          h(
+            "ul",
+            { class: "withheld-list" },
+            withheld.map(function (item) {
+              return h("li", {}, [lamp("withheld", withheldLabel(item))]);
+            })
+          ),
+        ])
+      );
+    }
+
+    nodes.push(
+      h("div", { class: "readout-block" }, [
+        h("h3", { text: "Chance of a false alarm" }),
+        provenFigure(
+          Fmt.sci(detection.false_positive_bound),
+          "at most, if the run was honest. Proven, not measured."
+        ),
+      ])
+    );
+    return nodes;
+  }
+
+  /**
+   * The session: what happened on the bench, beside what the detector
+   * concluded.
+   *
+   * TWO PANES, AND THE SPLIT IS THE POINT. The left is the simulator's own
+   * record: where the adversary sat, which link was noisy. The right is the
+   * detector reading the transcript and nothing else. A judge who sees the two
+   * side by side understands the project from the layout, and the separation
+   * that `payload.py` enforces between `ground_truth` and `detection` is the
+   * separation they see.
+   *
+   * A REPLAY, NOT A LIVE FEED. The transcript is finished before this view is
+   * built. The motion carries the order of the phases and the direction of
+   * each hop; nothing that moves encodes a rate, a count or a verdict. The
+   * detector's conclusion is withheld until the replay ends, which is the one
+   * orchestrated moment on the page, and a viewer who has asked for reduced
+   * motion gets the finished state straight away.
+   *
+   * @param {Object} payload
+   * @param {Object} context
+   * @param {Object} options `{autoplay, title, description, source}`.
+   * @returns {HTMLElement}
+   */
+  function sessionView(payload, context, options) {
+    const opts = options || {};
+    const run_ = payload.run || {};
+    const detection = payload.detection || {};
+    const truth = payload.ground_truth || {};
+    const outcomes = detection.outcomes || {};
+    const order = phaseOrder(run_.count_exchange_timing);
+    const walk = sequence(order);
+    const layout = adversaryLayout(truth);
+    const animate = opts.autoplay === true && !prefersStill();
+
+    let current = animate ? order[0] : walk.last;
+    let revealed = !animate;
+
+    const benchBox = h("div", { class: "bench" });
+    const timeline = h("ol", { class: "timeline" });
+    const caption = h("div", {
+      class: "phase-caption",
+      attrs: { "aria-live": "polite" },
+    });
+    const readoutBox = h("div", { class: "readout" });
+    const steps = {};
+
+    /**
+     * A verifier's mount label: waiting until its own phase is reached.
+     *
+     * @param {string} party
+     * @param {string} phaseId
+     * @returns {{stateLabel: string, className: string}}
+     */
+    function partyState(party, phaseId) {
+      if ((walk.reached[current] || {})[phaseId] !== true) {
+        return { stateLabel: "Waiting", className: "" };
+      }
+      const spec = OUTCOME_STATE[outcomes[party]];
+      if (!spec) {
+        return { stateLabel: "Outcome not supplied", className: "" };
+      }
+      return {
+        stateLabel: `${STATE[spec.kind].glyph} ${OUTCOME_WORD[outcomes[party]]}`,
+        className: STATE[spec.kind].css,
+      };
+    }
+
+    /**
+     * Repaint the bench, the caption and the timeline for `current`.
+     *
+     * @returns {void}
+     */
+    function paintBench() {
+      const spec = PHASES[current];
+      const bob = partyState("Bob", "verifyBob");
+      const charlie = partyState("Charlie", "verifyCharlie");
+      benchBox.textContent = "";
+      benchBox.appendChild(
+        Charts.bench({
+          title: `${spec.title}. ${spec.line}`,
+          parties: [
+            {
+              id: "alice",
+              name: "Alice",
+              role: layout.impersonated ? "Signer, impersonated" : "Signer",
+              impersonated: layout.impersonated,
+            },
+            {
+              id: "bob",
+              name: "Bob",
+              role: "Verifier",
+              stateLabel: bob.stateLabel,
+              className: bob.className,
+              scanning: spec.working === "bob",
+            },
+            {
+              id: "charlie",
+              name: "Charlie",
+              role: "Verifier",
+              stateLabel: charlie.stateLabel,
+              className: charlie.className,
+              scanning: spec.working === "charlie",
+            },
+          ],
+          live: spec.live.map(function (route) {
+            return { route: route };
+          }),
+          adversaries: layout.adversaries,
+          noisy: layout.noisy,
+        })
+      );
+      caption.textContent = "";
+      caption.appendChild(h("p", { class: "phase-tag", text: spec.tag }));
+      caption.appendChild(h("p", { class: "phase-title", text: spec.title }));
+      caption.appendChild(h("p", { class: "phase-line", text: spec.line }));
+      order.forEach(function (id) {
+        const reached = (walk.reached[current] || {})[id] === true;
+        steps[id].className = `step ${id === current ? "is-current" : ""} ${
+          reached ? "is-reached" : ""
+        }`;
+        steps[id].setAttribute(
+          "aria-current",
+          id === current ? "step" : "false"
+        );
+      });
+    }
+
+    const skipButton = h("button", {
+      class: "control",
+      text: "Show the result now",
+      attrs: { type: "button" },
+    });
+
+    /**
+     * Repaint the detector pane.
+     *
+     * @returns {void}
+     */
+    function paintReadout() {
+      readoutBox.textContent = "";
+      if (!revealed) {
+        readoutBox.appendChild(
+          h("div", { class: "readout-waiting" }, [
+            h("p", { class: "waiting-title", text: "Replaying the session" }),
+            h("p", {
+              text: "The detector's conclusion appears when the replay ends.",
+            }),
+            skipButton,
+          ])
+        );
+        return;
+      }
+      readout(payload, context).forEach(function (node) {
+        readoutBox.appendChild(node);
+      });
+    }
+
+    /**
+     * @param {string} id
+     * @returns {void}
+     */
+    function goTo(id) {
+      current = id;
+      paintBench();
+      if (id === walk.last && !revealed) {
+        revealed = true;
+        paintReadout();
+      }
+    }
+
+    /**
+     * Run the replay from the first phase.
+     *
+     * @returns {void}
+     */
+    function play() {
+      stopPlayback();
+      if (prefersStill()) {
+        goTo(walk.last);
+        return;
+      }
+      revealed = false;
+      paintReadout();
+      goTo(order[0]);
+      playTimer = window.setInterval(function () {
+        const after = walk.next[current];
+        if (after === undefined) {
+          stopPlayback();
+          return;
+        }
+        goTo(after);
+      }, PHASE_HOLD_MS);
+    }
+
+    const replayButton = h("button", {
+      class: "control is-primary",
+      text: "Replay",
+      attrs: { type: "button" },
+    });
+    replayButton.addEventListener("click", play);
+
+    const backButton = h("button", {
+      class: "control",
+      text: "Previous step",
+      attrs: { type: "button" },
+    });
+    backButton.addEventListener("click", function () {
+      stopPlayback();
+      if (walk.prev[current] !== undefined) {
+        goTo(walk.prev[current]);
+      }
+    });
+
+    const nextButton = h("button", {
+      class: "control",
+      text: "Next step",
+      attrs: { type: "button" },
+    });
+    nextButton.addEventListener("click", function () {
+      stopPlayback();
+      if (walk.next[current] !== undefined) {
+        goTo(walk.next[current]);
+      }
+    });
+
+    skipButton.addEventListener("click", function () {
+      stopPlayback();
+      goTo(walk.last);
+    });
+
+    order.forEach(function (id) {
+      const button = h("button", { class: "step", attrs: { type: "button" } }, [
+        h("span", { class: "step-dot", attrs: { "aria-hidden": "true" } }),
+        h("span", { class: "step-name", text: PHASES[id].title }),
+      ]);
+      button.addEventListener("click", function () {
+        stopPlayback();
+        goTo(id);
+      });
+      steps[id] = button;
+      timeline.appendChild(h("li", {}, [button]));
+    });
+
+    const view = h("div", { class: "session" }, [
+      h("header", { class: "session-head" }, [
+        h("div", { class: "session-titles" }, [
+          h("h1", { text: opts.title || String(truth.label || "This run") }),
+          opts.description
+            ? h("p", { class: "session-why", text: opts.description })
+            : null,
+        ]),
+        opts.source
+          ? h("span", { class: "source-tag", text: opts.source })
+          : null,
+      ]),
+      h("div", { class: "session-grid" }, [
+        h("section", {
+          class: "pane pane-truth",
+          attrs: { "aria-label": "What actually happened" },
+        }, [
+          h("div", { class: "pane-head" }, [
+            h("h2", { text: "What actually happened" }),
+            h("p", {
+              text:
+                "The simulator's own record. The detector never sees this side.",
+            }),
+          ]),
+          benchBox,
+          benchKey(layout),
+          truthNote(truth, layout),
+          h("div", { class: "transport" }, [
+            timeline,
+            h("div", { class: "transport-row" }, [
+              h("div", { class: "controls" }, [
+                replayButton,
+                backButton,
+                nextButton,
+              ]),
+              caption,
+            ]),
+          ]),
+        ]),
+        h("section", {
+          class: "pane pane-detector",
+          attrs: { "aria-label": "What the detector concluded" },
+        }, [
+          h("div", { class: "pane-head" }, [
+            h("h2", { text: "What the detector concluded" }),
+            h("p", { text: "From the published transcript alone." }),
+          ]),
+          readoutBox,
+        ]),
+      ]),
+    ]);
+
+    paintBench();
+    paintReadout();
+    if (animate) {
+      play();
+    }
+    return view;
+  }
+
+  /* ---------------------------------------------------------------------- *
+   * The evidence view: measurements only
+   * ---------------------------------------------------------------------- */
+
+  /**
+   * What was measured on this run.
+   *
+   * MEASURED AND PROVEN LIVE ON DIFFERENT PAGES. This page holds counts and
+   * rates read off the transcript, each with its sample; the proven bounds are
+   * on Proof. The two kinds of number never share a column, and here they do
+   * not even share a page.
+   *
+   * @param {Object} payload
+   * @param {Object} context
+   * @returns {Array<HTMLElement>}
+   */
+  function evidenceView(payload, context) {
+    const run_ = payload.run || {};
+    const detection = payload.detection || {};
+    const links = run_.links || [];
+    const evaluable = !(run_.channel_evaluable === false || links.length === 0);
+    const fired = firedLinks(detection.signals);
+    const nodes = [
+      pageHead(
+        "Evidence",
+        "What was measured on this run, counted from the transcript. Bounds " +
+          "that are proven rather than measured are on the Proof page."
+      ),
+      // The warning rides on every view about a run. On an honest run over a
+      // noisy link this page shows every link fired, and without the shelf
+      // that reads as an attack measured on all four.
+      alertShelf(payload, splitBanners(payload, context).warnings),
+    ];
+
+    if (!evaluable) {
+      nodes.push(
+        sheet("Link measurements", null, [
+          notEvaluated(
+            "Not evaluated",
+            "This run published no check rounds, so neither link was " +
+              "measured. An unmonitored link is not a clean one."
+          ),
+        ])
+      );
+    } else {
+      const qberRows = [];
+      const chshRows = [];
+      const reasons = [];
+      links.forEach(function (link) {
+        const label = Fmt.link(link.party, link.message_bit);
+        const cls =
+          fired[`${link.party}/${link.message_bit}`] === true
+            ? "bar-alarm"
+            : "bar-quiet";
+        qberRows.push(
+          link.qber
+            ? {
+                label: label,
+                value: link.qber.value,
+                valueLabel: `${Fmt.rate(link.qber.value)}  (${Fmt.count(
+                  link.qber.errors
+                )} of ${Fmt.count(link.qber.rounds)})`,
+                className: cls,
+                interval: link.qber.interval,
+              }
+            : {
+                label: label,
+                value: null,
+                valueLabel: Fmt.ABSENT,
+                unavailable: "no check rounds",
+              }
+        );
+        if (link.chsh) {
+          chshRows.push({
+            label: label,
+            value: link.chsh.value,
+            valueLabel: `${Fmt.chsh(link.chsh.value)}  (${Fmt.count(
+              link.chsh.rounds
+            )} rounds)`,
+            className: cls,
+            interval: link.chsh.interval,
+          });
+        } else {
+          chshRows.push({
+            label: label,
+            value: null,
+            valueLabel: Fmt.ABSENT,
+            unavailable: "not evaluated",
+          });
+          reasons.push(
+            `${label}: ${link.chsh_unavailable || "no Bell test on this link"}`
+          );
+        }
+      });
+
+      const chsh = (context.constants && context.constants.chsh) || {};
+      const apiBounds = (context.defaults && context.defaults.bounds) || {};
+      const classical = pick(
+        [apiBounds, { chsh_classical_bound: chsh.classical_bound }],
+        "chsh_classical_bound"
+      );
+      const tsirelson = pick(
+        [apiBounds, { chsh_tsirelson_bound: chsh.tsirelson_bound }],
+        "chsh_tsirelson_bound"
+      );
+      const markers = [];
+      if (Fmt.present(classical)) {
+        markers.push({
+          value: classical,
+          label: "classical limit",
+          className: "marker-reference",
+          labelClassName: "reference-label",
+        });
+      }
+      if (Fmt.present(tsirelson)) {
+        markers.push({
+          value: tsirelson,
+          label: "quantum limit",
+          className: "marker-reference",
+          labelClassName: "reference-label",
+        });
+      }
+      // The statistic's own algebraic range. Narrower would clamp a negative S
+      // onto zero, drawing a link that anti-correlates as one that measured
+      // nothing.
+      const domain = chsh.domain || { minimum: -4, maximum: 4 };
+
+      nodes.push(
+        sheet(
+          "Link measurements",
+          "Each link's error rate and Bell test, from its published check " +
+            "rounds. A red bar is a link the detector fired on.",
+          [
+            h("h3", {
+              class: "chart-title",
+              text: "Error rate. Zero is a perfect link.",
+            }),
+            Charts.bars({
+              title: "Check-round error rate per link",
+              rows: qberRows,
+              domain: { min: 0, max: 1 },
+              ticks: [
+                { value: 0, label: "0" },
+                { value: 0.5, label: "0.5" },
+                { value: 1, label: "1" },
+              ],
+              markers: [],
+            }),
+            h("h3", {
+              class: "chart-title",
+              text: "Bell test. Above the classical limit means entanglement.",
+            }),
+            Charts.bars({
+              title: "Check-round CHSH statistic per link",
+              rows: chshRows,
+              domain: { min: domain.minimum, max: domain.maximum },
+              baseline: 0,
+              ticks: [
+                { value: domain.minimum, label: Fmt.fixed(domain.minimum, 0) },
+                { value: 0, label: "0" },
+                { value: domain.maximum, label: Fmt.fixed(domain.maximum, 0) },
+              ],
+              markers: markers,
+            }),
+            h("p", {
+              class: "chart-note",
+              text:
+                "Whiskers are confidence intervals. The two limits are " +
+                "definitions of the Bell test, not thresholds the detector " +
+                "applies.",
+            }),
+            reasons.length === 0
+              ? null
+              : why(
+                  "Why some links have no Bell test",
+                  reasons.map(function (reason) {
+                    return h("p", { text: reason });
+                  })
+                ),
+          ]
+        )
+      );
+    }
+
+    const floors = run_.floors || {};
+    const pooled = run_.pooled || {};
+    const volume = [];
+    if (floors.degenerate === true) {
+      volume.push(
+        notEvaluated(
+          "No security claim at this key length",
+          "The minimums below are degenerate here. Every number still " +
+            "computes, and none of them is a security statement."
+        )
+      );
+    }
+    if (Fmt.present(run_.sifted_key_length)) {
+      volume.push(
+        h("h3", { class: "chart-title", text: "Matched positions per verifier" }),
+        Charts.bars({
+          title: "Matched count per verifier against the per-party minimum",
+          rows: (run_.verifiers || []).map(function (row) {
+            if (row.scored === false) {
+              return {
+                label: row.party,
+                value: null,
+                valueLabel: "no verdict",
+                unavailable: "denied the evidence",
+              };
+            }
+            return {
+              label: row.party,
+              value: row.matched,
+              valueLabel: `${Fmt.count(row.matched)} of ${Fmt.count(
+                row.matched_trials
+              )}`,
+              className: "bar",
+            };
+          }),
+          domain: { min: 0, max: run_.sifted_key_length },
+          ticks: [
+            { value: 0, label: "0" },
+            {
+              value: run_.sifted_key_length,
+              label: Fmt.count(run_.sifted_key_length),
+            },
+          ],
+          markers: Fmt.present(floors.matched_minimum)
+            ? [
+                {
+                  value: floors.matched_minimum,
+                  label: `minimum ${Fmt.count(floors.matched_minimum)}`,
+                  className: "marker-floor",
+                },
+              ]
+            : [],
+        })
+      );
+    }
+    if (Fmt.present(pooled.trials) && Fmt.present(pooled.count)) {
+      volume.push(
+        h("h3", { class: "chart-title", text: "Matched positions, pooled" }),
+        Charts.bars({
+          title: "Pooled matched count against the pooled minimum",
+          rows: [
+            {
+              label: "counted",
+              value: pooled.count,
+              valueLabel: `${Fmt.count(pooled.count)} of ${Fmt.count(
+                pooled.trials
+              )}`,
+              className: "bar",
+            },
+            {
+              label: "declared",
+              value: pooled.declared_pooled,
+              valueLabel: Fmt.count(pooled.declared_pooled),
+              className: "bar-quiet",
+            },
+          ],
+          domain: { min: 0, max: pooled.trials },
+          ticks: [
+            { value: 0, label: "0" },
+            { value: pooled.trials, label: Fmt.count(pooled.trials) },
+          ],
+          markers: Fmt.present(floors.pooled_minimum)
+            ? [
+                {
+                  value: floors.pooled_minimum,
+                  label: `minimum ${Fmt.count(floors.pooled_minimum)}`,
+                  className: "marker-floor",
+                },
+              ]
+            : [],
+        })
+      );
+    } else {
+      volume.push(
+        notEvaluated(
+          "No pooled count",
+          "This run reached no pair of verdicts to pool. That is an absent " +
+            "number, not a zero."
+        )
+      );
+    }
+    nodes.push(
+      sheet(
+        "How much evidence each verifier had",
+        "Key positions each verifier could check, against the minimum the " +
+          "protocol requires before it will decide.",
+        volume
+      )
+    );
+
+    const signals = detection.signals || [];
+    nodes.push(
+      sheet(
+        "Thresholds",
+        "Every threshold the detector checked that was crossed, with the " +
+          "value that crossed it.",
+        [
+          signals.length === 0
+            ? h("p", { class: "empty", text: "No threshold was crossed." })
+            : h("div", { class: "table-wrap" }, [
+                h("table", { class: "grid" }, [
+                  h("thead", {}, [
+                    h("tr", {}, [
+                      h("th", { text: "What" }),
+                      h("th", { class: "numeric", text: "Value" }),
+                      h("th", { class: "numeric", text: "Threshold" }),
+                      h("th", { text: "Counts as an alarm" }),
+                    ]),
+                  ]),
+                  h(
+                    "tbody",
+                    {},
+                    signals.map(function (signal) {
+                      return h("tr", {}, [
+                        h("td", { text: signalLabel(signal) }),
+                        h("td", {
+                          class: "numeric",
+                          text: signalValue(signal, signal.observed),
+                        }),
+                        h("td", {
+                          class: "numeric",
+                          text: signalValue(signal, signal.critical),
+                        }),
+                        h("td", {}, [
+                          signal.is_detection === true
+                            ? lamp("detected", "Yes")
+                            : lamp("withheld", "No, a fact about the file"),
+                        ]),
+                      ]);
+                    })
+                  ),
+                ]),
+              ]),
+        ]
+      )
+    );
+
+    const withheld = detection.withheld || [];
+    if (withheld.length !== 0) {
+      nodes.push(
+        sheet(
+          "Not evaluated",
+          "Checks the detector could not run on this transcript. Each is " +
+            "absent, not passed.",
+          [
+            h(
+              "ul",
+              { class: "withheld-list" },
+              withheld.map(function (item) {
+                return h("li", {}, [lamp("withheld", withheldLabel(item))]);
+              })
+            ),
+          ]
+        )
+      );
+    }
+
+    const calibration = splitBanners(payload, context).evidence;
+    if (calibration.length !== 0) {
+      nodes.push(
+        sheet(
+          "How often honest noise raises an alarm",
+          "Measured separately, over many honest runs at each noise level.",
+          calibration
+        )
+      );
+    }
+    return nodes;
+  }
+
+  /* ---------------------------------------------------------------------- *
+   * The proof view: proven bounds only
+   * ---------------------------------------------------------------------- */
+
+  /** An attribution status in words, and the lamp it lights. */
+  const SUSPECT = {
+    supported: { kind: "named", word: "Consistent with the evidence" },
+    excluded: { kind: "ruledout", word: "Ruled out" },
+    unsupported: { kind: "neutral", word: "No evidence either way" },
+    "undetectable-by-construction": {
+      kind: "withheld",
+      word: "Undetectable by design",
+    },
+  };
+
+  /**
+   * What is proven about this run, and what is not.
+   *
+   * @param {Object} payload
+   * @param {Object} context
+   * @returns {Array<HTMLElement>}
+   */
+  function proofView(payload, context) {
+    const detection = payload.detection || {};
+    const run_ = payload.run || {};
+    const defaults = context.defaults || {};
+    const bounds = defaults.bounds || {};
+    const headline = bounds.headline || {};
+    const nodes = [
+      pageHead(
+        "Proof",
+        "What is proven about this run from a stated assumption and a named " +
+          "inequality. Nothing on this page is a measurement."
+      ),
+      // An honest run scored against the wrong null lists "Honest run: ruled
+      // out" below. That row is correct about the null it was given and wrong
+      // about the wire, and the shelf is what says so.
+      alertShelf(payload, splitBanners(payload, context).warnings),
+    ];
+
+    nodes.push(
+      sheet(
+        "Chance of a false alarm",
+        null,
+        [
+          h("p", { class: "hero-figure" }, [
+            h("span", { class: "figure-mark", text: "⊢" }),
+            h("span", {
+              class: "figure-value",
+              text: Fmt.sci(detection.false_positive_bound),
+            }),
+          ]),
+          h("p", {
+            class: "lead",
+            text:
+              "If this run was honest, the detector raises an alarm with at " +
+              `most this probability. The budget it was given is ` +
+              `${Fmt.sci(detection.eps)}.`,
+          }),
+          detection.bound_is_unconditional === false
+            ? h("p", {
+                class: "caveat",
+                text:
+                  "This bound is conditional on the run's matched counts, " +
+                  "because a noise rate was given for the rate check.",
+              })
+            : null,
+          why("How the budget is split", [
+            h("p", {
+              class: "derivation",
+              text: String((detection.budget || {}).derivation || Fmt.ABSENT),
+            }),
+          ]),
+        ],
+        "is-hero"
+      )
+    );
+
+    nodes.push(
+      sheet("What cannot be promised", null, [
+        h("p", {
+          class: "statement",
+          text:
+            "There is no bound on missed attacks, and none can be derived from " +
+            "a transcript. A quiet detector is not proof that nothing happened.",
+        }),
+      ])
+    );
+
+    const suspects = h("ul", { class: "suspects" });
+    (detection.attributions || []).forEach(function (row) {
+      const spec = SUSPECT[row.status] || {
+        kind: "neutral",
+        word: String(row.status),
+      };
+      const item = h("li", { class: "suspect" }, [
+        h("p", {
+          class: "suspect-name",
+          text: hypothesisLabel(row.hypothesis, context.attacks),
+        }),
+        lamp(spec.kind, spec.word),
+      ]);
+      const twins = row.indistinguishable_from || [];
+      if (twins.length !== 0) {
+        item.appendChild(
+          h("p", {
+            class: "suspect-note",
+            text: `Cannot be told apart from ${twins
+              .map(function (key) {
+                return hypothesisLabel(key, context.attacks);
+              })
+              .join(", ")}.`,
+          })
+        );
+      }
+      if (row.status === "undetectable-by-construction") {
+        item.appendChild(
+          h("p", {
+            class: "suspect-note",
+            text:
+              assumptionFor(row.hypothesis, context.attacks) ||
+              "Excluded only by an assumption, never by the evidence.",
+          })
+        );
+      }
+      suspects.appendChild(item);
+    });
+    nodes.push(
+      sheet(
+        "Possible explanations",
+        "The detector's attribution, reasoned from the transcript alone.",
+        [suspects]
+      )
+    );
+
+    const headlineLength = pick([headline, defaults.params || {}], "key_length");
+    nodes.push(
+      sheet(
+        "Can the signer deny it later",
+        "The chance a signer gets one verifier to accept and the other to " +
+          "reject.",
+        [
+          run_.security_claim === false
+            ? notEvaluated(
+                "No security claim at this key length",
+                "The evidence minimums collapse at this length, so this run " +
+                  "carries no security statement at all."
+              )
+            : null,
+          h("div", { class: "figure-pair" }, [
+            h("div", {}, [
+              h("h3", { text: "This run" }),
+              provenFigure(Fmt.sci(run_.enforced_repudiation_bound)),
+            ]),
+            h("div", {}, [
+              h("h3", {
+                text: `Full length, ${Fmt.count(headlineLength)} key positions`,
+              }),
+              provenFigure(
+                Fmt.sci(pick([headline, bounds], "enforced_repudiation_bound"))
+              ),
+            ]),
+          ]),
+          h("p", {
+            class: "lead",
+            text:
+              "A demo-length run shows the machinery working. It does not " +
+              "demonstrate non-repudiation: that needs the full length, which " +
+              "takes minutes per session, so it is shown as a bound rather " +
+              "than as a run.",
+          }),
+        ]
+      )
+    );
+    return nodes;
+  }
+
+  /* ---------------------------------------------------------------------- *
+   * The full report
+   * ---------------------------------------------------------------------- */
+
+  /**
+   * Every panel, for the person who asks to check a number.
+   *
+   * Appended one call at a time rather than assembled as a list, so that each
+   * panel's presence on every run is a line a reader can find: the grouping
+   * panel in particular is constraint 6, and a list built by `concat` is one
+   * dropped element away from losing it silently.
+   *
+   * @param {HTMLElement} target
+   * @param {Object} payload
+   * @param {Object} context
+   * @returns {void}
+   */
+  function reportView(target, payload, context) {
+    const split = splitBanners(payload, context);
+    target.appendChild(
+      pageHead(
+        "Full report",
+        "Every panel and every number, with the reasoning behind each. For " +
+          "checking the result rather than presenting it."
+      )
+    );
+    target.appendChild(verdictStrip(payload));
+    split.warnings.forEach(function (node) {
+      target.appendChild(node);
+    });
+    target.appendChild(groundTruth(payload));
+    target.appendChild(channelPanel(payload, context));
+    target.appendChild(floorsPanel(payload));
+    target.appendChild(signalsPanel(payload));
+    const held = withheldPanel(payload);
+    if (held) {
+      target.appendChild(held);
+    }
+    target.appendChild(attributionPanel(payload, context.attacks));
+    target.appendChild(boundsPanel(payload));
+    target.appendChild(transferabilityPanel(payload, context));
+    target.appendChild(groupingPanel(payload));
+    split.evidence.forEach(function (node) {
+      target.appendChild(node);
+    });
+    target.appendChild(summaryPanel(payload));
+    target.appendChild(headlineParams(context.defaults));
+  }
+
+  /* ---------------------------------------------------------------------- *
    * Assembly
    * ---------------------------------------------------------------------- */
 
   /**
-   * Render a whole `POST /api/run` response into a container.
+   * Render one page of a `POST /api/run` response into a container.
    *
    * @param {HTMLElement} target
+   * @param {string} pageId `session`, `evidence`, `proof` or `report`.
    * @param {Object} payload
    * @param {Object} context `{defaults, attacks, constants}`.
+   * @param {Object} [options] Passed to the session view.
    * @returns {void}
    */
-  function run(target, payload, context) {
+  function page(target, pageId, payload, context, options) {
+    // Any replay belongs to the view that started it, and that view is about
+    // to be thrown away.
+    stopPlayback();
     target.textContent = "";
     // A failed run is answered with 200 and null bodies, so it is handled
     // before the contract check -- otherwise the screen would report a
@@ -2350,28 +4095,41 @@ const Render = (function () {
         return;
       }
     }
-    target.appendChild(verdictStrip(payload));
-    const abort = noVerdictBanner(payload);
-    if (abort) {
-      target.appendChild(abort);
+
+    if (pageId === "report") {
+      reportView(target, payload, context);
+      return;
     }
-    nullBanners(payload, context).forEach(function (node) {
-      target.appendChild(node);
+    let nodes;
+    if (pageId === "evidence") {
+      nodes = evidenceView(payload, context);
+    } else if (pageId === "proof") {
+      nodes = proofView(payload, context);
+    } else {
+      nodes = [sessionView(payload, context, options)];
+    }
+    nodes.forEach(function (node) {
+      if (node) {
+        target.appendChild(node);
+      }
     });
-    target.appendChild(groundTruth(payload));
-    target.appendChild(channelPanel(payload, context));
-    target.appendChild(floorsPanel(payload));
-    target.appendChild(signalsPanel(payload));
-    const held = withheldPanel(payload);
-    if (held) {
-      target.appendChild(held);
-    }
-    target.appendChild(attributionPanel(payload, context.attacks));
-    target.appendChild(boundsPanel(payload));
-    target.appendChild(transferabilityPanel(payload, context));
-    target.appendChild(groupingPanel(payload));
-    target.appendChild(summaryPanel(payload));
-    target.appendChild(headlineParams(context.defaults));
+  }
+
+  /**
+   * Render a whole `POST /api/run` response: every panel, as the full report.
+   *
+   * The entry point this module has always exposed, kept to its original
+   * meaning. The page itself goes through `page`, one view at a time; this is
+   * the everything-at-once rendering that the value-level tests execute, so a
+   * panel moved between views is still a panel they read.
+   *
+   * @param {HTMLElement} target
+   * @param {Object} payload
+   * @param {Object} context
+   * @returns {void}
+   */
+  function run(target, payload, context) {
+    page(target, "report", payload, context, {});
   }
 
   return {
@@ -2380,9 +4138,11 @@ const Render = (function () {
     headlineParams: headlineParams,
     kv: kv,
     notSupplied: notSupplied,
+    page: page,
     panel: panel,
     refused: refused,
     run: run,
+    stop: stopPlayback,
     token: token,
   };
 })();

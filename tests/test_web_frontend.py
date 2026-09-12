@@ -2142,11 +2142,19 @@ def test_projector_mode_sets_the_variable_where_it_is_actually_read() -> None:
 #
 # So the tests below RUN the shipped scripts. There is no bundler and no
 # browser: ``node`` loads ``format.js``, ``charts.js``, ``contract.js`` and
-# ``render.js`` into one ``vm`` context under a DOM shim of two functions --
-# ``createElement`` and ``createElementNS`` are the entire DOM surface those
-# four files touch -- feeds them a committed recording out of
-# ``static/data/recorded/``, and hands back the tree they built. The assertions
-# are then about VALUES on the screen rather than about substrings in a file.
+# ``render.js`` into one ``vm`` context under a small DOM shim, feeds them a
+# committed recording out of ``static/data/recorded/``, and hands back the tree
+# they built. The assertions are then about VALUES on the screen rather than
+# about substrings in a file.
+#
+# The shim models exactly the DOM surface those four files touch: building
+# elements, ``setAttribute``/``setAttributeNS``, ``textContent``, and -- since
+# the presentation views became interactive -- ``addEventListener`` (a no-op:
+# no event is ever fired here), ``classList.contains``, a ``querySelector``
+# that understands a bare tag name and REFUSES anything else, and a ``window``
+# whose ``matchMedia`` and timers are inert. Anything outside that surface
+# throws, so a script that starts depending on more of the DOM fails here
+# loudly rather than rendering a quietly different tree.
 #
 # The harness is written to a temp directory rather than committed under
 # ``static/``: nothing may live in the served tree that the page does not load.
@@ -2177,7 +2185,27 @@ function El(tag) {
   this.className = "";
 }
 El.prototype.setAttribute = function (k, v) { this.attrs[k] = String(v); };
+El.prototype.setAttributeNS = function (ns, k, v) { this.setAttribute(k, v); };
 El.prototype.appendChild = function (c) { this.children.push(c); return c; };
+El.prototype.addEventListener = function () {};
+Object.defineProperty(El.prototype, "classList", {
+  get: function () {
+    const names = this.className.split(" ").filter(Boolean);
+    return { contains: function (c) { return names.indexOf(c) !== -1; } };
+  },
+});
+El.prototype.querySelector = function (selector) {
+  if (!/^[a-z][a-z0-9]*$/.test(selector)) {
+    throw new Error("the shim's querySelector takes a bare tag: " + selector);
+  }
+  const stack = this.children.slice();
+  while (stack.length) {
+    const node = stack.shift();
+    if (node.tag === selector) { return node; }
+    Array.prototype.unshift.apply(stack, node.children);
+  }
+  return null;
+};
 Object.defineProperty(El.prototype, "textContent", {
   get: function () {
     return this.children.length
@@ -2204,6 +2232,11 @@ const sandbox = {
     createElement: function (t) { return new El(t); },
     createElementNS: function (ns, t) { return new El(t); },
   },
+  window: {
+    matchMedia: function () { return { matches: false }; },
+    setInterval: function () { return 0; },
+    clearInterval: function () {},
+  },
 };
 vm.createContext(sandbox);
 ["format.js", "charts.js", "contract.js", "render.js"].forEach(function (f) {
@@ -2222,6 +2255,10 @@ if (job.op === "run") {
   mod.Contract.install(job.contract);
   root = new El("div");
   mod.Render.run(root, job.payload, job.context);
+} else if (job.op === "page") {
+  mod.Contract.install(job.contract);
+  root = new El("div");
+  mod.Render.page(root, job.page, job.payload, job.context, {});
 } else if (job.op === "bars") {
   root = mod.Charts.bars(job.options);
 } else {
@@ -2256,11 +2293,25 @@ def drive(harness: Path, job: dict[str, Any]) -> dict[str, Any]:
 
 
 def render_run(harness: Path, payload: dict[str, Any]) -> dict[str, Any]:
-    """Render one ``POST /api/run`` response the way the page does."""
+    """Render one ``POST /api/run`` response with every panel on it."""
+    return render_page(harness, payload, None)
+
+
+def render_page(
+    harness: Path, payload: dict[str, Any], page: str | None
+) -> dict[str, Any]:
+    """Render one response as one of the page's views, or whole if ``None``.
+
+    The views are ``session``, ``evidence`` and ``proof``, the three a room
+    sees; ``None`` goes through ``Render.run``, which renders every panel.
+    """
+    job: dict[str, Any] = (
+        {"op": "run"} if page is None else {"op": "page", "page": page}
+    )
     return drive(
         harness,
         {
-            "op": "run",
+            **job,
             "payload": payload,
             "contract": json.loads(CONTRACT_PATH.read_text(encoding="utf-8")),
             "context": {
@@ -2312,6 +2363,30 @@ def exponential(value: float) -> str:
     rather than the JavaScript grading its own homework.
     """
     return f"{value:.4e}"
+
+
+def scientific(value: float) -> str:
+    """What ``Fmt.sci`` renders for a float, computed independently.
+
+    Three figures and a superscript power, the form the presentation views use
+    so a figure reads from the back of a hall.
+
+    >>> scientific(3.8649211592196904e-10)
+    '3.86 \u00d7 10\u207b\u00b9\u2070'
+    >>> scientific(0.0), scientific(2.5)
+    ('0', '2.50')
+    """
+    if value == 0:
+        return "0"
+    mantissa, exponent = f"{value:.2e}".split("e")
+    power = int(exponent)
+    if power == 0:
+        return mantissa
+    superscript = str.maketrans(
+        "0123456789-",
+        "\u2070\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078\u2079\u207b",
+    )
+    return f"{mantissa} \u00d7 10{str(power).translate(superscript)}"
 
 
 @requires_node
@@ -2564,3 +2639,63 @@ def test_no_banner_explains_itself_with_a_check_fraction_it_did_not_run_at(
             f"{name} ran at check_fraction = {fraction} and the page argues "
             f"from what is true at check_fraction = 0"
         )
+
+
+@requires_node
+def test_the_presentation_views_publish_the_proven_bound_not_the_budget(
+    harness: Path, recordings: dict[str, dict[str, Any]]
+) -> None:
+    """Two more copies of the one expression an audit caught being swapped.
+
+    The session view's readout prints the chance of a false alarm beside the
+    verdict, and the Proof view leads with the same figure at display size.
+    Both read ``detection.false_positive_bound``, both would render ``eps`` in
+    exactly the same shape if the field were swapped, and ``eps`` is what the
+    operator asked for rather than anything this project proved. Each copy is
+    checked on its own, as the verdict strip's is.
+
+    Every recording is rendered through all three views as it goes, so a view
+    that throws on one scenario fails here rather than in front of a room.
+    """
+    for name, payload in sorted(recordings.items()):
+        detection = payload["detection"]
+        evidence = render_page(harness, payload, "evidence")
+        assert text_of(evidence), f"the evidence view rendered nothing on {name}"
+        if detection is None:
+            continue
+        proven = scientific(detection["false_positive_bound"])
+        budget = scientific(detection["eps"])
+        swapped = detection["eps"] != detection["false_positive_bound"]
+
+        readout = [
+            text_of(node)
+            for node in walk(render_page(harness, payload, "session"))
+            if node["cls"] == "figure is-proven"
+        ]
+        assert len(readout) == 1, (
+            f"the session readout on {name} shows {len(readout)} proven "
+            f"figures; it should show exactly the false-alarm bound"
+        )
+        assert proven in readout[0], (
+            f"on {name} the session readout reads {readout[0]!r}, and "
+            f"false_positive_bound renders as {proven!r}"
+        )
+        if swapped:
+            assert budget not in readout[0], (
+                f"on {name} the session readout publishes the budget {budget}"
+            )
+
+        hero = [
+            text_of(node)
+            for node in walk(render_page(harness, payload, "proof"))
+            if node["cls"] == "hero-figure"
+        ]
+        assert len(hero) == 1, f"the proof view on {name} has no headline"
+        assert proven in hero[0], (
+            f"on {name} the proof headline reads {hero[0]!r}, and "
+            f"false_positive_bound renders as {proven!r}"
+        )
+        if swapped:
+            assert budget not in hero[0], (
+                f"on {name} the proof headline publishes the budget {budget}"
+            )

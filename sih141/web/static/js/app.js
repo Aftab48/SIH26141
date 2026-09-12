@@ -70,10 +70,19 @@ const App = (function () {
     recordedPayloads: {},
     recordedHeld: 0,
     busy: false,
+    // The run every run-scoped view is about, and how to introduce it.
+    payload: null,
+    payloadTitle: null,
+    payloadWhy: null,
+    payloadSource: null,
+    selectedFile: null,
+    // True for exactly one render after a run is chosen: the replay plays once
+    // per selection, not every time someone comes back to the session view.
+    autoplay: false,
   };
 
   /**
-   * The bundle every panel is rendered against.
+   * The bundle every view is rendered against.
    *
    * @returns {Object}
    */
@@ -109,7 +118,37 @@ const App = (function () {
   }
 
   /* ---------------------------------------------------------------------- *
-   * Controls
+   * The roster
+   * ---------------------------------------------------------------------- */
+
+  /** How each roster entry is introduced: never a verdict colour. */
+  const KIND = {
+    "not-an-attack": { word: "Baseline", css: "is-baseline" },
+    detectable: { word: "Attack", css: "is-attack" },
+    "undetectable-by-construction": {
+      word: "Undetectable by design",
+      css: "is-hidden",
+    },
+  };
+
+  /**
+   * One roster entry by key, or null.
+   *
+   * @param {string} key
+   * @returns {Object|null}
+   */
+  function rosterEntry(key) {
+    let found = null;
+    (state.attacks || []).forEach(function (entry) {
+      if (found === null && entry.key === key) {
+        found = entry;
+      }
+    });
+    return found;
+  }
+
+  /* ---------------------------------------------------------------------- *
+   * Run a session
    * ---------------------------------------------------------------------- */
 
   /**
@@ -128,10 +167,9 @@ const App = (function () {
    * Return the API's own starting value for one request field.
    *
    * `/api/defaults` publishes `params` as a whole default REQUEST, so the
-   * form's starting position is the service's rather than five numbers typed
-   * into this file. A field the API does not publish starts empty and the API
-   * refuses the submission, which is the correct failure: better a refusal
-   * naming the field than a silent default nobody chose.
+   * form's starting position is the service's rather than numbers typed into
+   * this file. A field the API does not publish starts empty and the API
+   * refuses the submission, which is the correct failure.
    *
    * @param {string} name
    * @returns {string}
@@ -145,20 +183,17 @@ const App = (function () {
   }
 
   /**
-   * Build one numeric control, with the API's own cap printed beside it.
+   * One numeric setting, with the API's own range beside it.
    *
    * @param {string} id
    * @param {string} label
    * @param {string} step
+   * @param {string} [hint]
    * @returns {HTMLElement}
    */
-  function numberField(id, label, step) {
+  function numberField(id, label, step, hint) {
     const caps = capsFor(id);
-    const attrs = {
-      type: "number",
-      value: startingValue(id),
-      step: step,
-    };
+    const attrs = { type: "number", value: startingValue(id), step: step };
     if (caps.minimum !== undefined) {
       attrs.min = String(caps.minimum);
     }
@@ -170,48 +205,55 @@ const App = (function () {
     const range =
       caps.minimum === undefined
         ? "range not supplied by the API"
-        : `${caps.minimum} to ${caps.maximum}, refused outside, never clamped`;
+        : `${caps.minimum} to ${caps.maximum}`;
     return h("div", { class: "field" }, [
       h("label", { text: label, attrs: { for: id } }),
       input,
-      h("span", { class: "cap", text: range }),
-      caps.note ? h("span", { class: "cap", text: caps.note }) : null,
+      h("span", { class: "field-hint", text: range }),
+      hint ? h("span", { class: "field-hint", text: hint }) : null,
     ]);
   }
 
   /**
-   * Build the whole control rail.
+   * The Run a session view.
    *
    * @returns {HTMLElement}
    */
   function controls() {
-    const attackList = h("ul", { class: "attack-list" });
-    (state.attacks || []).forEach(function (entry, index) {
+    const detail = h("p", { class: "adversary-detail" });
+    const grid = h("div", {
+      class: "adversary-grid",
+      attrs: { role: "radiogroup", "aria-label": "Adversary" },
+    });
+    const chosen = startingValue("attack");
+    let anyChecked = false;
+    (state.attacks || []).forEach(function (entry) {
+      const kind = KIND[entry.detectable] || { word: "", css: "" };
       const radio = h("input", {
         attrs: { type: "radio", name: "attack", value: entry.key },
       });
-      if (entry.key === startingValue("attack") || index === 0) {
+      if (entry.key === chosen) {
         radio.checked = true;
+        anyChecked = true;
+        detail.textContent = entry.summary || "";
       }
-      const label = h("label", {}, [
-        radio,
-        h("span", { class: "attack-name", text: entry.label }),
-      ]);
-      if (entry.detectable === "undetectable-by-construction") {
-        label.appendChild(Render.token("withheld", "UNDETECTABLE (AUTH)"));
-      } else if (entry.detectable === "not-an-attack") {
-        label.appendChild(Render.token("clean", "BASELINE"));
-      } else {
-        label.appendChild(Render.token("detected", "DETECTABLE"));
-      }
-      label.appendChild(h("span", { class: "attack-why", text: entry.summary }));
-      if (entry.assumption) {
-        label.appendChild(
-          h("span", { class: "attack-why", text: entry.assumption })
-        );
-      }
-      attackList.appendChild(h("li", {}, [label]));
+      radio.addEventListener("change", function () {
+        detail.textContent = entry.summary || "";
+      });
+      grid.appendChild(
+        h("label", { class: "adversary-tile" }, [
+          radio,
+          h("span", { class: "tile-name", text: entry.label }),
+          h("span", { class: `tile-kind ${kind.css}`, text: kind.word }),
+        ])
+      );
     });
+    if (!anyChecked) {
+      const first = grid.querySelector('input[name="attack"]');
+      if (first) {
+        first.checked = true;
+      }
+    }
 
     // The roster comes from the API's own limits block where it publishes
     // one, so a third ordering added upstream appears here without an edit.
@@ -219,12 +261,11 @@ const App = (function () {
       "before-forwarding",
       "after-forwarding",
     ];
-    const chosen = startingValue("count_exchange_timing");
     const timingSelect = h("select", {});
     timingSelect.id = "count_exchange_timing";
     timings.forEach(function (value) {
       const option = h("option", { text: value, attrs: { value: value } });
-      if (value === chosen) {
+      if (value === startingValue("count_exchange_timing")) {
         option.selected = true;
       }
       timingSelect.appendChild(option);
@@ -232,84 +273,118 @@ const App = (function () {
 
     const runButton = h("button", {
       class: "run-button",
-      text: "Run one session",
+      text: "Run session",
       attrs: { type: "button", id: "run" },
     });
     runButton.addEventListener("click", startLiveRun);
 
-    const status = h("div", {
-      class: "run-status",
-      text: "idle",
-      attrs: { id: "run-status", role: "status", "aria-live": "polite" },
-    });
-
     const limits = (state.defaults && state.defaults.limits) || {};
-    return h("section", { class: "panel" }, [
-      h("h2", { text: "Run one session" }, [
-        h("span", { class: "hint", text: "every cap below is the API's" }),
-      ]),
-      h("div", { class: "panel-body" }, [
-        h("div", { class: "field" }, [
-          h("label", { text: "Adversary" }),
-          attackList,
-        ]),
-        numberField("key_length", "key_length", "1"),
-        numberField("check_fraction", "check_fraction", "0.05"),
-        numberField("noise", "noise: the LINK", "0.005"),
-        // The two nulls are ONE instruction and are labelled as one. Setting
-        // only the first leaves an honest run over a noisy link detected, with
-        // 'honest' ruled out and an adversary named, 12/12 at L = 192 over
-        // twelve seeds, so a heading that reads as a single "the null" is not
-        // a cosmetic problem.
+
+    return h("div", { class: "run-view" }, [
+      h("header", { class: "page-head" }, [
+        h("h1", { text: "Run a session" }),
         h("p", {
-          class: "warn-note",
           text:
-            "TWO NULLS, AND BOTH DEFAULT TO A PERFECT LINK. detect() reads " +
-            "the verifiers' mismatch counts against channel_error_rate and " +
-            "the published check rounds against tolerated_depolarising. To " +
-            "score an honest run over a noisy link against the link, SET " +
-            "BOTH: setting either alone leaves the other family scoring " +
-            "against a link nobody has, and the run still fires. Neither is " +
-            "ever inferred from the transcript.",
+            "Choose an adversary and settings. The server generates a real " +
+            "session and the detector scores it, usually within seconds. " +
+            "Settings outside a range are refused, never adjusted.",
         }),
-        numberField(
-          "channel_error_rate",
-          "NULL 1 of 2: channel_error_rate (rate family)",
-          "0.005"
-        ),
-        numberField(
-          "tolerated_depolarising",
-          "NULL 2 of 2: tolerated_depolarising (channel family)",
-          "0.005"
-        ),
-        numberField("eps", "eps: the budget", "any"),
-        h("div", { class: "field" }, [
-          h("label", {
-            text: "count_exchange_timing",
-            attrs: { for: "count_exchange_timing" },
-          }),
-          timingSelect,
-          h("span", {
-            class: "cap",
-            text:
-              "a control and a label, never a thing to average over. The two " +
-              "orderings answer different questions, one is a forgery, the " +
-              "other a denial of service.",
-          }),
-        ]),
-        numberField("seed", "seed", "1"),
-        runButton,
-        status,
-        limits.max_concurrent_runs === undefined
-          ? null
-          : h("p", {
-              class: "note",
-              text:
-                `The server accepts ${limits.max_concurrent_runs} concurrent ` +
-                `run(s) and refuses the rest immediately rather than parking ` +
-                `them behind seconds of simulation with nothing on screen.`,
-            }),
       ]),
+      state.mode === "live"
+        ? null
+        : h("p", {
+            class: "offline-note",
+            text:
+              "The live service is not answering, so no session can be run " +
+              "right now. The recorded scenarios still work.",
+          }),
+      h("section", { class: "sheet" }, [
+        h("h2", { text: "Adversary" }),
+        grid,
+        detail,
+      ]),
+      h("section", { class: "sheet" }, [
+        h("h2", { text: "Settings" }),
+        h("div", { class: "field-row" }, [
+          numberField("key_length", "Key length", "1"),
+          numberField(
+            "check_fraction",
+            "Share of positions spent checking the link",
+            "0.05"
+          ),
+          numberField(
+            "noise",
+            "Noise on the link",
+            "0.005",
+            "With noise above zero, set both noise assumptions under " +
+              "Advanced, or an honest run will still raise an alarm."
+          ),
+        ]),
+        h("details", { class: "advanced" }, [
+          h("summary", { text: "Advanced settings" }),
+          // The two nulls are ONE instruction and are labelled as one. Setting
+          // only the first leaves an honest run over a noisy link detected,
+          // with 'honest' ruled out and an adversary named, 12/12 at L = 192
+          // over twelve seeds.
+          h("p", {
+            class: "warn-note",
+            text:
+              "TWO NULLS, AND BOTH DEFAULT TO A PERFECT LINK. detect() reads " +
+              "the verifiers' mismatch counts against channel_error_rate and " +
+              "the published check rounds against tolerated_depolarising. To " +
+              "score an honest run over a noisy link against the link, SET " +
+              "BOTH: setting either alone leaves the other family scoring " +
+              "against a link nobody has, and the run still fires. Neither is " +
+              "ever inferred from the transcript.",
+          }),
+          h("div", { class: "field-row" }, [
+            numberField(
+              "channel_error_rate",
+              "NULL 1 of 2: channel_error_rate (rate family)",
+              "0.005"
+            ),
+            numberField(
+              "tolerated_depolarising",
+              "NULL 2 of 2: tolerated_depolarising (channel family)",
+              "0.005"
+            ),
+          ]),
+          h("div", { class: "field-row" }, [
+            numberField("eps", "Alarm budget, eps", "any"),
+            h("div", { class: "field" }, [
+              h("label", {
+                text: "When counts are compared",
+                attrs: { for: "count_exchange_timing" },
+              }),
+              timingSelect,
+              h("span", {
+                class: "field-hint",
+                text:
+                  "The two orders answer different questions: one is a " +
+                  "forgery, the other a denial of service.",
+              }),
+            ]),
+            numberField("seed", "Random seed", "1"),
+          ]),
+        ]),
+      ]),
+      h("div", { class: "run-row" }, [
+        runButton,
+        h("div", {
+          class: "run-status",
+          text: "Ready",
+          attrs: { id: "run-status", role: "status", "aria-live": "polite" },
+        }),
+      ]),
+      limits.max_concurrent_runs === undefined
+        ? null
+        : h("p", {
+            class: "field-hint",
+            text:
+              `The server runs ${limits.max_concurrent_runs} session(s) at a ` +
+              `time and refuses the rest straight away rather than queueing ` +
+              `them.`,
+          }),
     ]);
   }
 
@@ -346,8 +421,6 @@ const App = (function () {
    * The fallback exists for the moment the service dies mid-demonstration, and
    * a fallback that fetches is not a fallback. Each entry is fetched once here,
    * while the service is up, and every later click reads `recordedPayloads`.
-   * A run that failed to preload simply is not held, and the rail says how many
-   * are, `13 of 13 held in memory` is a promise the page can keep.
    *
    * @returns {Promise<void>}
    */
@@ -369,22 +442,43 @@ const App = (function () {
   }
 
   /**
-   * Build the recorded-run list: the walk-through, in order.
+   * The scenario rail: every recorded run, one click each.
+   *
+   * Attack scenarios carry a hazard mark and baselines carry none. That mark
+   * says what the SCENARIO is, taken from the roster, and is deliberately not
+   * a verdict colour: the rail must not tell a room what the detector will
+   * conclude before the replay shows it.
    *
    * @returns {HTMLElement}
    */
   function recordedList() {
-    const list = h("ul", { class: "recorded-list" });
+    const rail = h("div", { class: "scenario-rail" });
+    const list = h("ul", { class: "scenario-list" });
     (state.recorded || []).forEach(function (entry) {
       const held = Object.prototype.hasOwnProperty.call(
         state.recordedPayloads,
         entry.file
       );
-      const button = h("button", { attrs: { type: "button" } }, [
-        h("span", { class: "attack-name", text: entry.label }),
-        Render.token("neutral", "RECORDED"),
-        held ? null : Render.token("withheld", "NOT LOADED"),
-        h("span", { class: "attack-why", text: entry.why }),
+      const roster = rosterEntry(entry.attack);
+      const attack = roster !== null && roster.detectable !== "not-an-attack";
+      const current = state.selectedFile === entry.file;
+      const button = h("button", {
+        class: `scenario ${current ? "is-current" : ""} ${
+          attack ? "is-attack" : ""
+        } ${held ? "" : "is-missing"}`,
+        attrs: {
+          type: "button",
+          title: entry.why,
+          "aria-pressed": current ? "true" : "false",
+          "aria-label": `${entry.label}${attack ? ", attack scenario" : ""}${
+            held ? "" : ", not loaded"
+          }`,
+        },
+      }, [
+        attack
+          ? h("span", { class: "scenario-mark", attrs: { "aria-hidden": "true" } })
+          : null,
+        h("span", { text: entry.label }),
       ]);
       button.addEventListener("click", function () {
         showRecorded(entry);
@@ -392,46 +486,29 @@ const App = (function () {
       list.appendChild(h("li", {}, [button]));
     });
     const total = (state.recorded || []).length;
-    return h("section", { class: "panel" }, [
-      h("h2", { text: "Recorded runs" }, [
-        h("span", { class: "hint", text: "generated ahead of time, not now" }),
-      ]),
-      h("div", { class: "panel-body" }, [
-        h("p", {
-          class: "note",
-          text:
-            "Produced by tools/phase6_fixtures.py, which drives this same API " +
-            "and writes its answers verbatim. They are the walk-through: the " +
-            "baseline, then the baseline's own failure mode, then the " +
-            "adversaries, then the runs that exist to show what this screen " +
-            "must not claim.",
-        }),
-        h("p", {
-          class:
-            total > 0 && state.recordedHeld === total ? "note" : "warn-note",
-          text:
-            total === 0
-              ? "NONE. The walk-through is served by the same process as this " +
-                "page and it did not answer, so there is nothing here to " +
-                "click and no fallback to fall back to. Start the server and " +
-                "reload."
-              : `${state.recordedHeld} of ${total} held in this page's ` +
-                `memory. Held runs render with no network at all, so they ` +
-                `keep working if the service stops answering. Anything not ` +
-                `held would need the service back.`,
-        }),
-        list,
-      ]),
-    ]);
+    rail.appendChild(list);
+    rail.appendChild(
+      h("p", {
+        class:
+          total > 0 && state.recordedHeld === total
+            ? "held-note"
+            : "held-note is-short",
+        text:
+          total === 0
+            ? "No recorded scenarios: the service that serves them did not " +
+              "answer. Start the server and reload."
+            : `${state.recordedHeld} of ${total} held in this page's memory, ` +
+              `so they keep working if the service stops.`,
+      })
+    );
+    return rail;
   }
 
   /**
-   * Render one recorded run, from memory.
+   * Show one recorded run, from memory.
    *
    * No fetch here, by design: this is the path a presenter falls back to when
-   * the service has died, and it must not depend on the thing that died. A run
-   * that was not preloaded is reported as not held rather than fetched on the
-   * off-chance.
+   * the service has died, and it must not depend on the thing that died.
    *
    * @param {Object} entry An `index.json` row.
    * @returns {void}
@@ -449,9 +526,14 @@ const App = (function () {
       setStatus(`recorded run not held: ${entry.file}`, "failed");
       return;
     }
-    Render.run(document.getElementById("stage"), payload, context());
+    hold(payload, {
+      title: entry.label,
+      why: entry.why,
+      source: "Recorded run",
+      file: entry.file,
+    });
     setStatus(`recorded run shown: ${entry.label} (from memory)`, "");
-    window.scrollTo(0, 0);
+    go("session");
   }
 
   /* ---------------------------------------------------------------------- *
@@ -459,7 +541,7 @@ const App = (function () {
    * ---------------------------------------------------------------------- */
 
   /**
-   * Set the status line.
+   * Set the status line, where the Run view is showing one.
    *
    * @param {string} text
    * @param {string} cls `busy`, `failed`, or empty.
@@ -475,23 +557,20 @@ const App = (function () {
   }
 
   /**
-   * Report that nothing answered, on the stage AND in the masthead.
+   * Report that nothing answered, in the view AND in the top bar.
    *
    * ONE function, called by every path that can discover the service is gone,
-   * because the previous version had the masthead repaint in exactly one of
-   * them. `startLiveRun`'s catch flipped the chip; `showRecorded`'s did not,
-   * so clicking three recorded runs against a dead process gave three
-   * `Failed to fetch` panels under a masthead still reading `LIVE API`, and
-   * the recorded path is the one a presenter falls back to. A fix that lives
-   * inside one branch of one function is a fix for one branch of one function.
+   * because a repaint that lives inside one branch of one function is a fix
+   * for one branch of one function.
    *
    * @param {string} message What failed, verbatim.
    * @param {Object} request What was being asked for.
    * @returns {void}
    */
   function noteTransportFailure(message, request) {
+    clearHeld();
     Render.refused(
-      document.getElementById("stage"),
+      document.getElementById("view"),
       message,
       request,
       "unreachable"
@@ -511,18 +590,18 @@ const App = (function () {
       return;
     }
     if (state.mode !== "live") {
-      // Clear the stage too, not only the status line. A click that started no
-      // run must not leave the previous run's verdict standing: a presenter
-      // who presses Run and sees DETECTED has been told a run happened.
+      // A click that started no run must not leave the previous run's verdict
+      // standing: a presenter who presses Run and sees an alarm has been told
+      // a run happened.
       noteTransportFailure(
         "The API is not reachable, so no live run was started. Nothing was " +
-          "refused and nothing was scored. The recorded runs in the rail are " +
-          "held in this page's memory and still work.",
+          "refused and nothing was scored. The recorded scenarios are held " +
+          "in this page's memory and still work.",
         readControls()
       );
       setStatus(
-        "the API is not reachable, so no live run can be started. The " +
-          "recorded runs below still work.",
+        "The service is not reachable, so no session can be run. The " +
+          "recorded scenarios still work.",
         "failed"
       );
       return;
@@ -532,10 +611,8 @@ const App = (function () {
     state.busy = true;
     button.disabled = true;
     setStatus(
-      `running: ${body.attack}, key_length ${body.key_length}, ` +
-        `check_fraction ${body.check_fraction}, noise ${body.noise}, ` +
-        `timing ${body.count_exchange_timing}. Generating the session is the ` +
-        `slow part; detection is milliseconds.`,
+      `Running ${body.attack} at key length ${body.key_length}. Generating ` +
+        `the session is the slow part; detection takes milliseconds.`,
       "busy"
     );
     getJson("/api/run", {
@@ -544,37 +621,39 @@ const App = (function () {
       body: JSON.stringify(body),
     })
       .then(function (payload) {
-        Render.run(document.getElementById("stage"), payload, context());
-        setStatus("live run complete", "");
+        const roster = rosterEntry(body.attack);
+        hold(payload, {
+          title: roster ? roster.label : body.attack,
+          why: "A session generated just now, with the settings you chose.",
+          source: "Live run",
+          file: null,
+        });
+        setStatus("Session complete", "");
+        go("session");
       })
       .catch(function (error) {
-        // Clear the stage as well as the status line. A refusal that only
-        // wrote to the rail left the previous run's verdict on screen under
-        // the new parameters, which is the one thing the caps exist to stop.
-        //
-        // The two failures stay distinguishable, which is why the repaint is
-        // guarded rather than unconditional. `getJson` throws "HTTP <status>
-        // ..." when the server ANSWERED -- a 400 from a cap or a 503 from the
-        // run gate is the service working exactly as designed -- and anything
-        // else means the fetch itself failed. Repainting on an HTTP error
-        // would announce a dead API every time somebody typed a key_length
-        // over the ceiling.
+        // `getJson` throws "HTTP <status> ..." when the server ANSWERED -- a
+        // 400 from a cap or a 503 from the run gate is the service working as
+        // designed -- and anything else means the fetch itself failed.
+        // Repainting the top bar on an HTTP error would announce a dead API
+        // every time somebody typed a key length over the ceiling.
         if (error.message.indexOf("HTTP ") === 0) {
+          clearHeld();
           Render.refused(
-            document.getElementById("stage"),
+            document.getElementById("view"),
             error.message,
             body,
             "refused"
           );
-          setStatus(
-            `the run was refused or failed, ${error.message}`,
-            "failed"
-          );
+          // The service answered, so the form is still the way forward: put
+          // it back under the refusal rather than making the operator find it.
+          document.getElementById("view").appendChild(controls());
+          setStatus(`The run was refused: ${error.message}`, "failed");
         } else {
           noteTransportFailure(error.message, body);
           setStatus(
-            `nothing answered, ${error.message}. The recorded runs held in ` +
-              `memory still work.`,
+            `Nothing answered (${error.message}). The recorded scenarios ` +
+              `still work.`,
             "failed"
           );
         }
@@ -586,20 +665,202 @@ const App = (function () {
   }
 
   /* ---------------------------------------------------------------------- *
+   * Views
+   * ---------------------------------------------------------------------- */
+
+  /**
+   * The views, in nav order. `needsRun` marks those that are about a run.
+   */
+  const VIEWS = [
+    { id: "session", label: "Session", needsRun: true },
+    { id: "evidence", label: "Evidence", needsRun: true },
+    { id: "proof", label: "Proof", needsRun: true },
+    { id: "report", label: "Full report", needsRun: true },
+  ];
+
+  /**
+   * The view the URL asks for, defaulting to the session.
+   *
+   * A hash route and not a path, because the service has no router: a deep
+   * link to `/proof` would 404 on reload.
+   *
+   * @returns {string}
+   */
+  function routeId() {
+    const asked = String(window.location.hash).replace("#/", "");
+    if (asked === "run") {
+      return "run";
+    }
+    let found = "session";
+    VIEWS.forEach(function (entry) {
+      if (entry.id === asked) {
+        found = entry.id;
+      }
+    });
+    return found;
+  }
+
+  /**
+   * Navigate. Writing the hash triggers the render through `hashchange`, so
+   * there is one path into a repaint.
+   *
+   * @param {string} id
+   * @returns {void}
+   */
+  function go(id) {
+    if (String(window.location.hash) === `#/${id}`) {
+      renderRoute();
+      return;
+    }
+    window.location.hash = `#/${id}`;
+  }
+
+  /**
+   * Hold one run as the subject of every run-scoped view.
+   *
+   * @param {Object} payload
+   * @param {{title: string, why: string, source: string, file: ?string}} meta
+   * @returns {void}
+   */
+  function hold(payload, meta) {
+    state.payload = payload;
+    state.payloadTitle = meta.title;
+    state.payloadWhy = meta.why;
+    state.payloadSource = meta.source;
+    state.selectedFile = meta.file;
+    state.autoplay = true;
+  }
+
+  /**
+   * Drop the held run, so nothing stale stands under a failure.
+   *
+   * @returns {void}
+   */
+  function clearHeld() {
+    Render.stop();
+    state.payload = null;
+    state.selectedFile = null;
+    state.autoplay = false;
+    paintNav();
+  }
+
+  /**
+   * Build the view switch. Run-scoped views are disabled until a run is held.
+   *
+   * @returns {void}
+   */
+  function paintNav() {
+    const nav = document.getElementById("pages");
+    if (!nav) {
+      return;
+    }
+    const here = routeId();
+    nav.textContent = "";
+    const tabs = h("div", { class: "view-tabs" });
+    VIEWS.forEach(function (entry) {
+      const locked = entry.needsRun && !state.payload;
+      const button = h("button", {
+        class: `view-tab ${entry.id === here ? "is-current" : ""}`,
+        text: entry.label,
+        attrs: {
+          type: "button",
+          "aria-current": entry.id === here ? "page" : "false",
+        },
+      });
+      button.disabled = locked;
+      button.addEventListener("click", function () {
+        go(entry.id);
+      });
+      tabs.appendChild(button);
+    });
+    nav.appendChild(tabs);
+    const runLink = h("button", {
+      class: `view-action ${here === "run" ? "is-current" : ""}`,
+      text: "Run a session",
+      attrs: {
+        type: "button",
+        "aria-current": here === "run" ? "page" : "false",
+      },
+    });
+    runLink.addEventListener("click", function () {
+      go("run");
+    });
+    nav.appendChild(runLink);
+  }
+
+  /**
+   * Render whatever the hash asks for.
+   *
+   * @returns {void}
+   */
+  function renderRoute() {
+    const view = document.getElementById("view");
+    const rail = document.getElementById("scenarios");
+    if (!view) {
+      return;
+    }
+    const here = routeId();
+    paintNav();
+    if (rail) {
+      rail.textContent = "";
+      rail.hidden = here === "run";
+      if (here !== "run") {
+        rail.appendChild(recordedList());
+      }
+    }
+    if (here === "run") {
+      Render.stop();
+      view.textContent = "";
+      view.appendChild(controls());
+      window.scrollTo(0, 0);
+      return;
+    }
+    if (!state.payload) {
+      Render.stop();
+      view.textContent = "";
+      const start = h("button", {
+        class: "run-button",
+        text: "Run a session",
+        attrs: { type: "button" },
+      });
+      start.addEventListener("click", function () {
+        go("run");
+      });
+      view.appendChild(
+        h("div", { class: "empty-state" }, [
+          h("h1", { text: "Pick a scenario to replay" }),
+          h("p", {
+            text:
+              "Choose one of the recorded scenarios above, or run a new " +
+              "session against the live service.",
+          }),
+          start,
+        ])
+      );
+      return;
+    }
+    Render.page(view, here, state.payload, context(), {
+      autoplay: here === "session" && state.autoplay,
+      title: state.payloadTitle,
+      description: state.payloadWhy,
+      source: state.payloadSource,
+    });
+    if (here === "session") {
+      state.autoplay = false;
+    }
+    window.scrollTo(0, 0);
+  }
+
+  /* ---------------------------------------------------------------------- *
    * Start-up
    * ---------------------------------------------------------------------- */
 
   /**
-   * Show which mode the page is in, in the masthead, always.
+   * Show which mode the page is in, in the top bar, always.
    *
    * THREE STATES, NOT TWO. `RECORDED ONLY` is a promise that there are
    * recorded runs to fall back to, and on a COLD load against a dead service
-   * that promise is empty: the page renders from the browser's cache, the chip
-   * said `RECORDED ONLY: API NOT REACHABLE`, and the rail held zero recorded
-   * runs, because `index.json` is served by the process that is gone. Nothing
-   * numeric was wrong on that screen, every control read "range not supplied
-   * by the API", but the chip was, and the chip is the one thing a presenter
-   * points at to explain what the room is looking at.
+   * that promise is empty.
    *
    * @returns {void}
    */
@@ -608,6 +869,7 @@ const App = (function () {
     if (!chip) {
       return;
     }
+    chip.className = `mode-chip is-${state.mode}`;
     if (state.mode === "live") {
       chip.textContent = "LIVE API";
       chip.title = "the service answered; runs on this page are real";
@@ -620,6 +882,7 @@ const App = (function () {
         "page's memory still render, and no live run can be started";
       return;
     }
+    chip.className = "mode-chip is-dead";
     chip.textContent = "NOTHING LIVE: NO API AND NO RECORDED RUNS";
     chip.title =
       "the service is not answering and no recorded run was loaded, so " +
@@ -627,24 +890,17 @@ const App = (function () {
   }
 
   /**
-   * How often the masthead re-checks that the service is really there, in ms.
+   * How often the top bar re-checks that the service is really there, in ms.
    */
   const HEALTH_INTERVAL_MS = 5000;
 
   /**
-   * Keep the masthead's claim true by ASKING, not by waiting to be surprised.
+   * Keep the top bar's claim true by ASKING, not by waiting to be surprised.
    *
-   * The mode used to be decided once at start-up and revised only when
-   * something failed. Now that recorded runs render from memory, nothing on
-   * the recorded path can fail, so without this the chip would go on reading
-   * `LIVE API` after the process died until somebody pressed Run. A masthead
-   * that says the API is live is a claim, and a claim on this screen has to be
-   * checked. `/api/health` is a few bytes and is the liveness check the service
-   * publishes for exactly this.
-   *
-   * Recovery is handled too: restart the server and the chip goes back to
-   * `LIVE API` by itself, which is what an operator who has just fixed
-   * something needs to see.
+   * Recorded runs render from memory, so nothing on that path can fail and
+   * revise the chip. `/api/health` is the liveness check the service publishes
+   * for exactly this, and restarting the server brings the chip back to
+   * `LIVE API` by itself.
    *
    * @returns {void}
    */
@@ -679,10 +935,9 @@ const App = (function () {
   /**
    * Wire the projector-mode toggle. It changes one CSS variable and no number.
    *
-   * The class goes on the ROOT element. `--scale` is read by the `html` rule
-   * that sets the root font-size, and a custom property set on `<body>` is
-   * invisible to a rule matching `<html>`, so toggling the class on the body
-   * sets the variable somewhere nothing reads it and the page does not move.
+   * The class goes on the ROOT element: `--scale` is read by the `html` rule,
+   * and a custom property set on `<body>` is invisible to a rule matching
+   * `<html>`.
    *
    * @returns {void}
    */
@@ -698,57 +953,8 @@ const App = (function () {
   }
 
   /**
-   * The opening panel: what the walk-through is, and the four states.
-   *
-   * @returns {HTMLElement}
-   */
-  function opening() {
-    return Render.panel(
-      "Pick a run",
-      "left rail: a live session, or one recorded ahead of time",
-      [
-        h("p", {
-          class: "note",
-          text:
-            "Start with the honest baseline. Then the same honest run over a " +
-            "noisy link, scored against detect()'s default noiseless null: " +
-            "which FIRES, correctly, and is this dashboard's worst failure " +
-            "mode. Then the adversaries: watch QBER and CHSH move on the " +
-            "targeted link only, watch the floors, and watch a denial land as " +
-            "a NO VERDICT rather than as a rejection, with the proven bound " +
-            "beside the measured numbers throughout.",
-        }),
-        h("div", { class: "legend" }, [
-          h("span", { text: "the states, and none of them is a shade of another:" }),
-          Render.token("clean", "NOTHING FIRED / ACCEPTED"),
-          Render.token("detected", "DETECTED / REJECTED"),
-          Render.token("noverdict", "NO VERDICT"),
-          Render.token("withheld", "NOT EVALUATED"),
-        ]),
-        h("div", { class: "legend" }, [
-          h("span", { text: "and the two kinds of number:" }),
-          Render.h("span", { class: "num num-proven" }, [
-            Render.h("span", { class: "kind", text: "⊢ proven" }),
-            Render.h("span", {
-              class: "value",
-              text: "from a stated null and a named inequality",
-            }),
-          ]),
-          Render.h("span", { class: "num num-measured" }, [
-            Render.h("span", { class: "kind", text: "measured" }),
-            Render.h("span", {
-              class: "value",
-              text: "counted over runs, always with its sample size",
-            }),
-          ]),
-        ]),
-      ]
-    );
-  }
-
-  /**
    * Load the contract and the constants, then the API, falling back to the
-   * recordings.
+   * recordings, then open on the first recorded scenario.
    *
    * @returns {void}
    */
@@ -767,7 +973,7 @@ const App = (function () {
           state.constants = constants;
         })
         .catch(function () {
-          /* Panels that needed one say the file was not served. */
+          /* Views that needed one say the file was not served. */
         }),
     ])
       .then(function () {
@@ -800,30 +1006,39 @@ const App = (function () {
       })
       .then(function () {
         paintMode();
-        const rail = document.getElementById("rail");
-        rail.textContent = "";
-        rail.appendChild(controls());
-        rail.appendChild(recordedList());
-        const stage = document.getElementById("stage");
-        stage.textContent = "";
+        // Open on the first scenario that is actually held, so the room sees
+        // the bench rather than an empty page.
+        let opening = null;
+        (state.recorded || []).forEach(function (entry) {
+          if (opening === null && state.recordedPayloads[entry.file]) {
+            opening = entry;
+          }
+        });
+        if (opening !== null) {
+          hold(state.recordedPayloads[opening.file], {
+            title: opening.label,
+            why: opening.why,
+            source: "Recorded run",
+            file: opening.file,
+          });
+        }
+        window.addEventListener("hashchange", renderRoute);
+        renderRoute();
         if (state.mode !== "live" && state.recordedHeld === 0) {
           // A cold load against a dead service. The page is here because the
-          // browser had it cached; nothing behind it is. Say that, rather than
-          // laying out a walk-through with nothing in it.
-          stage.appendChild(
+          // browser had it cached; nothing behind it is.
+          const view = document.getElementById("view");
+          view.insertBefore(
             Render.banner("alarm", "⚠", "There is nothing to show", [
               "This page loaded from the browser's cache. The service that " +
                 "serves it is not answering, so there is no API to run " +
                 "against and no recorded run was loaded either, the " +
                 "recordings are served by that same process.",
-              "Nothing below is a result. Every control reads its range as " +
-                "not supplied, and no verdict, bound or rate on this page " +
-                "came from anywhere. Start the server and reload.",
-            ])
+              "Nothing on this page is a result. Start the server and reload.",
+            ]),
+            view.firstChild
           );
         }
-        stage.appendChild(opening());
-        stage.appendChild(Render.headlineParams(state.defaults));
         watchService();
       });
   }
