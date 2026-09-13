@@ -1,4 +1,4 @@
-/* app.js -- controls, transport, and the two modes.
+/* app.js: controls, transport, routing, theme, and the two modes.
  *
  * TWO MODES, BECAUSE OF ONE MEASURED FACT
  * ---------------------------------------
@@ -9,14 +9,14 @@
  *   LIVE      the operator picks an adversary and parameters and the server
  *             runs a real session. Every cap on every control is the API's own,
  *             read from `/api/defaults` and printed beside the field, and a
- *             request outside one is REFUSED by the API rather than clamped --
+ *             request outside one is REFUSED by the API rather than clamped,
  *             so a run always answers the question that was asked. The button
  *             disables and a running indicator appears for the whole wait; no
  *             click ever starts something long and silent.
  *
  *   RECORDED  runs generated ahead of time by `tools/phase6_fixtures.py`, which
  *             drives this same API and writes its responses verbatim. Every one
- *             is labelled RECORDED on screen, so nothing looks like it was just
+ *             is labelled recorded on screen, so nothing looks like it was just
  *             computed. This is also what keeps the demonstration alive if the
  *             service dies: the page falls back by itself and says so in the
  *             masthead.
@@ -27,28 +27,25 @@
  * alive, and kept in `state.recordedPayloads`. Clicking one after that touches
  * no network at all.
  *
- * That is the difference between a fallback and a hope. The previous version
- * re-fetched `data/recorded/<file>.json` on every click, and the service sends
- * no `Cache-Control`, so whether a click worked after the process died came
- * down to Chrome's heuristic freshness, roughly a tenth of the file's age,
- * which on a tree cloned that morning is a couple of minutes. Measured on a
- * fresh clone: the page loaded, the process was killed, and three recorded runs
- * in a row failed with `Failed to fetch`. The masthead said RECORDED ONLY and
- * the rail's recorded list was the only thing that could have honoured it.
+ * That is the difference between a fallback and a hope. An earlier version
+ * re-fetched `data/recorded/<file>.json` on every click, and whether a click
+ * worked after the process died came down to Chrome's heuristic freshness.
+ * Measured on a fresh clone: the page loaded, the process was killed, and three
+ * recorded runs in a row failed with `Failed to fetch`.
  *
- * The whole set is 365 KB, fetched in parallel behind the first paint, and the
- * rail says how many are actually held, so a partial preload is visible rather
- * than a promise that fails on the click that needs it.
+ * The rail says how many runs are actually held, so a partial preload is
+ * visible rather than a promise that fails on the click that needs it.
  *
- * The headline parameters are never faked into a run. `/api/defaults` returns
- * them and the bounds they imply -- `family_budget` derives those without
- * running anything -- and the panel says in as many words that no session was
- * run at that length.
+ * THE VIEWS
+ * ---------
+ * Home plays two recorded runs on a loop (honest, then an outside forgery) and
+ * needs no held run. Session, Evidence, Proof and the full report are about the
+ * held run. Documentation renders `data/docs.json`. Run a session is the form.
+ * Routing is by hash, because the service has no router.
  *
  * D8 IN THIS FILE: it reads controls and posts them. `input.valueAsNumber` is a
  * DOM property, so there is not even a `Number()` call here, let alone a
- * calculation; validation and every cap belong to the API, which has to enforce
- * them anyway and is the only side of the wire that can.
+ * calculation; validation and every cap belong to the API.
  */
 
 const App = (function () {
@@ -59,11 +56,15 @@ const App = (function () {
   /** Where the service mounts the frontend's own files. */
   const STATIC = "/static";
 
+  /** Where the chosen theme is remembered, per browser. */
+  const THEME_KEY = "qsecure-theme";
+
   const state = {
     mode: "unknown",
     defaults: null,
     attacks: null,
     constants: null,
+    docs: null,
     recorded: null,
     // file name -> the recorded `POST /api/run` response, held from boot so a
     // click never needs the network. See the header.
@@ -204,7 +205,7 @@ const App = (function () {
     input.id = id;
     const range =
       caps.minimum === undefined
-        ? "range not supplied by the API"
+        ? "The API didn't supply a range"
         : `${caps.minimum} to ${caps.maximum}`;
     return h("div", { class: "field" }, [
       h("label", { text: label, attrs: { for: id } }),
@@ -212,6 +213,21 @@ const App = (function () {
       h("span", { class: "field-hint", text: range }),
       hint ? h("span", { class: "field-hint", text: hint }) : null,
     ]);
+  }
+
+  /**
+   * One titled block of the Run view.
+   *
+   * @param {string} title
+   * @param {Array<HTMLElement>} children
+   * @returns {HTMLElement}
+   */
+  function runSection(title, children) {
+    return h(
+      "section",
+      { class: "panel-card" },
+      [h("h2", { class: "panel-title", text: title })].concat(children)
+    );
   }
 
   /**
@@ -235,10 +251,10 @@ const App = (function () {
       if (entry.key === chosen) {
         radio.checked = true;
         anyChecked = true;
-        detail.textContent = entry.summary || "";
+        detail.textContent = Fmt.prose(entry.summary);
       }
       radio.addEventListener("change", function () {
-        detail.textContent = entry.summary || "";
+        detail.textContent = Fmt.prose(entry.summary);
       });
       grid.appendChild(
         h("label", { class: "adversary-tile" }, [
@@ -281,30 +297,29 @@ const App = (function () {
     const limits = (state.defaults && state.defaults.limits) || {};
 
     return h("div", { class: "run-view" }, [
-      h("header", { class: "page-head" }, [
-        h("h1", { text: "Run a session" }),
-        h("p", {
-          text:
-            "Choose an adversary and settings. The server generates a real " +
-            "session and the detector scores it, usually within seconds. " +
-            "Settings outside a range are refused, never adjusted.",
-        }),
+      h("header", { class: "view-head" }, [
+        h("div", { class: "view-titles" }, [
+          h("h1", { text: "Run a session" }),
+          h("p", {
+            class: "view-lede",
+            text:
+              "Pick an adversary and settings, and the server simulates a " +
+              "new session for the detector to score, usually within " +
+              "seconds. The API refuses a setting outside its range instead " +
+              "of quietly adjusting it.",
+          }),
+        ]),
       ]),
       state.mode === "live"
         ? null
         : h("p", {
             class: "offline-note",
             text:
-              "The live service is not answering, so no session can be run " +
-              "right now. The recorded scenarios still work.",
+              `The live service isn't answering, so no session can run ` +
+              `right now. ${fallbackNote()}`,
           }),
-      h("section", { class: "sheet" }, [
-        h("h2", { text: "Adversary" }),
-        grid,
-        detail,
-      ]),
-      h("section", { class: "sheet" }, [
-        h("h2", { text: "Settings" }),
+      runSection("Adversary", [grid, detail]),
+      runSection("Settings", [
         h("div", { class: "field-row" }, [
           numberField("key_length", "Key length", "1"),
           numberField(
@@ -317,7 +332,7 @@ const App = (function () {
             "Noise on the link",
             "0.005",
             "With noise above zero, set both noise assumptions under " +
-              "Advanced, or an honest run will still raise an alarm."
+              "Advanced settings, or an honest run can still raise an alarm."
           ),
         ]),
         h("details", { class: "advanced" }, [
@@ -332,10 +347,10 @@ const App = (function () {
               "TWO NULLS, AND BOTH DEFAULT TO A PERFECT LINK. detect() reads " +
               "the verifiers' mismatch counts against channel_error_rate and " +
               "the published check rounds against tolerated_depolarising. To " +
-              "score an honest run over a noisy link against the link, SET " +
-              "BOTH: setting either alone leaves the other family scoring " +
-              "against a link nobody has, and the run still fires. Neither is " +
-              "ever inferred from the transcript.",
+              "score an honest run over a noisy link against the link, set " +
+              "both: setting either alone leaves the other family scoring " +
+              "against a link nobody has, and the run can still fire. Nothing " +
+              "infers either null from the transcript.",
           }),
           h("div", { class: "field-row" }, [
             numberField(
@@ -353,15 +368,17 @@ const App = (function () {
             numberField("eps", "Alarm budget, eps", "any"),
             h("div", { class: "field" }, [
               h("label", {
-                text: "When counts are compared",
+                text: "When Bob and Charlie exchange counts",
                 attrs: { for: "count_exchange_timing" },
               }),
               timingSelect,
               h("span", {
                 class: "field-hint",
                 text:
-                  "The two orders answer different questions: one is a " +
-                  "forgery, the other a denial of service.",
+                  "Against a forging recipient the two orders answer " +
+                  "different questions: before forwarding the attack is a " +
+                  "denial of transfer, and after forwarding it's a forgery " +
+                  "Charlie scores.",
               }),
             ]),
             numberField("seed", "Random seed", "1"),
@@ -381,9 +398,10 @@ const App = (function () {
         : h("p", {
             class: "field-hint",
             text:
-              `The server runs ${limits.max_concurrent_runs} session(s) at a ` +
-              `time and refuses the rest straight away rather than queueing ` +
-              `them.`,
+              `The server runs ${limits.max_concurrent_runs} ${
+                limits.max_concurrent_runs === 1 ? "session" : "sessions"
+              } at a time and refuses the rest straight away instead of ` +
+              `queueing them.`,
           }),
     ]);
   }
@@ -442,7 +460,7 @@ const App = (function () {
   }
 
   /**
-   * The scenario rail: every recorded run, one click each.
+   * The scenario rail: every recorded run, one click each, in two groups.
    *
    * Attack scenarios carry a hazard mark and baselines carry none. That mark
    * says what the SCENARIO is, taken from the roster, and is deliberately not
@@ -453,7 +471,10 @@ const App = (function () {
    */
   function recordedList() {
     const rail = h("div", { class: "scenario-rail" });
-    const list = h("ul", { class: "scenario-list" });
+    const honestList = h("ul", { class: "scenario-list" });
+    const attackList = h("ul", { class: "scenario-list" });
+    let anyHonest = false;
+    let anyAttack = false;
     (state.recorded || []).forEach(function (entry) {
       const held = Object.prototype.hasOwnProperty.call(
         state.recordedPayloads,
@@ -463,12 +484,12 @@ const App = (function () {
       const attack = roster !== null && roster.detectable !== "not-an-attack";
       const current = state.selectedFile === entry.file;
       const button = h("button", {
-        class: `scenario ${current ? "is-current" : ""} ${
-          attack ? "is-attack" : ""
-        } ${held ? "" : "is-missing"}`,
+        class: `scenario${current ? " is-current" : ""}${
+          attack ? " is-attack" : ""
+        }${held ? "" : " is-missing"}`,
         attrs: {
           type: "button",
-          title: entry.why,
+          title: Fmt.prose(entry.why),
           "aria-pressed": current ? "true" : "false",
           "aria-label": `${entry.label}${attack ? ", attack scenario" : ""}${
             held ? "" : ", not loaded"
@@ -478,15 +499,36 @@ const App = (function () {
         attack
           ? h("span", { class: "scenario-mark", attrs: { "aria-hidden": "true" } })
           : null,
-        h("span", { text: entry.label }),
+        h("span", { class: "scenario-name", text: entry.label }),
       ]);
       button.addEventListener("click", function () {
         showRecorded(entry);
       });
-      list.appendChild(h("li", {}, [button]));
+      if (attack) {
+        attackList.appendChild(h("li", {}, [button]));
+        anyAttack = true;
+      } else {
+        honestList.appendChild(h("li", {}, [button]));
+        anyHonest = true;
+      }
     });
+    if (anyHonest) {
+      rail.appendChild(
+        h("section", { class: "rail-group" }, [
+          h("h2", { class: "rail-heading", text: "Honest runs" }),
+          honestList,
+        ])
+      );
+    }
+    if (anyAttack) {
+      rail.appendChild(
+        h("section", { class: "rail-group" }, [
+          h("h2", { class: "rail-heading", text: "Attacks" }),
+          attackList,
+        ])
+      );
+    }
     const total = (state.recorded || []).length;
-    rail.appendChild(list);
     rail.appendChild(
       h("p", {
         class:
@@ -495,7 +537,7 @@ const App = (function () {
             : "held-note is-short",
         text:
           total === 0
-            ? "No recorded scenarios: the service that serves them did not " +
+            ? "No recorded scenarios: the service that serves them didn't " +
               "answer. Start the server and reload."
             : `${state.recordedHeld} of ${total} held in this page's memory, ` +
               `so they keep working if the service stops.`,
@@ -518,12 +560,12 @@ const App = (function () {
     if (!payload) {
       // Never a silent blank and never the previous run left standing.
       noteTransportFailure(
-        `${entry.file} was not loaded into this page's memory, and recorded ` +
-          `runs are never fetched on click. If the service is running, ` +
-          `reload the page to load it.`,
+        `This page didn't load ${entry.file} into memory at start-up, and it ` +
+          `never fetches a recorded run on click. If the service is running, ` +
+          `reload the page to pick it up.`,
         { recorded_run: entry.file }
       );
-      setStatus(`recorded run not held: ${entry.file}`, "failed");
+      setStatus(`Recorded run not held: ${entry.file}`, "failed");
       return;
     }
     hold(payload, {
@@ -532,13 +574,64 @@ const App = (function () {
       source: "Recorded run",
       file: entry.file,
     });
-    setStatus(`recorded run shown: ${entry.label} (from memory)`, "");
+    setStatus(`Showing the recorded run ${entry.label}, from memory`, "");
     go("session");
+  }
+
+  /**
+   * The two runs Home plays on a loop, honest first, only if both are held.
+   *
+   * A run that is not held is left out rather than fetched: Home is the first
+   * thing a room sees and must not depend on the network either.
+   *
+   * @returns {Array<Object>}
+   */
+  function homeReel() {
+    const reel = [];
+    ["honest", "outside_forgery"].forEach(function (scenario) {
+      (state.recorded || []).forEach(function (entry) {
+        const payload = state.recordedPayloads[entry.file];
+        if (entry.scenario === scenario && payload) {
+          reel.push({
+            key: entry.scenario,
+            title: entry.label,
+            why: entry.why,
+            file: entry.file,
+            payload: payload,
+          });
+        }
+      });
+    });
+    return reel;
+  }
+
+  /**
+   * Open one Home reel run in the Session view.
+   *
+   * @param {Object} item A `homeReel()` item.
+   * @returns {void}
+   */
+  function openReelItem(item) {
+    showRecorded({ file: item.file, label: item.title, why: item.why });
   }
 
   /* ---------------------------------------------------------------------- *
    * Live runs
    * ---------------------------------------------------------------------- */
+
+  /**
+   * What still works when the service doesn't answer. Only a page that holds
+   * recorded runs may promise them; a cold load against a dead service holds
+   * none.
+   *
+   * @returns {string}
+   */
+  function fallbackNote() {
+    return state.recordedHeld > 0
+      ? "Recorded scenarios held in this page's memory still work."
+      : "This page holds no recorded scenario either, so start the server " +
+          "and reload.";
+  }
 
   /**
    * Set the status line, where the Run view is showing one.
@@ -594,14 +687,11 @@ const App = (function () {
       // standing: a presenter who presses Run and sees an alarm has been told
       // a run happened.
       noteTransportFailure(
-        "The API is not reachable, so no live run was started. Nothing was " +
-          "refused and nothing was scored. The recorded scenarios are held " +
-          "in this page's memory and still work.",
+        `The API isn't reachable, so no live run started. ${fallbackNote()}`,
         readControls()
       );
       setStatus(
-        "The service is not reachable, so no session can be run. The " +
-          "recorded scenarios still work.",
+        `The API isn't reachable, so no session can run. ${fallbackNote()}`,
         "failed"
       );
       return;
@@ -632,9 +722,9 @@ const App = (function () {
         go("session");
       })
       .catch(function (error) {
-        // `getJson` throws "HTTP <status> ..." when the server ANSWERED -- a
+        // `getJson` throws "HTTP <status> ..." when the server ANSWERED (a
         // 400 from a cap or a 503 from the run gate is the service working as
-        // designed -- and anything else means the fetch itself failed.
+        // designed), and anything else means the fetch itself failed.
         // Repainting the top bar on an HTTP error would announce a dead API
         // every time somebody typed a key length over the ceiling.
         if (error.message.indexOf("HTTP ") === 0) {
@@ -648,12 +738,11 @@ const App = (function () {
           // The service answered, so the form is still the way forward: put
           // it back under the refusal rather than making the operator find it.
           document.getElementById("view").appendChild(controls());
-          setStatus(`The run was refused: ${error.message}`, "failed");
+          setStatus(`The service refused the run: ${error.message}`, "failed");
         } else {
           noteTransportFailure(error.message, body);
           setStatus(
-            `Nothing answered (${error.message}). The recorded scenarios ` +
-              `still work.`,
+            `Nothing answered (${error.message}). ${fallbackNote()}`,
             "failed"
           );
         }
@@ -672,14 +761,16 @@ const App = (function () {
    * The views, in nav order. `needsRun` marks those that are about a run.
    */
   const VIEWS = [
+    { id: "home", label: "Home", needsRun: false },
     { id: "session", label: "Session", needsRun: true },
     { id: "evidence", label: "Evidence", needsRun: true },
     { id: "proof", label: "Proof", needsRun: true },
     { id: "report", label: "Full report", needsRun: true },
+    { id: "docs", label: "Documentation", needsRun: false },
   ];
 
   /**
-   * The view the URL asks for, defaulting to the session.
+   * The view the URL asks for, defaulting to Home.
    *
    * A hash route and not a path, because the service has no router: a deep
    * link to `/proof` would 404 on reload.
@@ -691,7 +782,7 @@ const App = (function () {
     if (asked === "run") {
       return "run";
     }
-    let found = "session";
+    let found = "home";
     VIEWS.forEach(function (entry) {
       if (entry.id === asked) {
         found = entry.id;
@@ -745,47 +836,47 @@ const App = (function () {
   }
 
   /**
-   * Build the view switch. Run-scoped views are disabled until a run is held.
+   * Build the view tabs and mark the masthead's Run button. Run-scoped tabs
+   * are disabled until a run is held.
    *
    * @returns {void}
    */
   function paintNav() {
-    const nav = document.getElementById("pages");
-    if (!nav) {
-      return;
-    }
     const here = routeId();
-    nav.textContent = "";
-    const tabs = h("div", { class: "view-tabs" });
-    VIEWS.forEach(function (entry) {
-      const locked = entry.needsRun && !state.payload;
-      const button = h("button", {
-        class: `view-tab ${entry.id === here ? "is-current" : ""}`,
-        text: entry.label,
-        attrs: {
-          type: "button",
-          "aria-current": entry.id === here ? "page" : "false",
-        },
+    const nav = document.getElementById("pages");
+    if (nav) {
+      nav.textContent = "";
+      VIEWS.forEach(function (entry) {
+        const current = entry.id === here;
+        const button = h("button", {
+          class: current ? "tab is-current" : "tab",
+          text: entry.label,
+          attrs: {
+            type: "button",
+            "aria-current": current ? "page" : "false",
+          },
+        });
+        button.disabled = entry.needsRun && !state.payload;
+        button.addEventListener("click", function () {
+          go(entry.id);
+        });
+        nav.appendChild(button);
       });
-      button.disabled = locked;
-      button.addEventListener("click", function () {
-        go(entry.id);
-      });
-      tabs.appendChild(button);
-    });
-    nav.appendChild(tabs);
-    const runLink = h("button", {
-      class: `view-action ${here === "run" ? "is-current" : ""}`,
-      text: "Run a session",
-      attrs: {
-        type: "button",
-        "aria-current": here === "run" ? "page" : "false",
-      },
-    });
-    runLink.addEventListener("click", function () {
-      go("run");
-    });
-    nav.appendChild(runLink);
+    }
+    const runLink = document.getElementById("run-link");
+    if (runLink) {
+      runLink.className = here === "run" ? "run-action is-current" : "run-action";
+      runLink.setAttribute("aria-current", here === "run" ? "page" : "false");
+    }
+  }
+
+  /**
+   * Whether the viewer asked the system for less motion.
+   *
+   * @returns {boolean}
+   */
+  function prefersStill() {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   }
 
   /**
@@ -796,27 +887,44 @@ const App = (function () {
   function renderRoute() {
     const view = document.getElementById("view");
     const rail = document.getElementById("scenarios");
+    const frame = document.getElementById("frame");
     if (!view) {
       return;
     }
     const here = routeId();
+    const wide = here === "run" || here === "docs";
     paintNav();
     if (rail) {
       rail.textContent = "";
-      rail.hidden = here === "run";
-      if (here !== "run") {
+      rail.hidden = wide;
+      if (!wide) {
         rail.appendChild(recordedList());
       }
     }
+    if (frame) {
+      frame.className = wide ? "frame is-wide" : "frame";
+    }
+    Render.stop();
     if (here === "run") {
-      Render.stop();
       view.textContent = "";
       view.appendChild(controls());
       window.scrollTo(0, 0);
       return;
     }
+    if (here === "home") {
+      Render.home(view, homeReel(), context(), {
+        autoplay: !prefersStill(),
+        open: openReelItem,
+      });
+      window.scrollTo(0, 0);
+      return;
+    }
+    if (here === "docs") {
+      Render.docs(view, state.docs, context());
+      window.scrollTo(0, 0);
+      return;
+    }
     if (!state.payload) {
-      Render.stop();
       view.textContent = "";
       const start = h("button", {
         class: "run-button",
@@ -828,11 +936,11 @@ const App = (function () {
       });
       view.appendChild(
         h("div", { class: "empty-state" }, [
-          h("h1", { text: "Pick a scenario to replay" }),
+          h("h1", { text: "Choose a scenario to replay" }),
           h("p", {
             text:
-              "Choose one of the recorded scenarios above, or run a new " +
-              "session against the live service.",
+              "Pick one from the list, or run a new session against the " +
+              "live service.",
           }),
           start,
         ])
@@ -872,21 +980,23 @@ const App = (function () {
     chip.className = `mode-chip is-${state.mode}`;
     if (state.mode === "live") {
       chip.textContent = "LIVE API";
-      chip.title = "the service answered; runs on this page are real";
+      chip.title =
+        "The service answered, so a run started here is simulated on the " +
+        "spot, not replayed from a recording.";
       return;
     }
     if (state.recordedHeld > 0) {
-      chip.textContent = `RECORDED ONLY (${state.recordedHeld}): API NOT REACHABLE`;
+      chip.textContent = `RECORDED ONLY (${state.recordedHeld} held): API not reachable`;
       chip.title =
-        "the service is not answering; the recorded runs held in this " +
-        "page's memory still render, and no live run can be started";
+        "The service isn't answering. The recorded runs held in this " +
+        "page's memory still render, and no live run can start.";
       return;
     }
     chip.className = "mode-chip is-dead";
-    chip.textContent = "NOTHING LIVE: NO API AND NO RECORDED RUNS";
+    chip.textContent = "NOTHING LIVE: no API and no recorded runs";
     chip.title =
-      "the service is not answering and no recorded run was loaded, so " +
-      "there is nothing on this page to show. Start the server and reload.";
+      "The service isn't answering and no recorded run loaded, so this " +
+      "page has nothing to show. Start the server and reload.";
   }
 
   /**
@@ -933,33 +1043,79 @@ const App = (function () {
   }
 
   /**
-   * Wire the projector-mode toggle. It changes one CSS variable and no number.
+   * Wire the theme toggle. The theme goes on the ROOT element, where the
+   * colour tokens are read, and changes colours and nothing else.
    *
-   * The class goes on the ROOT element: `--scale` is read by the `html` rule,
-   * and a custom property set on `<body>` is invisible to a rule matching
-   * `<html>`.
+   * Storage can throw (private windows, blocked site data), so every read and
+   * write is guarded and the page still themes itself from the system setting.
    *
    * @returns {void}
    */
-  function wireProjector() {
-    const button = document.getElementById("projector");
+  function wireTheme() {
+    let theme = null;
+    try {
+      theme = window.localStorage.getItem(THEME_KEY);
+    } catch (ignored) {
+      theme = null;
+    }
+    if (theme !== "light" && theme !== "dark") {
+      theme = window.matchMedia("(prefers-color-scheme: light)").matches
+        ? "light"
+        : "dark";
+    }
+    const button = document.getElementById("theme");
+
+    function apply() {
+      document.documentElement.setAttribute("data-theme", theme);
+      if (!button) {
+        return;
+      }
+      // The icon shows the theme a click switches TO.
+      const next = theme === "dark" ? "light" : "dark";
+      const label = `Switch to ${next} theme`;
+      button.textContent = "";
+      button.appendChild(
+        Charts.icon(next === "light" ? "sun" : "moon", "theme-icon")
+      );
+      button.setAttribute("aria-label", label);
+      button.title = label;
+    }
+
+    apply();
     if (!button) {
       return;
     }
     button.addEventListener("click", function () {
-      const on = document.documentElement.classList.toggle("projector");
-      button.setAttribute("aria-pressed", on ? "true" : "false");
+      theme = theme === "dark" ? "light" : "dark";
+      apply();
+      try {
+        window.localStorage.setItem(THEME_KEY, theme);
+      } catch (ignored) {
+        /* Not remembered; the page still switched. */
+      }
     });
   }
 
   /**
-   * Load the contract and the constants, then the API, falling back to the
-   * recordings, then open on the first recorded scenario.
+   * Load the contract, constants and documentation, then the API, falling
+   * back to the recordings, then open on Home.
    *
    * @returns {void}
    */
   function boot() {
-    wireProjector();
+    wireTheme();
+    const runLink = document.getElementById("run-link");
+    if (runLink) {
+      runLink.addEventListener("click", function () {
+        go("run");
+      });
+    }
+    // A printed report shows every section, not only the ones left open.
+    window.addEventListener("beforeprint", function () {
+      document.querySelectorAll("details").forEach(function (node) {
+        node.open = true;
+      });
+    });
     Promise.all([
       getJson(`${STATIC}/data/api-contract.json`)
         .then(function (manifest) {
@@ -974,6 +1130,13 @@ const App = (function () {
         })
         .catch(function () {
           /* Views that needed one say the file was not served. */
+        }),
+      getJson(`${STATIC}/data/docs.json`)
+        .then(function (docs) {
+          state.docs = docs;
+        })
+        .catch(function () {
+          /* Left null; the Documentation view says the file did not load. */
         }),
     ])
       .then(function () {
@@ -1006,8 +1169,8 @@ const App = (function () {
       })
       .then(function () {
         paintMode();
-        // Open on the first scenario that is actually held, so the room sees
-        // the bench rather than an empty page.
+        // Hold the first scenario that is actually in memory, so Session and
+        // the other run views work from the first click.
         let opening = null;
         (state.recorded || []).forEach(function (entry) {
           if (opening === null && state.recordedPayloads[entry.file]) {
@@ -1030,10 +1193,10 @@ const App = (function () {
           const view = document.getElementById("view");
           view.insertBefore(
             Render.banner("alarm", "⚠", "There is nothing to show", [
-              "This page loaded from the browser's cache. The service that " +
-                "serves it is not answering, so there is no API to run " +
-                "against and no recorded run was loaded either, the " +
-                "recordings are served by that same process.",
+              "The service that serves this page isn't answering, so the " +
+                "browser is probably showing a copy it cached earlier. " +
+                "There's no API to run against and no recorded run loaded, " +
+                "because the recordings come from that same process.",
               "Nothing on this page is a result. Start the server and reload.",
             ]),
             view.firstChild

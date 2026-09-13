@@ -1,75 +1,85 @@
 <!DOCTYPE html>
 <!--
-  SIH26141 -- Quantum-Inspired Cyber Threat Detection for Digital Signature
-  Security. Phase 6 dashboard, frontend half.
+  QSecure, built for SIH26141: catching attacks on quantum digital signatures.
+  The dashboard's frontend half.
 
   NOTHING ON THIS PAGE IS FETCHED FROM A NETWORK. Every stylesheet, script and
   data file below is a same-origin path served by the same process that serves
-  the API. There is no CDN, no web font, no analytics beacon and no `@import`
-  inside any vendored file, because there is no vendored file: the charts are
-  hand-rolled SVG in `js/charts.js` and the type is the operating system's own
-  stack. Venue wifi fails, and a demo that dies on an unreachable CDN dies at
-  the worst possible moment.
+  the API. There is no CDN, no web font, no analytics beacon and no import
+  inside any vendored file, because there is no vendored file: the charts and
+  icons are hand-drawn SVG in js/charts.js and the type is the operating
+  system's own stack. Venue wifi fails, and a demo that dies on an unreachable
+  CDN dies at the worst possible moment.
 
   THE PATHS ARE ROOT-ABSOLUTE UNDER /static, and that is not a style choice.
-  The service serves this page at `/` and mounts this directory at `/static`,
-  so a relative `css/app.css` would resolve to `/css/app.css` and 404 -- every
-  stylesheet and every script at once, on the one page anybody looks at, and
-  invisibly under a plain static file server. tests/test_web_frontend.py
-  asserts both ends of that seam.
+  The service serves this page at / and mounts this directory at /static, so a
+  relative css/app.css would resolve to /css/app.css and 404, taking every
+  stylesheet and every script with it. tests/test_web_frontend.py asserts both
+  ends of that seam.
 
   The page also runs with no API at all: it falls back to the recorded runs in
-  `data/recorded/` and says so in the top bar.
+  data/recorded/ and says so in the masthead.
 
-  THE LAYOUT. One bar, one row of views, one row of scenarios, one view. The
-  session view is the one a room looks at: the simulator's record of what
-  happened on the left, the detector's conclusion from the transcript alone on
-  the right. Evidence, Proof and the full report are for the judge who stops
-  and asks, and they are one click away rather than on the same screen.
+  THE LAYOUT. A masthead with the brand, the view tabs, the mode chip, the
+  theme toggle and Run a session. Below it, a rail of recorded scenarios beside
+  the view; the rail hides on Run a session and Documentation. Home plays an
+  honest run and a forgery on a loop. Session, Evidence, Proof and the full
+  report are about the run held from the rail.
 -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark" />
-    <title>SIH26141: quantum digital signature threat detection</title>
+    <meta name="color-scheme" content="dark light" />
+    <title>QSecure: catching attacks on quantum digital signatures</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/static/css/app.css" />
   </head>
   <body>
-    <header class="topbar">
+    <header class="masthead">
       <p class="brand">
-        <span class="brand-code">SIH26141</span>
-        <span class="brand-name">Quantum signature threat detection</span>
+        <svg class="brand-mark" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+          <g fill="none" stroke="currentColor" stroke-width="2.2">
+            <ellipse cx="24" cy="24" rx="20" ry="7.5" />
+            <ellipse cx="24" cy="24" rx="20" ry="7.5" transform="rotate(60 24 24)" />
+            <ellipse cx="24" cy="24" rx="20" ry="7.5" transform="rotate(120 24 24)" />
+          </g>
+          <circle cx="24" cy="24" r="3.5" fill="currentColor" />
+        </svg>
+        <span class="brand-text">
+          <span class="brand-name">QSecure</span>
+          <span class="brand-line">Catching attacks on quantum digital signatures</span>
+        </span>
       </p>
-      <span class="spacer"></span>
-      <span class="mode-chip" id="mode-chip">starting…</span>
-      <button id="projector" type="button" aria-pressed="false">
-        Projector mode
-      </button>
+      <nav class="tabs" id="pages" aria-label="Views"></nav>
+      <div class="masthead-tools">
+        <span class="mode-chip" id="mode-chip">Starting</span>
+        <button class="theme-toggle" id="theme" type="button"></button>
+        <button class="run-action" id="run-link" type="button">Run a session</button>
+      </div>
     </header>
 
     <p class="visually-hidden">
-      Every number on this page was computed in Python and sent by the API. The
-      browser formats, lays out and plots; it derives nothing.
+      Python computes every number on this page and the API sends it; the
+      browser only formats and draws what arrives.
     </p>
 
-    <nav class="views" id="pages" aria-label="Views"></nav>
-    <div class="scenarios" id="scenarios"></div>
-
-    <main class="view" id="view">
-      <p class="loading">Reading the contract and the API…</p>
-    </main>
+    <div class="frame" id="frame">
+      <aside class="rail" id="scenarios" aria-label="Scenarios"></aside>
+      <main class="view" id="view"><p class="loading">Loading the recorded runs</p></main>
+    </div>
 
     <footer class="colophon">
+      <p class="colophon-brand">QSecure, built for SIH26141</p>
       <p>
-        The browser computes nothing. Every figure arrived from
+        The browser computes nothing. Every figure comes from
         <code>detect()</code> or from the transcript through the JSON API, and
-        where a number is missing the page says so rather than filling one in.
-        Proven numbers come from a stated null and a named inequality; measured
-        numbers are counted and shown with their sample size. There is
-        no false-negative bound anywhere on this page, because none can be
-        derived from a transcript. Nothing here is fetched from a network.
+        where a number is missing the page says so instead of filling one in.
+        Proven numbers rest on a stated null and a named inequality; measured
+        numbers come from counting, and the page prints each one beside its
+        sample size. This page offers
+        no false-negative bound, because a transcript can't supply one.
+        Nothing here loads from outside the server that serves this page.
       </p>
     </footer>
 

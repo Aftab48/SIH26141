@@ -1101,7 +1101,7 @@ def test_a_failed_run_is_a_fourth_thing_and_the_screen_says_so(
     assert contract["endpoints"]["run"]["failure"]["field"] == "error"
     render = (STATIC / "js" / "render.js").read_text(encoding="utf-8")
     assert "function failurePanel(" in render
-    assert "NO RUN" in render
+    assert "No run" in render
     # It has to run BEFORE the contract check, or a to-contract failure reads
     # as a contract violation.
     assert render.index("const failure = failurePanel(payload);") < render.index(
@@ -1209,12 +1209,12 @@ def test_a_refused_request_clears_the_previous_run_from_the_screen() -> None:
         "the refusal no longer uses the fourth state's glyph, so it is not "
         "visually distinct from a verdict"
     )
-    assert '"NO RUN"' in body
+    assert '"No run"' in body
     for phrase in (
         "NOT a clean run",
         "NOT a detection",
         "belongs in no rate",
-        "has been cleared",
+        "has cleared any earlier",
     ):
         assert phrase in body, f"the refusal panel lost the phrase {phrase!r}"
 
@@ -1255,8 +1255,8 @@ def test_a_dead_service_is_never_reported_as_a_refusal_by_that_service() -> None
     # The cap rationale belongs to the refusal branch only. Both sentences must
     # exist, and they must be on opposite sides of the same conditional.
     assert "The service refused this request" in body
-    assert "refused rather than quietly run at the nearest" in body
-    assert "No cap was hit and no parameter was rejected" in body
+    assert "refuses the request rather than quietly running it at the nearest" in body
+    assert "Nothing hit a cap and nothing rejected a parameter" in body
 
     # And the transport path really passes that kind.
     handler = _js_function_body(app, "noteTransportFailure")
@@ -1383,7 +1383,7 @@ def test_the_null_banner_has_three_states_and_the_middle_one_warns() -> None:
     # "both nulls carry the link" would assert, on a run with an adversary on
     # the resource seam, that the adversary is not there. Whether they match is
     # the harness's sentence, and only the harness knows it.
-    assert "Both nulls were stated by the operator" in body
+    assert "The operator stated both nulls" in body
     assert "Both nulls carry the link" not in body
     assert "Both nulls are noiseless" in body
     assert "whether they are the laws the wire obeyed is a separate" in body
@@ -1483,7 +1483,7 @@ def test_a_long_unavailable_reason_is_not_drawn_inside_a_chart() -> None:
     render = (STATIC / "js" / "render.js").read_text(encoding="utf-8")
     body = _flatten(_js_function_body(render, "channelPanel"))
     assert "chshReasons" in body
-    assert 'unavailable: "NOT EVALUATED' in body
+    assert 'unavailable: "Not evaluated' in body
     assert "link.chsh_unavailable" in body
     # The reason still reaches the screen -- it is moved, not dropped.
     assert "chshReasons.push(" in body
@@ -2066,65 +2066,293 @@ def test_charts_are_labelled_for_a_reader_who_cannot_see_them() -> None:
     assert 'el("title", {})' in code
 
 
-def test_projector_mode_scales_type_and_nothing_else() -> None:
-    """A demo control that changed a number would be the worst kind of bug."""
-    css = (STATIC / "css" / "app.css").read_text(encoding="utf-8")
-    block = re.search(r":root\.projector \{(.*?)\}", css, re.S)
-    assert block is not None, "projector mode is not defined"
-    declarations = [
-        line.strip()
-        for line in block.group(1).splitlines()
-        if line.strip()
-    ]
-    assert declarations == ["--scale: 1.28;"], (
-        f"projector mode changes more than the type scale: {declarations}"
-    )
-    code = (STATIC / "js" / "app.js").read_text(encoding="utf-8")
-    assert "classList.toggle(\"projector\")" in code
+def _css_block(css: str, start: int) -> tuple[str, str]:
+    """Return ``(selector, body)`` of the rule whose ``{`` is at or after START.
 
+    Brace-matched, so the body of an ``@media`` rule comes back whole with its
+    inner rules in it.
 
-def test_projector_mode_sets_the_variable_where_it_is_actually_read() -> None:
-    """The toggle must move the page, and the old test could not tell.
-
-    This shipped inert. ``body.projector { --scale: 1.28 }`` set the variable
-    on ``<body>``, while the rule that spends it is ``html { font-size:
-    calc(16px * var(--scale)) }`` on the PARENT element. A custom property
-    inherits downwards only, so ``html`` kept resolving ``--scale`` to the
-    ``:root`` value of ``1``; every ``rem`` on the page is the root font-size,
-    so nothing whatsoever changed. Measured in a browser before the fix: the
-    document was 5563 px tall with projector mode on and 5563 px tall with it
-    off.
-
-    The previous test read the declaration and passed, because a rule's text
-    says nothing about which element ends up reading it. So this asserts the
-    join: the selector that SETS ``--scale`` and the selector that SPENDS it
-    both have to match the root element.
+    Examples
+    --------
+    >>> _css_block("a { b: 1; } @media x { :root { --c: 2; } }", 12)
+    ('@media x', ' :root { --c: 2; } ')
     """
-    css = (STATIC / "css" / "app.css").read_text(encoding="utf-8")
-    setters = re.findall(r"([^{}]+)\{[^{}]*--scale:\s*1\.28", css)
-    assert setters, "nothing sets the projector type scale any more"
-    for selector in setters:
-        assert re.search(r"(^|\s):root\.projector\s*$", selector), (
-            f"projector mode sets --scale on {selector.strip()!r}. It has to "
-            f"be the root element: the rule that reads --scale matches "
-            f"<html>, and a custom property never reaches a parent."
-        )
+    opening = css.index("{", start)
+    depth = 0
+    for index in range(opening, len(css)):
+        if css[index] == "{":
+            depth += 1
+        elif css[index] == "}":
+            depth -= 1
+            if depth == 0:
+                selector = css[start:opening].strip()
+                return selector, css[opening + 1 : index]
+    raise AssertionError(f"the CSS rule at offset {start} is not closed")
 
-    spenders = re.findall(r"([^{}]+)\{[^{}]*var\(--scale\)", css)
-    assert spenders, "nothing reads --scale, so the toggle cannot do anything"
-    for selector in spenders:
-        assert re.search(r"(^|\s)(html|:root)\s*$", selector.strip()), (
-            f"--scale is spent in a rule matching {selector.strip()!r}. Every "
-            f"size on this page is a rem, so it has to be the root font-size "
-            f"that moves, or the toggle only scales part of the screen."
-        )
 
-    code = (STATIC / "js" / "app.js").read_text(encoding="utf-8")
-    assert 'document.documentElement.classList.toggle("projector")' in code, (
-        "the toggle no longer puts the class on the root element, so the "
-        "CSS above sets --scale where the html rule cannot read it"
+def _declarations(body: str) -> list[str]:
+    """Every declaration in a flat rule body, trimmed."""
+    return [part.strip() for part in body.split(";") if part.strip()]
+
+
+def _custom_properties(body: str) -> list[str]:
+    """The custom property names a flat rule body sets, in order."""
+    return [declaration.split(":", 1)[0].strip() for declaration in _declarations(body)]
+
+
+def test_a_theme_changes_colours_and_nothing_else() -> None:
+    """A demo control that changed a number would be the worst kind of bug.
+
+    The light/dark toggle replaced projector mode, and the rule carries over: a
+    theme may only re-point colour tokens. A theme block holding a real
+    property (a ``display``, a ``font-size``) is a toggle that changes the
+    page's layout or content, and a token the dark ground never defines is a
+    colour that exists in one theme only, so a panel reading it falls back to
+    nothing in the other.
+
+    Both light blocks are checked: the explicit ``data-theme="light"`` one, and
+    the copy under ``prefers-color-scheme`` that themes the page before the
+    script has run. They set the same tokens, or the system-light page and the
+    toggled-light page are two different themes.
+    """
+    css = re.sub(
+        r"/\*.*?\*/", " ", (STATIC / "css" / "app.css").read_text(encoding="utf-8"),
+        flags=re.S,
     )
 
+    bare = re.search(r"(?m)^:root \{", css)
+    assert bare is not None, "there is no bare :root block defining the tokens"
+    _, bare_body = _css_block(css, bare.start())
+    defined = set(re.findall(r"(--[\w-]+)\s*:", bare_body))
+    assert defined, "the bare :root block defines no tokens"
+
+    def check(label: str, body: str) -> set[str]:
+        declarations = _declarations(body)
+        assert declarations, f"the {label} block is empty"
+        real = [d for d in declarations if not re.match(r"--[\w-]+\s*:", d)]
+        assert real == [], (
+            f"the {label} block changes more than colour tokens: {real}"
+        )
+        names = _custom_properties(body)
+        undefined = sorted(set(names) - defined)
+        assert undefined == [], (
+            f"the {label} block sets tokens the bare :root never defines, so "
+            f"the other theme has no value for them: {undefined}"
+        )
+        return set(names)
+
+    light = css.find(':root[data-theme="light"] {')
+    assert light != -1, 'the light theme block :root[data-theme="light"] is gone'
+    explicit = check('data-theme="light"', _css_block(css, light)[1])
+
+    media = css.find("@media (prefers-color-scheme: light) {")
+    assert media != -1, "the page no longer follows a system light setting"
+    _, media_body = _css_block(css, media)
+    inner = re.search(r"[^{}]+\{", media_body)
+    assert inner is not None, "the prefers-color-scheme block holds no rule"
+    selector, inner_body = _css_block(media_body, inner.start())
+    assert selector == ':root:not([data-theme="dark"])', (
+        f"the system light theme is set on {selector!r}. It has to stand down "
+        f"when the reader chose dark, or the toggle is inert on a light system."
+    )
+    assert media_body.count("{") == 1, (
+        "the prefers-color-scheme block holds more than the one token rule"
+    )
+    system = check("prefers-color-scheme light", inner_body)
+    assert system == explicit, (
+        f"the two light blocks set different tokens: "
+        f"{sorted(system ^ explicit)}"
+    )
+
+    # Every rule, not just the first of each: a later theme-keyed rule (or a
+    # descendant one) that sets a real property, and a token re-declared below
+    # the root, which would leave that subtree on one theme for good.
+    root_only = re.compile(
+        r':root(\[data-theme(="(light|dark)")?\]|:not\(\[data-theme="(light|dark)"\]\))?'
+    )
+    for rule_selector, rule_body in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
+        parts = [part.strip() for part in rule_selector.split(",")]
+        if "data-theme" in rule_selector:
+            check(rule_selector.strip(), rule_body)
+        if re.search(r"--[\w-]+\s*:", rule_body):
+            assert all(root_only.fullmatch(part) for part in parts), (
+                f"{rule_selector.strip()!r} sets a colour token below the root "
+                f"element, so the theme never reaches that subtree"
+            )
+
+
+def test_the_theme_is_set_where_the_tokens_are_read() -> None:
+    """The toggle must move the page, and a rule's text cannot say where.
+
+    Projector mode, this toggle's predecessor, shipped inert: its class sat on
+    ``<body>`` while the variable it set was read on ``<html>``, and a custom
+    property never reaches a parent. A test that read the declaration passed
+    throughout. The tokens are read on the root element, so the attribute has
+    to land there and nowhere else, and every CSS rule keyed on it has to match
+    the root.
+
+    The saved choice sits in ``localStorage``, which throws in a private window
+    or with site data blocked; an unguarded read there stops ``boot`` before a
+    single panel renders.
+    """
+    css = re.sub(
+        r"/\*.*?\*/", " ", (STATIC / "css" / "app.css").read_text(encoding="utf-8"),
+        flags=re.S,
+    )
+    keyed = re.findall(r"([^{};]*data-theme[^{};]*)\{", css)
+    assert keyed, "no CSS rule reads data-theme, so the toggle cannot do anything"
+    for selector in keyed:
+        for part in selector.split(","):
+            assert part.strip().startswith(":root"), (
+                f"a theme rule matches {part.strip()!r}. The attribute is set on "
+                f"the root element, so a rule keyed anywhere else never applies."
+            )
+
+    app = (STATIC / "js" / "app.js").read_text(encoding="utf-8")
+    setter = 'document.documentElement.setAttribute("data-theme"'
+    assert setter in app, "the theme is not set on the root element"
+    for path in [*scripts(), STATIC / "index.html"]:
+        text = (
+            strip_comments_only(path.read_text(encoding="utf-8"))
+            if path.suffix == ".js"
+            else uncommented(path)
+        )
+        others = [
+            text[max(0, match.start() - 50) : match.end()]
+            for match in re.finditer(r"data-theme|dataset\.theme", text)
+            if not text[: match.end() + 1].endswith(setter)
+        ]
+        assert others == [], (
+            f"{path.name} puts data-theme somewhere other than "
+            f"document.documentElement: {others}"
+        )
+    theme = _js_function_body(app, "wireTheme")
+    assert 'getElementById("theme")' in theme and 'addEventListener("click"' in theme, (
+        "wireTheme no longer wires the #theme button"
+    )
+    live = strip_comments_only(theme)
+    assert 'document.documentElement.setAttribute("data-theme", theme);' in live
+    assert 'theme !== "light" && theme !== "dark"' in live
+    click = live[live.index('addEventListener("click"') :]
+    assert 'theme = theme === "dark" ? "light" : "dark";' in click
+    assert "apply();" in click, "a click changes the choice and never applies it"
+    assert "wireTheme();" in strip_comments_only(_js_function_body(app, "boot"))
+    assert set(re.findall(r'data-theme="(\w+)"', css)) == {"light", "dark"}
+
+    code = strip_js(app)
+    guarded: list[tuple[int, int]] = []
+    for match in re.finditer(r"\btry\s*\{", code):
+        depth = 0
+        for index in range(match.end() - 1, len(code)):
+            if code[index] == "{":
+                depth += 1
+            elif code[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    guarded.append((match.end(), index))
+                    break
+    uses = [match.start() for match in re.finditer(r"localStorage", code)]
+    assert "localStorage.getItem(" in code and "localStorage.setItem(" in code, (
+        "the theme choice is no longer read and saved"
+    )
+    loose = [
+        code[max(0, at - 40) : at + 30]
+        for at in uses
+        if not any(start <= at < end for start, end in guarded)
+    ]
+    assert loose == [], (
+        f"localStorage is touched outside a try block, and it throws when "
+        f"site data is blocked: {loose}"
+    )
+
+
+DOCS_PATH = STATIC / "data" / "docs.json"
+
+
+def doc_references(node: Any) -> Iterable[dict[str, Any]]:
+    """Yield every ``{value, format}`` reference in a ``docs.json`` document.
+
+    >>> list(doc_references({"a": ["x", {"value": "p.q", "format": "count"}]}))
+    [{'value': 'p.q', 'format': 'count'}]
+    """
+    if isinstance(node, dict):
+        if "value" in node and "format" in node:
+            yield node
+            return
+        for child in node.values():
+            yield from doc_references(child)
+    elif isinstance(node, list):
+        for child in node:
+            yield from doc_references(child)
+
+
+def test_no_em_dash_anywhere_in_the_dashboard() -> None:
+    """The dashboard's copy carries no em dash, in any spelling of one.
+
+    Checked over every served file, data included, and in the forms that reach
+    a screen: the character itself, the HTML entities, and the JavaScript or
+    JSON escape.
+    """
+    spelling = re.compile(
+        r"—|&mdash;|&#0*8212;|&#x0*2014;|\\u\{?0*2014\}?|\\0*2014", re.I
+    )
+    offenders = [
+        f"{path.relative_to(STATIC).as_posix()}: {match.group()!r}"
+        for path in _assets()
+        for match in spelling.finditer(path.read_text(encoding="utf-8"))
+    ]
+    assert offenders == [], "an em dash is back:\n" + "\n".join(offenders)
+
+
+def test_no_spaced_double_hyphen_stands_in_for_a_dash_in_the_page_copy() -> None:
+    """`` -- `` is an em dash typed on a keyboard, and reads as one.
+
+    The API spells its dashes that way and ``Fmt.prose`` swaps them for a comma
+    on the way to the screen; the copy written for the page itself has no such
+    pass, so it must not carry one. ``index.html`` is read with its comments
+    removed, since those are for whoever edits the file.
+    """
+    assert " -- " not in uncommented(STATIC / "index.html")
+    assert " -- " not in DOCS_PATH.read_text(encoding="utf-8")
+    assert " -- " not in uncommented(STATIC / "css" / "app.css")
+    for path in scripts():
+        code = strip_comments_only(path.read_text(encoding="utf-8"))
+        if path.name == FORMAT_SCRIPT:
+            code = code.replace('split(" -- ")', "", 1)
+        assert " -- " not in code, f"{path.name} writes ' -- ' into page copy"
+
+
+def test_every_documentation_figure_resolves_against_the_recorded_defaults(
+) -> None:
+    """A figure in the documentation is looked up, never written in.
+
+    ``docs.json`` names each number by its path in ``/api/defaults`` and a
+    format; the page resolves the path at render time. A path that no longer
+    resolves renders "n/a" in the middle of a sentence that states a bound, so
+    every reference is resolved here against the recorded defaults the page
+    falls back to, and every format has to be one ``render.js`` knows.
+    """
+    docs = json.loads(DOCS_PATH.read_text(encoding="utf-8"))
+    defaults = json.loads((RECORDED / "defaults.json").read_text(encoding="utf-8"))
+    formats = _js_object_keys(
+        (STATIC / "js" / "render.js").read_text(encoding="utf-8"), "DOC_FORMATS"
+    )
+    references = list(doc_references(docs))
+    assert references, "docs.json references no figure at all"
+    for reference in references:
+        assert reference["format"] in formats, (
+            f"{reference} names a format render.js does not have: "
+            f"{sorted(formats)}"
+        )
+        value: Any = defaults
+        for key in reference["value"].split("."):
+            assert isinstance(value, dict) and key in value, (
+                f"{reference['value']} does not resolve in defaults.json"
+            )
+            value = value[key]
+        assert isinstance(value, (int, float)) and not isinstance(value, bool), (
+            f"{reference['value']} resolves to {value!r}, which is not a number"
+        )
 
 # --------------------------------------------------------------------------- #
 # Executing the shipped JavaScript
@@ -2259,6 +2487,12 @@ if (job.op === "run") {
   mod.Contract.install(job.contract);
   root = new El("div");
   mod.Render.page(root, job.page, job.payload, job.context, {});
+} else if (job.op === "home") {
+  root = new El("div");
+  mod.Render.home(root, job.reel, job.context, job.options || {});
+} else if (job.op === "docs") {
+  root = new El("div");
+  mod.Render.docs(root, job.docs, job.context);
 } else if (job.op === "bars") {
   root = mod.Charts.bars(job.options);
 } else {
@@ -2302,8 +2536,9 @@ def render_page(
 ) -> dict[str, Any]:
     """Render one response as one of the page's views, or whole if ``None``.
 
-    The views are ``session``, ``evidence`` and ``proof``, the three a room
-    sees; ``None`` goes through ``Render.run``, which renders every panel.
+    The views are ``session``, ``evidence``, ``proof`` and ``report``, the ones
+    a run fills; ``None`` goes through ``Render.run``, which renders every
+    panel.
     """
     job: dict[str, Any] = (
         {"op": "run"} if page is None else {"op": "page", "page": page}
@@ -2314,19 +2549,54 @@ def render_page(
             **job,
             "payload": payload,
             "contract": json.loads(CONTRACT_PATH.read_text(encoding="utf-8")),
-            "context": {
-                "defaults": json.loads(
-                    (RECORDED / "defaults.json").read_text(encoding="utf-8")
-                ),
-                "attacks": json.loads(
-                    (RECORDED / "attacks.json").read_text(encoding="utf-8")
-                ),
-                "constants": json.loads(
-                    CONSTANTS_PATH.read_text(encoding="utf-8")
-                ),
-            },
+            "context": recorded_context(),
         },
     )
+
+
+def recorded_context() -> dict[str, Any]:
+    """The ``{defaults, attacks, constants}`` the page holds when offline."""
+    return {
+        "defaults": json.loads(
+            (RECORDED / "defaults.json").read_text(encoding="utf-8")
+        ),
+        "attacks": json.loads(
+            (RECORDED / "attacks.json").read_text(encoding="utf-8")
+        ),
+        "constants": json.loads(CONSTANTS_PATH.read_text(encoding="utf-8")),
+    }
+
+
+def home_reel(recordings: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """The reel ``app.js`` hands Home: honest first, then outside forgery."""
+    index = json.loads((RECORDED / "index.json").read_text(encoding="utf-8"))
+    return [
+        {
+            "key": entry["scenario"],
+            "title": entry["label"],
+            "why": entry["why"],
+            "file": entry["file"],
+            "payload": recordings[entry["scenario"]],
+        }
+        for scenario in ("honest", "outside_forgery")
+        for entry in index
+        if entry["scenario"] == scenario
+    ]
+
+
+def render_home(
+    harness: Path, reel: list[dict[str, Any]], options: dict[str, Any]
+) -> dict[str, Any]:
+    """Render Home over a reel, as ``app.js`` does."""
+    return drive(
+        harness,
+        {"op": "home", "reel": reel, "context": recorded_context(), "options": options},
+    )
+
+
+def render_docs(harness: Path, docs: dict[str, Any]) -> dict[str, Any]:
+    """Render the Documentation view over a ``docs.json`` document."""
+    return drive(harness, {"op": "docs", "docs": docs, "context": recorded_context()})
 
 
 def walk(node: dict[str, Any]) -> Iterable[dict[str, Any]]:
@@ -2398,7 +2668,7 @@ def test_the_bounds_panel_publishes_the_proven_bound_not_the_budget(
     ``false_positive_bound`` is P(any signal | honest run), derived and covered
     in Python. ``eps`` is what the operator ASKED for. They sit within an order
     of magnitude of each other on every recorded run, both render as the same
-    shape of string, and the panel captions one of them "THE NUMBER TO QUOTE".
+    shape of string, and the panel captions one of them "the number to quote".
     Reading the wrong field there publishes an input as a result, on the row a
     judge is told to quote, and no amount of reading this file as text can see
     it.
@@ -2414,10 +2684,10 @@ def test_the_bounds_panel_publishes_the_proven_bound_not_the_budget(
             f"false_positive_bound, and the API's own value formats as "
             f"{exponential(detection['false_positive_bound'])!r}"
         )
-        assert "THE NUMBER TO QUOTE" in published
+        assert "the number to quote" in published
         if detection["eps"] != detection["false_positive_bound"]:
             assert exponential(detection["eps"]) not in published, (
-                f"on {name} the row captioned THE NUMBER TO QUOTE carries the "
+                f"on {name} the row captioned 'the number to quote' carries the "
                 f"budget eps = {exponential(detection['eps'])}. eps is an "
                 f"input; publishing it as the proven bound states a guarantee "
                 f"this project never derived."
@@ -2596,11 +2866,11 @@ def test_the_null_banner_never_speaks_for_a_null_the_response_omitted(
     del payload["run"]["nulls"]
     payload["detection"]["null_is_noiseless"] = False
     page = text_of(render_run(harness, payload))
-    assert "Both nulls were stated by the operator" not in page, (
+    assert "The operator stated both nulls" not in page, (
         "with no run.nulls on the response the page still announces that "
         "BOTH nulls were stated. It has been told about one."
     )
-    assert "Both were supplied by the operator" not in page
+    assert "The operator supplied both" not in page
     assert "The API did not supply run.nulls" in page, (
         "the page says nothing about the half of the state it never received"
     )
@@ -2610,7 +2880,7 @@ def test_the_null_banner_never_speaks_for_a_null_the_response_omitted(
     both = recordings["honest_noisy_right_null"]
     assert both["run"]["nulls"]["both_are_stated"] is True
     page = text_of(render_run(harness, both))
-    assert "Both nulls were stated by the operator" in page
+    assert "The operator stated both nulls" in page
     assert (
         f"tolerated_depolarising = "
         f"{both['run']['nulls']['tolerated_depolarising']:.6f}"
@@ -2654,13 +2924,23 @@ def test_the_presentation_views_publish_the_proven_bound_not_the_budget(
     operator asked for rather than anything this project proved. Each copy is
     checked on its own, as the verdict strip's is.
 
-    Every recording is rendered through all three views as it goes, so a view
-    that throws on one scenario fails here rather than in front of a room.
+    Every recording is rendered through all four views as it goes, the full
+    report included, so a view that throws on one scenario fails here rather
+    than in front of a room.
     """
+    index = json.loads((RECORDED / "index.json").read_text(encoding="utf-8"))
+    assert sorted(recordings) == sorted(entry["scenario"] for entry in index), (
+        "the recordings on disk and the rail's index disagree, so a scenario "
+        "the page offers goes unrendered here"
+    )
     for name, payload in sorted(recordings.items()):
         detection = payload["detection"]
-        evidence = render_page(harness, payload, "evidence")
-        assert text_of(evidence), f"the evidence view rendered nothing on {name}"
+        views = {
+            view: render_page(harness, payload, view)
+            for view in ("session", "evidence", "proof", "report")
+        }
+        for view, tree in views.items():
+            assert text_of(tree), f"the {view} view rendered nothing on {name}"
         if detection is None:
             continue
         proven = scientific(detection["false_positive_bound"])
@@ -2669,7 +2949,7 @@ def test_the_presentation_views_publish_the_proven_bound_not_the_budget(
 
         readout = [
             text_of(node)
-            for node in walk(render_page(harness, payload, "session"))
+            for node in walk(views["session"])
             if node["cls"] == "figure is-proven"
         ]
         assert len(readout) == 1, (
@@ -2687,7 +2967,7 @@ def test_the_presentation_views_publish_the_proven_bound_not_the_budget(
 
         hero = [
             text_of(node)
-            for node in walk(render_page(harness, payload, "proof"))
+            for node in walk(views["proof"])
             if node["cls"] == "hero-figure"
         ]
         assert len(hero) == 1, f"the proof view on {name} has no headline"
@@ -2699,3 +2979,205 @@ def test_the_presentation_views_publish_the_proven_bound_not_the_budget(
             assert budget not in hero[0], (
                 f"on {name} the proof headline publishes the budget {budget}"
             )
+
+
+#: Home's verdict frame, by ``detection.detected``: the lamp's word and the
+#: caption line. Restated here rather than read out of ``render.js``, so a
+#: swapped branch there is a failure rather than a new expectation.
+HOME_VERDICT = {
+    True: ("Alarm raised", "The detector raised an alarm on this run."),
+    False: ("No alarm", "Nothing crossed a threshold on this run."),
+}
+
+#: A verifier's outcome as Home words it.
+OUTCOME_WORDS = {
+    "accepted": "Accepted",
+    "rejected": "Rejected",
+    "refused-to-score": "No verdict",
+    "not-asked": "Not asked",
+}
+
+
+def home_verdict(tree: dict[str, Any]) -> tuple[str, str, dict[str, str]]:
+    """Return Home's verdict lamp text, caption line and per-party text."""
+    verdicts = [node for node in walk(tree) if node["cls"] == "reel-verdict"]
+    assert len(verdicts) == 1, f"Home shows {len(verdicts)} verdicts, not one"
+    lines = [text_of(node) for node in walk(tree) if node["cls"] == "reel-line"]
+    assert len(lines) == 1
+    parties = {}
+    for node in walk(verdicts[0]):
+        if node["cls"] == "reel-party":
+            name, lamp = node["children"]
+            parties[text_of(name)] = text_of(lamp)
+    return text_of(verdicts[0]), lines[0], parties
+
+
+@requires_node
+def test_home_says_what_the_detector_returned_for_the_run_it_shows(
+    harness: Path, recordings: dict[str, dict[str, Any]]
+) -> None:
+    """Home is the first screen a room reads, and its verdict is a claim.
+
+    With autoplay off Home rests on the last run's verdict frame: an alarm or
+    not, from ``detection.detected``, and each verifier's outcome, from
+    ``detection.outcomes``. A frame that said "Alarm raised" because the reel
+    holds the forgery, rather than because the detector said so, would be
+    right on both recordings and wrong in principle, so the detection is
+    flipped on a copy and the words have to follow it.
+
+    It never says an attack was identified: the detector names the group of
+    explanations the evidence fits, not an attack.
+    """
+    reel = home_reel(recordings)
+    assert [item["key"] for item in reel] == ["honest", "outside_forgery"]
+
+    def check(reel: list[dict[str, Any]]) -> None:
+        tree = render_home(harness, reel, {"autoplay": False})
+        page = text_of(tree)
+        assert "Recorded" in page, "Home does not say its runs are recorded"
+        assert "identified" not in page.lower(), (
+            "Home claims an attack was identified"
+        )
+        detection = reel[-1]["payload"]["detection"]
+        lamp, line, parties = home_verdict(tree)
+        word, sentence = HOME_VERDICT[detection["detected"]]
+        other_word, other_sentence = HOME_VERDICT[not detection["detected"]]
+        assert word in lamp and other_word not in lamp, (
+            f"detected = {detection['detected']} and Home's verdict reads "
+            f"{lamp!r}"
+        )
+        assert line == sentence and other_sentence not in page, (
+            f"detected = {detection['detected']} and Home's caption reads "
+            f"{line!r}"
+        )
+        assert set(parties) == {"Bob", "Charlie"}
+        for party, shown in parties.items():
+            outcome = detection["outcomes"][party]
+            assert shown.endswith(OUTCOME_WORDS[outcome]), (
+                f"{party}'s outcome is {outcome} and Home shows {shown!r}"
+            )
+
+    assert reel[-1]["payload"]["detection"]["detected"] is True
+    assert reel[-1]["payload"]["detection"]["outcomes"]["Bob"] == "rejected"
+    check(reel)
+
+    flipped = json.loads(json.dumps(reel))
+    flipped[-1]["payload"]["detection"]["detected"] = False
+    flipped[-1]["payload"]["detection"]["outcomes"]["Bob"] = "accepted"
+    flipped[-1]["payload"]["detection"]["outcomes"]["Charlie"] = "refused-to-score"
+    check(flipped)
+
+    # Autoplay only starts a timer, which the shim never fires.
+    assert "Recorded" in text_of(render_home(harness, reel, {"autoplay": True}))
+
+
+@requires_node
+def test_home_with_nothing_recorded_says_so(harness: Path) -> None:
+    """A cold load with no recorded runs is an empty stage that explains itself."""
+    tree = render_home(harness, [], {"autoplay": False})
+    empty = [text_of(node) for node in walk(tree) if node["cls"] == "empty"]
+    assert empty == [
+        "The recorded runs didn't load, so there's nothing to replay. "
+        "Start the server and reload."
+    ]
+    assert not [node for node in walk(tree) if node["cls"] == "reel-verdict"]
+
+
+@requires_node
+def test_home_never_shows_a_failed_run_as_a_clean_one(
+    harness: Path, recordings: dict[str, dict[str, Any]]
+) -> None:
+    """A run that failed has no verdict on Home, not a quiet one.
+
+    A failed run answers with ``detection: null``, and Home once read that as
+    ``detected !== true``: the stage said "No alarm" and "Nothing crossed a
+    threshold" about a run that never produced a transcript. That is the
+    fourth state ``test_a_failed_run_is_a_fourth_thing_and_the_screen_says_so``
+    guards on every other view.
+    """
+    reel = json.loads(json.dumps(home_reel(recordings)))
+    reel[-1]["payload"]["detection"] = None
+    reel[-1]["payload"]["error"] = "the session raised before it finished"
+    tree = render_home(harness, reel, {"autoplay": False})
+    verdict = [text_of(node) for node in walk(tree) if node["cls"] == "reel-verdict"]
+    assert len(verdict) == 1 and "No run" in verdict[0], verdict
+    text = text_of(tree)
+    assert "No alarm" not in text
+    assert "Nothing crossed a threshold" not in text
+    assert "failed" in text
+
+
+@requires_node
+def test_documentation_renders_every_section_figure_and_attack(
+    harness: Path,
+) -> None:
+    """The documentation's numbers come from the API, so each one is checked.
+
+    Every section title from ``docs.json`` is a heading, every value reference
+    becomes a figure (none falls back to "n/a" or to the ``missing`` span that
+    says a path did not resolve), and the roster carries every attack the
+    service lists.
+    """
+    docs = json.loads(DOCS_PATH.read_text(encoding="utf-8"))
+    tree = render_docs(harness, docs)
+    headings = [text_of(node) for node in walk(tree) if node["tag"] == "h2"]
+    for section in docs["sections"]:
+        assert section["title"] in headings, f"{section['title']!r} is not shown"
+
+    missing = [
+        text_of(node) for node in walk(tree) if "missing" in node["cls"].split()
+    ]
+    assert missing == [], f"{len(missing)} documentation figures did not resolve"
+    figures = [
+        text_of(node)
+        for node in walk(tree)
+        if node["tag"] == "span" and "docs-figure" in node["cls"].split()
+    ]
+    assert len(figures) == len(list(doc_references(docs)))
+    assert "n/a" not in figures
+    independent = {
+        "count": lambda value: f"{value:,}",
+        "rate": lambda value: f"{value:.6f}",
+        "chsh": lambda value: f"{value:.4f}",
+        "sci": scientific,
+        "exp": exponential,
+    }
+    defaults = recorded_context()["defaults"]
+    for reference, shown in zip(doc_references(docs), figures, strict=True):
+        value: Any = defaults
+        for key in reference["value"].split("."):
+            value = value[key]
+        expected = independent[reference["format"]](value)
+        assert shown == expected, (
+            f"{reference['value']} is {value!r} in /api/defaults and the "
+            f"documentation prints {shown!r}, not {expected!r}"
+        )
+
+    articles = [node for node in walk(tree) if node["cls"] == "docs-section"]
+    for article, section in zip(articles, docs["sections"], strict=True):
+        assert len(article["children"]) == 1 + len(section["blocks"]), (
+            f"a block in {section['id']!r} rendered nothing"
+        )
+
+    rosters = [node for node in walk(tree) if node["cls"] == "docs-roster"]
+    assert len(rosters) == 1, "the attack roster is not rendered"
+    listed = {text_of(node) for node in walk(rosters[0]) if node["tag"] == "h3"}
+    attacks = json.loads((RECORDED / "attacks.json").read_text(encoding="utf-8"))
+    for entry in attacks:
+        assert entry["label"] in listed, f"{entry['label']!r} is not in the roster"
+
+
+@requires_node
+def test_home_and_documentation_render_no_spaced_double_hyphen(
+    harness: Path, recordings: dict[str, dict[str, Any]]
+) -> None:
+    """The API's `` -- `` never reaches the two pages that quote it.
+
+    The roster prints the service's attack summaries, which spell a dash as
+    `` -- ``; ``Fmt.prose`` turns each into a comma. Checked on the rendered
+    text, because the source files cannot show what a data sentence becomes.
+    """
+    docs = json.loads(DOCS_PATH.read_text(encoding="utf-8"))
+    assert " -- " not in text_of(render_docs(harness, docs))
+    home = render_home(harness, home_reel(recordings), {"autoplay": False})
+    assert " -- " not in text_of(home)

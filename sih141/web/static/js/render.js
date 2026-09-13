@@ -88,9 +88,9 @@ const Render = (function () {
   function notSupplied(paths) {
     return h("div", { class: "missing" }, [
       h("div", {
-        text: "THE API DID NOT SUPPLY THIS. Nothing is shown in its place.",
+        text: "The API didn't supply this, and the page puts nothing in its place.",
       }),
-      h("div", { text: paths.join("  ·  ") }),
+      h("div", { text: paths.join("; ") }),
       h("div", {
         text:
           "Deriving it in the browser would put an untested number on the " +
@@ -134,10 +134,10 @@ const Render = (function () {
 
   /** Which state a `RunOutcome` string is. The four-valued answer, kept four. */
   const OUTCOME_STATE = {
-    accepted: { kind: "clean", label: "ACCEPTED" },
-    rejected: { kind: "detected", label: "REJECTED" },
-    "refused-to-score": { kind: "noverdict", label: "NO VERDICT" },
-    "not-asked": { kind: "withheld", label: "NOT ASKED" },
+    accepted: { kind: "clean", label: "Accepted" },
+    rejected: { kind: "detected", label: "Rejected" },
+    "refused-to-score": { kind: "noverdict", label: "No verdict" },
+    "not-asked": { kind: "withheld", label: "Not asked" },
   };
 
   /**
@@ -149,7 +149,7 @@ const Render = (function () {
   function outcomeToken(outcome) {
     const spec = OUTCOME_STATE[outcome];
     if (!spec) {
-      return token("neutral", "OUTCOME NOT SUPPLIED");
+      return token("neutral", "Outcome not supplied");
     }
     return token(spec.kind, spec.label);
   }
@@ -163,7 +163,7 @@ const Render = (function () {
    */
   function proven(value, qualifier) {
     return h("span", { class: "num num-proven" }, [
-      h("span", { class: "kind", text: "⊢ proven" }),
+      h("span", { class: "kind", text: "⊢ Proven" }),
       h("span", { class: "value", text: value }),
       qualifier ? h("span", { class: "qual", text: qualifier }) : null,
     ]);
@@ -178,7 +178,7 @@ const Render = (function () {
    */
   function measured(value, sample) {
     return h("span", { class: "num num-measured" }, [
-      h("span", { class: "kind", text: "measured" }),
+      h("span", { class: "kind", text: "Measured" }),
       h("span", { class: "value", text: value }),
       sample ? h("span", { class: "qual", text: sample }) : null,
     ]);
@@ -330,7 +330,7 @@ const Render = (function () {
             text: detected ? STATE.detected.glyph : STATE.clean.glyph,
             attrs: { "aria-hidden": "true" },
           }),
-          h("span", { text: detected ? "DETECTED" : "NOTHING FIRED" }),
+          h("span", { text: detected ? "Detected" : "Nothing fired" }),
         ]),
         h("div", { class: "sub" }, [
           h("code", { text: headlineLine }),
@@ -338,11 +338,11 @@ const Render = (function () {
         h("div", { class: "sub" }, [
           h("span", {
             text: detected
-              ? "At least one derived threshold was crossed. This is a " +
-                "departure from a stated null, not a verdict on the signature."
-              : "No derived threshold was crossed at this budget. A quiet " +
-                "detector is not a proof that nothing happened: there is no " +
-                "false-negative bound and this project derives none.",
+              ? "The run crossed at least one derived threshold. That marks " +
+                "a departure from a stated null, not a verdict on the signature."
+              : "Nothing crossed a derived threshold at this budget. A quiet " +
+                "detector doesn't prove that nothing happened: there is no " +
+                "false-negative bound, and this project derives none.",
           }),
         ]),
         h("div", {}, [
@@ -368,8 +368,8 @@ const Render = (function () {
           h("span", {
             class: "note",
             text:
-              "no matched count, no mismatch count, no rate: he was denied " +
-              "the evidence, so there is nothing to score and nothing to plot.",
+              "No matched count, no mismatch count, no rate: he never got " +
+              "the evidence, so there's nothing to score and nothing to plot.",
           })
         );
       } else {
@@ -393,9 +393,8 @@ const Render = (function () {
         h("p", {
           class: "note",
           text:
-            `reached no verdict: ${notScored.join(", ")}. A no-verdict is ` +
-            "never counted as a rejection, never counted as a detection, and " +
-            "never folded into a rate.",
+            `${notScored.join(", ")} reached no verdict. A no-verdict never ` +
+            "counts as a rejection or a detection, and never goes into a rate.",
         })
       );
     }
@@ -404,7 +403,7 @@ const Render = (function () {
       h("h2", { text: "Verifiers" }, [
         h("span", {
           class: "hint",
-          text: "four-valued: accepted / rejected / no verdict / not asked",
+          text: "Four outcomes: accepted, rejected, no verdict, not asked",
         }),
       ]),
       verifierRows,
@@ -413,7 +412,7 @@ const Render = (function () {
     return h("div", { class: "grid-2" }, [
       h("section", { class: "panel" }, [
         h("h2", { text: "Detector" }, [
-          h("span", { class: "hint", text: "did a derived threshold fire?" }),
+          h("span", { class: "hint", text: "Did a derived threshold fire?" }),
         ]),
         h("div", { class: "panel-body" }, [detectorBox]),
       ]),
@@ -442,14 +441,15 @@ const Render = (function () {
       STATE.noverdict.glyph,
       `No verdict: ${notScored.join(", ")}`,
       [
-        "This is a THIRD STATE. It is not an acceptance and it is not a " +
-          "rejection: the verifier was asked, was denied the evidence a " +
-          "verdict needs, and learned nothing at all about the signature.",
+        "No verdict is a third state, neither an acceptance nor a " +
+          "rejection. The protocol asked the verifier for a verdict, but he " +
+          "never got the evidence to reach one, so he learned nothing at all " +
+          "about the signature.",
         named.length > 0
-          ? `reason on the transcript: ${named.join("; ")}`
+          ? `Reason on the transcript: ${named.join("; ")}`
           : null,
-        "It must not be counted as a detection, must not be counted as a " +
-          "miss, and must not appear in the denominator of any rate.",
+        "Count it as neither a detection nor a miss, and keep it out of the " +
+          "denominator of every rate.",
       ]
     );
   }
@@ -530,53 +530,50 @@ const Render = (function () {
     let harness = null;
     if (truthLink && truthLink.nulls_match_link === true) {
       harness =
-        "On this run the harness confirms the nulls DO match the link, so a " +
-        "wrongly stated null is not the explanation for anything that fired. " +
-        "That is the harness's knowledge and not the detector's.";
+        "On this run the harness confirms that the nulls match the link, so " +
+        "a wrong null can't explain anything that fired. The harness knows " +
+        "that; the detector doesn't.";
     } else if (truthLink && truthLink.nulls_match_link === false) {
       harness = (payload.ground_truth || {}).adversary_present
-        ? "On this run the harness confirms the nulls do not match the link " +
-          "AND that an adversary is mounted on it. Both readings fit the same " +
-          "transcript; the detector cannot separate them, and this screen " +
-          "does not pretend it can."
-        : "On this run the harness confirms the nulls do NOT match the link, " +
-          "and that no adversary is mounted. What fired is a null being wrong " +
-          "about the wire.";
+        ? "On this run the harness confirms two things: the nulls don't match " +
+          "the link, and an adversary sits on it. Both readings fit the same " +
+          "transcript; the detector can't separate them, and this screen " +
+          "doesn't pretend it can."
+        : "On this run the harness confirms that the nulls don't match the " +
+          "link and that it mounted no adversary, so whatever fired is a " +
+          "null that's wrong about the wire.";
     }
 
     if (onlyOneStated) {
       const rateStated = nulls.rate_null_is_default === false;
       const paragraphs = [
-        "ONE OF THE TWO NULLS IS STILL THE DEFAULT. detect() is told two, " +
-          "and both default to a perfect link: " +
-          `${field.rate} is the null the RATE family reads the verifiers' ` +
-          `mismatch counts against, and ${field.channel} is the null the ` +
-          "CHANNEL family reads the published check rounds against.",
+        "ONE OF THE TWO NULLS IS STILL THE DEFAULT. detect() takes two, " +
+          "and both default to a perfect link: the rate family reads the " +
+          `verifiers' mismatch counts against ${field.rate}, and the channel ` +
+          `family reads the published check rounds against ${field.channel}.`,
         rateStated
-          ? `${field.rate} = ${Fmt.rate(nulls.channel_error_rate)} was ` +
-            `supplied. ${field.channel} is still ` +
+          ? `The operator supplied ${field.rate} = ` +
+            `${Fmt.rate(nulls.channel_error_rate)}. ${field.channel} is still ` +
             `${Fmt.rate(nulls.tolerated_depolarising)}, which claims an ideal ` +
-            "entanglement resource, so the channel family is still scoring " +
-            "this run against a link nobody has."
-          : `${field.channel} = ` +
-            `${Fmt.rate(nulls.tolerated_depolarising)} was supplied. ` +
-            `${field.rate} is still ` +
-            `${Fmt.rate(nulls.channel_error_rate)}, which claims a matched ` +
-            "position never disagrees, so the rate family is still scoring " +
-            "this run against a link nobody has.",
-        "They are two parameterisations of the same physics and neither is " +
-          "converted into the other: doing that silently would state a null " +
-          "the operator did not ask for. Set BOTH in the controls, or read " +
-          "what fired as a departure from the half that was left at its " +
-          "default. Neither is ever inferred from the transcript.",
-        nulls.note || "",
+            "entanglement resource, so the channel family still scores this " +
+            "run against a link nobody has."
+          : `The operator supplied ${field.channel} = ` +
+            `${Fmt.rate(nulls.tolerated_depolarising)}. ${field.rate} is ` +
+            `still ${Fmt.rate(nulls.channel_error_rate)}, which claims a ` +
+            "matched position never disagrees, so the rate family still " +
+            "scores this run against a link nobody has.",
+        "They're two parameterisations of the same physics, and nothing here " +
+          "converts one into the other: a silent conversion would state a " +
+          "null the operator didn't ask for. Set BOTH in the controls, or " +
+          "read what fired as a departure from the half still at its default. " +
+          "Nothing infers either null from the transcript.",
+        Fmt.prose(nulls.note),
       ];
       if (detection.detected === true) {
         paragraphs.unshift(
-          "THIS RUN FIRED WITH ONLY ONE NULL STATED. That is exactly the " +
-            "state in which an HONEST run is reported as detected with an " +
-            "adversary named. Read the ground-truth box before reading this " +
-            "as an attack."
+          "This run fired with only one null stated. That's the state in " +
+            "which the detector flags an honest run and marks an adversary " +
+            "hypothesis as supported, so read the ground-truth box before calling this an attack."
         );
       }
       paragraphs.push(harness);
@@ -584,22 +581,30 @@ const Render = (function () {
         banner(
           detection.detected === true ? "alarm" : "caution",
           "⚠",
-          "Only one of the two nulls is stated",
+          "The operator stated only one of the two nulls",
           paragraphs
         )
       );
     } else if (bothDefault) {
       const paragraphs = [
-        `detect() was given ${field.rate} = 0.0 AND ${field.channel} = 0.0, ` +
-          "which are its defaults and are TWO separate claims about a perfect " +
-          "link: that a matched position never disagrees, and that the " +
-          "entanglement resource is ideal.",
-        "An honest run over a noisy link departs from both and is reported as " +
-          "detected. The arithmetic is right; the row is still a false claim " +
-          "if nobody says which nulls it was scored against. Set BOTH " +
-          `controls: ${field.rate} to the link's true matched-position error ` +
-          `rate and ${field.channel} to its Werner strength, to score it ` +
-          "against the link instead. Setting only one does not clear the run. " +
+        nulls
+          ? `detect() got ${field.rate} = ` +
+            `${Fmt.rate(nulls.channel_error_rate)} and ${field.channel} = ` +
+            `${Fmt.rate(nulls.tolerated_depolarising)}. Those are its ` +
+            "defaults, and they make two separate claims about a perfect " +
+            "link: that a matched position never disagrees, and that the " +
+            "entanglement resource is ideal."
+          : `detect() got ${field.rate} = ` +
+            `${Fmt.rate(detection.channel_error_rate)}, its default, which ` +
+            "claims that a matched position never disagrees.",
+        `An honest run over a noisy link departs from ${nulls ? "both" : "that null"}, ` +
+          "and the detector reports it as detected. The arithmetic is right, " +
+          "but the row still makes a false claim unless someone says which " +
+          "nulls the detector scored it against. " +
+          "Set BOTH controls to score it against the link instead: " +
+          `${field.rate} to the link's true matched-position error rate and ` +
+          `${field.channel} to its Werner strength. Setting only one doesn't ` +
+          "clear the run, and " +
           // The reason this clause used to give -- "because at
           // check_fraction = 0 the transcript carries no estimate of either"
           // -- is the API's sentence about ONE run, hardcoded here and printed
@@ -607,20 +612,21 @@ const Render = (function () {
           // an estimate, and the banner was giving a false reason for a true
           // design. The design holds on every run; only the reason was local
           // to one, so the reason is gone and the statement stays.
-          "Neither is ever inferred from the transcript.",
+          "nothing infers either null from the transcript.",
       ];
       if (detection.detected === true) {
         paragraphs.unshift(
-          "THIS RUN FIRED, AND IT WAS SCORED AGAINST BOTH NOISELESS NULLS. " +
-            "Read the ground-truth box before reading this as an adversary."
+          `This run fired, and the detector scored it against ${nulls ? "both noiseless nulls" : "a noiseless rate null"}. ` +
+            "Read the ground-truth box before reading this as an " +
+            "adversary."
         );
       }
       if (!nulls) {
         paragraphs.push(
           "The API did not supply run.nulls on this response, so the only " +
-            "flag available here is the RATE family's " +
-            "(Detection.null_is_noiseless). The channel family's null is not " +
-            "reported and this banner cannot speak for it."
+            "flag here is the rate family's (Detection.null_is_noiseless). " +
+            "This response doesn't report the channel family's null, so this " +
+            "banner can't speak for it."
         );
       }
       paragraphs.push(harness);
@@ -657,37 +663,36 @@ const Render = (function () {
       // and a paragraph says the response is why.
       const paragraphs = [
         nulls
-          ? `The rate family's mismatch members were scored against ` +
+          ? `The detector scored the rate family's mismatch members against ` +
             `${field.rate} = ${Fmt.rate(detection.channel_error_rate)} and ` +
             `the channel family's check rounds against ${field.channel} = ` +
-            `${Fmt.rate(nulls.tolerated_depolarising)}. Both were ` +
-            `supplied by the operator rather than read off the transcript, ` +
-            `and neither was inferred from it.`
-          : `The rate family's mismatch members were scored against ` +
-            `${field.rate} = ${Fmt.rate(detection.channel_error_rate)}, ` +
-            `which was supplied by the operator rather than read off the ` +
-            `transcript. What ${field.channel} was set to is not reported ` +
-            `on this response, so nothing here says what the channel ` +
-            `family's check rounds were scored against.`,
+            `${Fmt.rate(nulls.tolerated_depolarising)}. The operator ` +
+            `supplied both, and nothing read either one off the transcript.`
+          : `The detector scored the rate family's mismatch members against ` +
+            `${field.rate} = ${Fmt.rate(detection.channel_error_rate)}, a ` +
+            `value the operator supplied; nothing read it off the ` +
+            `transcript. This response doesn't report the value of ` +
+            `${field.channel}, so nothing here says which null the detector ` +
+            `scored the channel family's check rounds against.`,
       ];
       if (!nulls) {
         paragraphs.push(
           "The API did not supply run.nulls on this response, so the only " +
-            "flag available here is the RATE family's " +
-            "(Detection.null_is_noiseless). The channel family's null is not " +
-            "reported and this banner cannot speak for it."
+            "flag here is the rate family's (Detection.null_is_noiseless). " +
+            "This response doesn't report the channel family's null, so this " +
+            "banner can't speak for it."
         );
       }
       // A standing statement about the design rather than about this run, so
       // it is true on both sides of the branch above.
       paragraphs.push(
-        "Stating both is necessary for an honest run over a noisy link to " +
-          "come back quiet, and it is not sufficient: these are the laws " +
-          "the run was SCORED against, and whether they are the laws the " +
+        "An honest run over a noisy link needs both stated to come back " +
+          "quiet, but stating both isn't enough: these are the laws the " +
+          "detector scored the run against, and whether they are the laws the " +
           "wire obeyed is a separate question that only the harness can " +
-          "answer. Stating either one alone does not reach even this far, " +
-          "the family whose null is still the default goes on scoring the " +
-          "run against a link nobody has."
+          "answer. Stating one alone falls short even of that, because the " +
+          "family whose null is still the default goes on scoring the run " +
+          "against a link nobody has."
       );
       paragraphs.push(harness);
       out.push(
@@ -695,7 +700,7 @@ const Render = (function () {
           "info",
           "ℹ",
           nulls
-            ? "Both nulls were stated by the operator"
+            ? "The operator stated both nulls"
             : "The rate family's null is not noiseless",
           paragraphs
         )
@@ -749,8 +754,8 @@ const Render = (function () {
       }),
       h("thead", {}, [
         h("tr", {}, [
-          h("th", { text: "link noise" }),
-          h("th", { class: "numeric", text: "runs that fired" }),
+          h("th", { text: "Link noise" }),
+          h("th", { class: "numeric", text: "Runs that fired" }),
         ]),
       ]),
     ]);
@@ -773,22 +778,25 @@ const Render = (function () {
     table.appendChild(body);
     return panel(
       "What the noiseless null costs, measured",
-      "not a Phase 5 result, a Phase 4 calibration",
+      "A Phase 4 calibration, not a Phase 5 result",
       [
         h("p", {
           class: "note",
           text:
-            "Every figure below is MEASURED and carries its sample size. " +
-            "None of it is a bound, and none of it is a detection rate for " +
-            "any adversary: these are honest runs.",
+            "Every figure below is measured and carries its sample size. " +
+            "These are honest runs, so none of it is a bound and none of it " +
+            "is a detection rate for any adversary.",
         }),
         h("div", { class: "table-wrap" }, [table]),
         h("p", {
           class: "note",
-          text: calibration.with_true_rate_passed || "",
+          text: Fmt.prose(calibration.with_true_rate_passed),
         }),
         calibration.second_null_note
-          ? h("p", { class: "warn-note", text: calibration.second_null_note })
+          ? h("p", {
+              class: "warn-note",
+              text: Fmt.prose(calibration.second_null_note),
+            })
           : notSupplied(["noise_null_calibration.second_null_note"]),
       ]
     );
@@ -808,10 +816,10 @@ const Render = (function () {
   function groundTruth(payload) {
     const truth = payload.ground_truth || {};
     const rows = [
-      ["attack", truth.label || truth.attack || Fmt.ABSENT],
+      ["Attack", truth.label || truth.attack || Fmt.ABSENT],
       [
-        "adversary",
-        Fmt.flag(truth.adversary_present, "mounted", "none mounted"),
+        "Adversary",
+        Fmt.flag(truth.adversary_present, "Mounted", "None mounted"),
       ],
       // Only asked when there IS an adversary. On an honest run the harness
       // still reports `acted` for a noisy link, and "adversary: none mounted"
@@ -820,35 +828,35 @@ const Render = (function () {
       // wire did.
       truth.adversary_present
         ? [
-            "did it act?",
+            "Did it act?",
             Fmt.flag(
               truth.acted,
-              "yes",
-              "no: it was mounted and did nothing on this run"
+              "Yes",
+              "No: the harness mounted it, and it did nothing on this run"
             ),
           ]
         : null,
       [
-        "seams held",
-        Fmt.list(truth.seams_held, "none"),
+        "Seams held",
+        Fmt.list(truth.seams_held, "None"),
       ],
       [
-        "links touched",
+        "Links touched",
         (truth.targeted_links || []).length === 0
-          ? "none"
+          ? "None"
           : (truth.targeted_links || [])
               .map(function (pair) {
                 return Fmt.link(pair[0], pair[1]);
               })
               .join(", "),
       ],
-      ["detectability", truth.detectable || Fmt.ABSENT],
+      ["Detectability", truth.detectable || Fmt.ABSENT],
     ];
     const link = truth.link;
     if (link) {
-      rows.push(["link model", `${link.model}: ${link.description}`]);
+      rows.push(["Link model", `${link.model}: ${Fmt.prose(link.description)}`]);
       rows.push([
-        "true error rate",
+        "True error rate",
         Object.keys(link.true_error_rate_by_party || {})
           .map(function (party) {
             return `${party}: ${Fmt.rate(link.true_error_rate_by_party[party])}`;
@@ -856,20 +864,20 @@ const Render = (function () {
           .join("   "),
       ]);
       rows.push([
-        "nulls the detector was given",
-        `rate family ${Fmt.rate(link.rate_null_given_to_detector)} · ` +
+        "Nulls the detector received",
+        `Rate family ${Fmt.rate(link.rate_null_given_to_detector)}; ` +
           `channel family ${Fmt.rate(link.channel_null_given_to_detector)}`,
       ]);
       rows.push([
-        "do the nulls match the link?",
+        "Do the nulls match the link?",
         // Deliberately neutral. WHY they disagree -- a wrong null, or an
         // adversary on the wire -- is a different question with two different
         // answers, and it is settled in the paragraph below rather than
         // asserted in a table cell that cannot know which run it is on.
         Fmt.flag(
           link.nulls_match_link,
-          "yes",
-          "NO: the wire departs from the law the detector was given"
+          "Yes",
+          "No: the wire departs from the law the detector received"
         ),
       ]);
     }
@@ -883,38 +891,40 @@ const Render = (function () {
       // IS the null being wrong about the wire. With one mounted, the wire
       // departs because the adversary is on it -- and saying "not an attack"
       // there would be a lie in the other direction.
-      box.appendChild(h("p", { class: "warn", text: link.note || "" }));
+      box.appendChild(h("p", { class: "warn", text: Fmt.prose(link.note) }));
       box.appendChild(
         h("p", {
           class: "warn",
           text: truth.adversary_present
-            ? `THE NULLS DO NOT MATCH THIS LINK, and an adversary is mounted ` +
-              `on it: the wire departs from the null BECAUSE of the ` +
-              `adversary. A transcript cannot separate those two readings, ` +
-              `which is exactly why a mismatch or channel signal supports a ` +
+            ? `The nulls don't match this link, and an adversary sits on ` +
+              `it: the wire departs from the null because of the ` +
+              `adversary. No transcript can separate those two readings, ` +
+              `which is why a mismatch or channel signal supports a ` +
               `hypothesis and never excludes one.`
-            : `THE NULLS DO NOT MATCH THIS LINK AND NO ADVERSARY IS ` +
-              `MOUNTED. Whatever fired below is a departure from a law the ` +
-              `run was scored against -- the null being wrong about the ` +
-              `wire, and not an attack.`,
+            : `The nulls don't match this link, and no adversary sits on ` +
+              `it. Whatever fired below departs from a law the detector ` +
+              `scored the run against, so it's the null being wrong about ` +
+              `the wire and not an attack.`,
         })
       );
     }
     if (truth.notes) {
-      box.appendChild(h("p", { class: "warn", text: truth.notes }));
+      box.appendChild(h("p", { class: "warn", text: Fmt.prose(truth.notes) }));
     }
     if (truth.assumption) {
-      box.appendChild(h("p", { class: "warn", text: truth.assumption }));
+      box.appendChild(
+        h("p", { class: "warn", text: Fmt.prose(truth.assumption) })
+      );
     }
     if (truth.identical_to_honest === true) {
       box.appendChild(
         h("p", {
           class: "warn",
           text:
-            "This transcript is IDENTICAL TO AN HONEST ONE, correctly. The " +
-            "adversary was mounted and did not act, so there is nothing on " +
-            "the wire to detect. A quiet detector here is the right answer, " +
-            "not a miss.",
+            "This transcript is identical to an honest one, and that's " +
+            "correct: the harness mounted an adversary that never acted, so " +
+            "the wire carries nothing to detect. A quiet detector here gives " +
+            "the right answer, not a miss.",
         })
       );
     }
@@ -923,9 +933,9 @@ const Render = (function () {
         h("p", {
           class: "warn",
           text:
-            "UNDETECTABLE BY CONSTRUCTION. Nothing fired because nothing can: " +
-            "every statistic on this transcript is drawn from the honest law. " +
-            "That is a proof about the model, not a failure of the detector.",
+            "Undetectable by construction. Nothing fired because nothing can: " +
+            "every statistic on this transcript comes from the honest law, " +
+            "and that's a proof about the model, not a failure of the detector.",
         })
       );
     }
@@ -933,8 +943,8 @@ const Render = (function () {
       h("p", {
         class: "warn",
         text:
-          "None of the above reached detect(). It reads a JSON transcript and " +
-          "nothing else, no session object, no adversary log, no harness " +
+          "None of the above reached detect(), which reads a JSON transcript " +
+          "and nothing else: no session object, no adversary log, no harness " +
           "state.",
       })
     );
@@ -992,7 +1002,7 @@ const Render = (function () {
       const reasons = withheld.filter(function (item) {
         return String(item).indexOf("channel") === 0;
       });
-      return panel("Channel: QBER and CHSH per link", "not evaluated", [
+      return panel("Channel: QBER and CHSH per link", "Not evaluated", [
         h("div", { class: "verdict is-withheld" }, [
           h("div", { class: "headline" }, [
             h("span", {
@@ -1000,27 +1010,34 @@ const Render = (function () {
               text: STATE.withheld.glyph,
               attrs: { "aria-hidden": "true" },
             }),
-            h("span", { text: "NOT EVALUATED" }),
+            h("span", { text: "Not evaluated" }),
           ]),
           h("div", {
             class: "sub",
             text:
-              "This run published no check rounds, so there is no independent " +
-              "estimate of either link. NO CHART IS DRAWN: a chart of zeros " +
-              "would read as a flat healthy line, and an unmonitored link is " +
-              "not a clean one.",
+              "This run published no check rounds, so no link has an " +
+              "independent estimate. The panel draws no chart, because a " +
+              "chart of zeros would read as a flat healthy line, and an " +
+              "unmonitored link isn't a clean one.",
           }),
         ]),
         reasons.length > 0
-          ? h("p", { class: "note", text: reasons.join("  ·  ") })
+          ? h(
+              "ul",
+              {},
+              reasons.map(function (reason) {
+                return h("li", { class: "note", text: Fmt.prose(reason) });
+              })
+            )
           : null,
         h("p", {
           class: "note",
           text:
-            "The channel family's roster is four links whether or not a run " +
-            "publishes four, so its share of the budget is simply unspendable " +
-            "here. That shows up as extra slack in the composite bound, and " +
-            "is reported rather than reclaimed.",
+            "The channel family's roster holds four links whether or not a " +
+            "run publishes four, so this run can't spend that family's share " +
+            "of the budget. The unspent share shows up as extra slack in the " +
+            "composite bound, and the detector reports it rather than " +
+            "reclaiming it.",
         }),
       ]);
     }
@@ -1057,7 +1074,7 @@ const Render = (function () {
           value: null,
           valueLabel: Fmt.ABSENT,
           className: cls,
-          unavailable: "no QBER rounds on this link",
+          unavailable: "No QBER rounds on this link",
         });
       }
 
@@ -1077,10 +1094,10 @@ const Render = (function () {
           value: null,
           valueLabel: Fmt.ABSENT,
           className: cls,
-          unavailable: "NOT EVALUATED: see below",
+          unavailable: "Not evaluated: see below",
         });
         chshReasons.push(
-          `${label}: ${link.chsh_unavailable || "no CHSH statistic here"}`
+          `${label}: ${Fmt.prose(link.chsh_unavailable) || "no CHSH statistic here"}`
         );
       }
     });
@@ -1117,7 +1134,7 @@ const Render = (function () {
     if (Fmt.present(classical)) {
       chshMarkers.push({
         value: classical,
-        label: "classical 2",
+        label: "Classical limit",
         className: "marker-reference",
         labelClassName: "reference-label",
       });
@@ -1125,7 +1142,7 @@ const Render = (function () {
     if (Fmt.present(tsirelson)) {
       chshMarkers.push({
         value: tsirelson,
-        label: "Tsirelson",
+        label: "Tsirelson limit",
         className: "marker-reference",
         labelClassName: "reference-label",
       });
@@ -1146,7 +1163,7 @@ const Render = (function () {
 
     return panel(
       "Channel: QBER and CHSH per link",
-      "per link and per message bit, never pooled",
+      "Per link and per message bit, never pooled",
       [
         h("p", {
           class: "note",
@@ -1161,15 +1178,15 @@ const Render = (function () {
         h("div", { class: "chart-legend" }, [
           h("span", {}, [
             h("span", { class: "swatch swatch-alarm" }),
-            h("span", { text: "a channel threshold fired on this link" }),
+            h("span", { text: "A channel threshold fired on this link" }),
           ]),
           h("span", {}, [
             h("span", { class: "swatch swatch-quiet" }),
-            h("span", { text: "no channel threshold fired" }),
+            h("span", { text: "No channel threshold fired" }),
           ]),
-          h("span", { text: "solid whisker: Wilson interval (calibrated)" }),
+          h("span", { text: "Solid whisker: Wilson interval (calibrated)" }),
           h("span", {
-            text: "dashed whisker: Hoeffding bound (distribution-free)",
+            text: "Dashed whisker: Hoeffding bound (distribution-free)",
           }),
         ]),
         h("p", {
@@ -1188,8 +1205,8 @@ const Render = (function () {
               h("p", {
                 class: "note",
                 text:
-                  "Why a link has no CHSH statistic, the API's own sentence, " +
-                  "in full. NOT EVALUATED is not a zero and is not a pass:",
+                  "Why a link has no CHSH statistic, in the API's own words. " +
+                  "Not evaluated means neither a zero nor a pass.",
               }),
               h(
                 "ul",
@@ -1202,16 +1219,16 @@ const Render = (function () {
         h("p", {
           class: "note",
           text:
-            chsh.note ||
+            Fmt.prose(chsh.note) ||
             "Reference lines are definitions of the CHSH inequality, not " +
               "thresholds this detector applies.",
         }),
         h("p", {
           class: "note",
           text:
-            "On a dozen rounds a single link's S can sit below 2 on a " +
-            "perfectly honest run, read the interval, and read Signals for " +
-            "whether anything actually fired.",
+            "With only a dozen rounds, one link's S can sit below the classical " +
+            "limit on a perfectly honest run, so read the interval, and check " +
+            "Signals for whether anything actually fired.",
         }),
       ]
     );
@@ -1243,8 +1260,8 @@ const Render = (function () {
         return {
           label: verifier.party,
           value: null,
-          valueLabel: "no verdict",
-          unavailable: "denied the evidence, nothing to plot",
+          valueLabel: "No verdict",
+          unavailable: "Never got the evidence, nothing to plot",
         };
       }
       return {
@@ -1262,10 +1279,10 @@ const Render = (function () {
       h("p", {
         class: "note",
         text:
-          "Both floors are enforced by the protocol, not by this screen. " +
-          "Whether one bit is a matter of record on the transcript: the " +
-          "Signals and Verifiers panels, and never of a bar being shorter " +
-          "than a line here.",
+          "The protocol enforces both floors, not this screen. Whether a run " +
+          "fell below one is on the transcript's record, in the Signals and " +
+          "Verifiers panels, and never a matter of a bar looking shorter than " +
+          "a line here.",
       }),
     ];
 
@@ -1298,7 +1315,7 @@ const Render = (function () {
           title: "Pooled matched count against the pooled floor",
           rows: [
             {
-              label: "pooled M",
+              label: "Pooled M",
               value: pooled.count,
               valueLabel: `${Fmt.count(pooled.count)} of ${Fmt.count(
                 pooled.trials
@@ -1306,7 +1323,7 @@ const Render = (function () {
               className: "bar",
             },
             {
-              label: "declared M",
+              label: "Declared M",
               value: pooled.declared_pooled,
               valueLabel: Fmt.count(pooled.declared_pooled),
               className: "bar-quiet",
@@ -1337,13 +1354,13 @@ const Render = (function () {
               text: STATE.withheld.glyph,
               attrs: { "aria-hidden": "true" },
             }),
-            h("span", { text: "NO POOLED COUNT" }),
+            h("span", { text: "No pooled count" }),
           ]),
           h("div", {
             class: "sub",
             text:
               "This run reached no pair of verdicts to pool, so there is no " +
-              "pooled matched count. That is an absent number, not a zero.",
+              "pooled matched count. That's an absent number, not a zero.",
           }),
         ])
       );
@@ -1352,36 +1369,40 @@ const Render = (function () {
     children.push(
       kv([
         [
-          "per-party floor m_min",
+          "Per-party floor m_min",
           plain(Fmt.count(floors.matched_minimum), "positions"),
         ],
         [
-          "pooled floor M_min",
+          "Pooled floor M_min",
           plain(Fmt.count(floors.pooled_minimum), "positions"),
         ],
         [
-          "floor bound",
+          "Floor bound",
           proven(
             Fmt.exp(floors.matched_floor_bound),
             "P(honest run below the floor)"
           ),
         ],
         [
-          "every floor met?",
-          Fmt.flag(floors.meets_every_floor, "yes", "NO: see Signals"),
+          "Every floor met?",
+          Fmt.flag(floors.meets_every_floor, "Yes", "No: see Signals"),
         ],
         [
-          "floors degenerate?",
+          "Floors degenerate?",
           Fmt.flag(
             floors.degenerate,
-            "YES: at this key length the floors carry no claim",
-            "no"
+            "Yes: at this key length the floors carry no claim",
+            "No"
           ),
         ],
       ])
     );
 
-    return panel("Matched counts and the floors", "watch the floors", children);
+    return panel(
+      "Matched counts and the floors",
+      "Per party and pooled",
+      children
+    );
   }
 
   /* ---------------------------------------------------------------------- *
@@ -1397,26 +1418,26 @@ const Render = (function () {
   function signalsPanel(payload) {
     const signals = payload.detection.signals || [];
     if (signals.length === 0) {
-      return panel("Signals", "nothing fired", [
+      return panel("Signals", "Nothing fired", [
         h("p", {
           class: "note",
           text:
-            "No derived threshold was crossed at this budget. That is not a " +
-            "statement that no attack occurred: there is no false-negative " +
-            "bound, and none can be derived from a transcript.",
+            "Nothing crossed a derived threshold at this budget. That doesn't " +
+            "say no attack occurred: there is no false-negative bound, and no " +
+            "transcript can yield one.",
         }),
       ]);
     }
     const table = h("table", {}, [
       h("thead", {}, [
         h("tr", {}, [
-          h("th", { text: "signal" }),
-          h("th", { text: "family" }),
-          h("th", { text: "kind" }),
-          h("th", { text: "statistic" }),
-          h("th", { class: "numeric", text: "observed" }),
-          h("th", { class: "numeric", text: "critical" }),
-          h("th", { text: "proves" }),
+          h("th", { text: "Signal" }),
+          h("th", { text: "Family" }),
+          h("th", { text: "Kind" }),
+          h("th", { text: "Statistic" }),
+          h("th", { class: "numeric", text: "Observed" }),
+          h("th", { class: "numeric", text: "Critical" }),
+          h("th", { text: "Proves" }),
         ]),
       ]),
     ]);
@@ -1431,14 +1452,14 @@ const Render = (function () {
           h("div", {
             class: "claim",
             text:
-              "NOT A DETECTION (C-7): a statement about the transcript file, " +
+              "Not a detection (C-7): a statement about the transcript file, " +
               "not about an adversary.",
           })
         );
       }
       const claim = h("details", { class: "claim-details" }, [
-        h("summary", { text: "what it proves" }),
-        h("p", { text: signal.claim }),
+        h("summary", { text: "What it proves" }),
+        h("p", { text: Fmt.prose(signal.claim) }),
       ]);
       row.appendChild(nameCell);
       row.appendChild(h("td", { text: signal.family }));
@@ -1467,7 +1488,7 @@ const Render = (function () {
     table.appendChild(body);
     return panel(
       "Signals",
-      "each one carries the bound its own threshold proves",
+      "Each carries the bound its own threshold proves",
       [
         h("div", { class: "table-wrap" }, [table]),
         h("p", {
@@ -1486,12 +1507,12 @@ const Render = (function () {
    * ---------------------------------------------------------------------- */
 
   const SUPPORT_STATE = {
-    supported: { kind: "named", label: "SUPPORTED", row: "row-named" },
-    unsupported: { kind: "neutral", label: "UNSUPPORTED", row: "" },
-    excluded: { kind: "ruledout", label: "RULED OUT", row: "" },
+    supported: { kind: "named", label: "Supported", row: "row-named" },
+    unsupported: { kind: "neutral", label: "Unsupported", row: "" },
+    excluded: { kind: "ruledout", label: "Ruled out", row: "" },
     "undetectable-by-construction": {
       kind: "withheld",
-      label: "UNDETECTABLE BY CONSTRUCTION",
+      label: "Undetectable by construction",
       row: "row-undetectable",
     },
   };
@@ -1521,10 +1542,10 @@ const Render = (function () {
     const table = h("table", {}, [
       h("thead", {}, [
         h("tr", {}, [
-          h("th", { text: "hypothesis" }),
-          h("th", { text: "status" }),
-          h("th", { text: "how surely" }),
-          h("th", { text: "why" }),
+          h("th", { text: "Hypothesis" }),
+          h("th", { text: "Status" }),
+          h("th", { text: "How surely" }),
+          h("th", { text: "Why" }),
         ]),
       ]),
     ]);
@@ -1555,31 +1576,31 @@ const Render = (function () {
           h("div", {
             class: "claim",
             text:
-              "NOT P(this adversary rather than another). 'A rather than B' " +
-              "has no null, so there is no inequality to invert and nothing " +
+              "Not P(this adversary rather than another). 'A rather than B' " +
+              "has no null, so there's no inequality to invert, and nothing " +
               "here derives such a number.",
           })
         );
       } else if (row.status === "undetectable-by-construction") {
-        surety.appendChild(token("withheld", "OUT OF MODEL (AUTH)"));
+        surety.appendChild(token("withheld", "Out of model (AUTH)"));
       } else {
         surety.appendChild(
-          h("span", { class: "claim", text: "no evidence to bound" })
+          h("span", { class: "claim", text: "No evidence to bound" })
         );
       }
       tr.appendChild(surety);
 
       const why = h("td", {}, [
         h("details", { class: "claim-details" }, [
-          h("summary", { text: "the mechanism this row was read off" }),
-          h("p", { text: row.rationale }),
+          h("summary", { text: "The mechanism behind this row" }),
+          h("p", { text: Fmt.prose(row.rationale) }),
         ]),
       ]);
       if ((row.indistinguishable_from || []).length > 0) {
         why.appendChild(
           h("div", {
             class: "claim",
-            text: `not separable from: ${row.indistinguishable_from.join(", ")}`,
+            text: `Not separable from: ${row.indistinguishable_from.join(", ")}`,
           })
         );
       }
@@ -1588,9 +1609,9 @@ const Render = (function () {
           h("div", {
             class: "claim",
             text:
-              `evaluated and did not fire: ${row.missing_requirements.join(
+              `Evaluated and didn't fire: ${row.missing_requirements.join(
                 ", "
-              )}: withheld, never refuted.`,
+              )}. Withheld, never refuted.`,
           })
         );
       }
@@ -1602,11 +1623,11 @@ const Render = (function () {
     const children = [
       h("div", { class: "table-wrap" }, [table]),
       banner("info", "⚿", "Full impersonation is out of model", [
-        authText ||
-          "(AUTH): the classical channel Alice authenticates over is assumed " +
-            "authentic. An adversary holding BOTH of Alice's seams runs the " +
-            "protocol correctly with a key of her own, so every statistic on " +
-            "the transcript is drawn from the honest law.",
+        Fmt.prose(authText) ||
+          "(AUTH): the model assumes the classical channel Alice " +
+            "authenticates over is authentic. An adversary holding both of " +
+            "Alice's seams runs the protocol correctly with a key of her own, " +
+            "so every statistic on the transcript comes from the honest law.",
         "This row is never a blank and never a zero. A zero would read as " +
           "'we tried and failed'; the claim is 'we proved you cannot, and " +
           "here is the assumption that makes it so'.",
@@ -1617,16 +1638,16 @@ const Render = (function () {
         h("p", {
           class: "note",
           text:
-            "Requirements waived on this run: a verifier reached no verdict, " +
-            "so a signal a position produces with probability one may simply " +
-            "never have been looked for. A hypothesis surviving here is not " +
-            "evidence for it.",
+            "The detector waived its requirements on this run: a verifier " +
+            "reached no verdict, so the detector may never have looked for a " +
+            "signal that a position produces with probability one. Surviving " +
+            "here is no evidence for a hypothesis.",
         })
       );
     }
     return panel(
       "Attribution",
-      "every hypothesis, every run, a missing row reads as one ruled out",
+      "Every hypothesis on every run, because a missing row reads as one ruled out",
       children
     );
   }
@@ -1647,14 +1668,14 @@ const Render = (function () {
     const timings = payload.timings || {};
     return panel(
       "Bounds",
-      "publish the proven one; the budget is not the detector's error rate",
+      "Publish the proven one; the budget isn't the detector's error rate",
       [
         kv([
           [
             "false_positive_bound",
             proven(
               Fmt.exp(detection.false_positive_bound),
-              "P(any signal | honest): THE NUMBER TO QUOTE"
+              "P(any signal | honest): the number to quote"
             ),
           ],
           [
@@ -1662,7 +1683,7 @@ const Render = (function () {
             plain(Fmt.exp(detection.eps), "an input, not a result"),
           ],
           [
-            "slack",
+            "Slack",
             plain(
               Fmt.fixed(detection.slack_factor, 2),
               "how far inside its budget the composite proved"
@@ -1673,15 +1694,15 @@ const Render = (function () {
             detection.evidence_bound === null
               ? h("span", {
                   class: "claim",
-                  text: "nothing fired, so there is no post-hoc set to bound",
+                  text: "Nothing fired, so there's no post-hoc set to bound",
                 })
               : h("span", {}, [
-                  proven(Fmt.exp(detection.evidence_bound), "POST HOC"),
+                  proven(Fmt.exp(detection.evidence_bound), "Post hoc"),
                   h("div", {
                     class: "claim",
                     text:
-                      "the smallest bound among the signals that DID fire, a " +
-                      "set chosen by the data. It is a different statement " +
+                      "The smallest bound among the signals that did fire, a " +
+                      "set the data chose. It makes a different statement " +
                       "from the line above and is never the detector's error " +
                       "rate.",
                   }),
@@ -1689,14 +1710,14 @@ const Render = (function () {
           ],
         ]),
         h("hr"),
-        h("p", { class: "note", text: "How eps was divided (C-2):" }),
+        h("p", { class: "note", text: "How the detector divided eps (C-2):" }),
         kv([
-          ["rate family", plain(Fmt.exp(budget.rate))],
-          ["structural family", plain(Fmt.exp(budget.structural))],
-          ["channel family", plain(Fmt.exp(budget.channel))],
-          ["per link", plain(Fmt.exp(budget.per_link))],
+          ["Rate family", plain(Fmt.exp(budget.rate))],
+          ["Structural family", plain(Fmt.exp(budget.structural))],
+          ["Channel family", plain(Fmt.exp(budget.channel))],
+          ["Per link", plain(Fmt.exp(budget.per_link))],
           [
-            "link roster",
+            "Link roster",
             plain(
               (budget.link_roster || [])
                 .map(function (pair) {
@@ -1720,7 +1741,7 @@ const Render = (function () {
           }),
         ]),
         h("div", { class: "legend" }, [
-          h("span", { text: "cost of this run:" }),
+          h("span", { text: "Cost of this run:" }),
           measured(Fmt.millis(timings.session_ms), "session, 1 run"),
           measured(Fmt.millis(timings.detect_ms), "detect, 1 run"),
         ]),
@@ -1768,8 +1789,8 @@ const Render = (function () {
       children.push(
         banner("alarm", "⚠", "This run carries no security claim at all", [
           "Both matched-count floors are degenerate at this sifted length. " +
-            "Every number on this page still computes cheerfully, and none of " +
-            "them is a security statement.",
+            "Every number on this page still computes, and none of them is a " +
+            "security statement.",
           `The floors on this run are m_min = ` +
             `${Fmt.count(floors.matched_minimum)} and M_min = ` +
             `${Fmt.count(floors.pooled_minimum)}; they collapse below a ` +
@@ -1781,65 +1802,64 @@ const Render = (function () {
     children.push(
       kv([
         [
-          "transferable (this run)",
+          "Transferable (this run)",
           h("span", {}, [
-            plain(Fmt.flag(run.transferable, "yes", "no")),
+            plain(Fmt.flag(run.transferable, "Yes", "No")),
             h("div", {
               class: "claim",
               text:
-                "an outcome of THIS run, not a guarantee. It says the two " +
-                "verdicts agreed here; it says nothing about how often they " +
-                "would.",
+                "An outcome of this run, not a guarantee. It says the two " +
+                "verdicts agreed here and nothing about how often they would.",
             }),
           ]),
         ],
         [
-          "repudiated (this run)",
+          "Repudiated (this run)",
           h("span", {}, [
-            plain(Fmt.flag(run.repudiated, "yes", "no")),
+            plain(Fmt.flag(run.repudiated, "Yes", "No")),
             h("div", {
               class: "claim",
               text:
-                "cannot distinguish signer misbehaviour from channel noise or " +
-                "from recipient forgery. Phase 3 measured plain depolarising " +
-                "noise producing this with a completely honest Alice.",
+                "Can't tell signer misbehaviour from channel noise or from " +
+                "recipient forgery. Phase 3 measured plain depolarising noise " +
+                "producing this with a completely honest Alice.",
             }),
           ]),
         ],
         [
-          "repudiation guarantee (this run's own M)",
+          "Repudiation guarantee (this run's own M)",
           run.repudiation_guarantee === null
             ? h("span", {
                 class: "claim",
-                text: "none: this run is not a repudiation experiment",
+                text: "None: this run isn't a repudiation experiment",
               })
             : proven(Fmt.exp(run.repudiation_guarantee), "per-run bound"),
         ],
         [
-          "enforced bound (a priori, from the floors)",
+          "Enforced bound (a priori, from the floors)",
           proven(Fmt.exp(enforced), "P(successful repudiation)"),
         ],
         [
-          "at DEFAULT_PARAMS instead",
+          "At DEFAULT_PARAMS instead",
           Fmt.present(headlineBound)
             ? proven(
                 Fmt.exp(headlineBound),
                 `key_length ${Fmt.count(headlineLength)}`
               )
-            : h("span", { class: "claim", text: "not supplied by the API" }),
+            : h("span", { class: "claim", text: "The API didn't supply it" }),
         ],
         [
-          "are this run's floors live?",
+          "Are this run's floors live?",
           plain(
             Fmt.flag(
               floors.degenerate,
-              "NO: both collapse at this length",
-              "yes"
+              "No: both collapse at this length",
+              "Yes"
             )
           ),
         ],
         [
-          "floors collapse below",
+          "Floors collapse below",
           plain(Fmt.count(collapseBelow), "sifted positions"),
         ],
       ])
@@ -1849,26 +1869,25 @@ const Render = (function () {
       banner(
         "caution",
         "⚠",
-        "What a demo-scale run cannot demonstrate",
+        "What a demo-scale run can't demonstrate",
         [
-          "Compare the two bounds above. The enforced bound at this run's " +
-            "parameters is a number close to one, which is not a bound on " +
-            "anything. The row above it says the length below which the " +
-            "floors collapse; that figure comes from the API, like every " +
-            "other number here.",
-          "So: a green tick beside 'transferable' on this run would be a " +
-            "lie. What this run demonstrates is that the machinery runs and " +
-            "that the floors and the detector behave as derived. " +
-            "NON-REPUDIATION IS NOT DEMONSTRATED HERE, and the parameters at " +
-            "which it would be are four minutes of session generation away " +
-            "and are shown as parameters rather than as a run.",
+          "Compare the two bounds above: at this run's parameters the " +
+            "enforced bound sits close to one, which bounds nothing. The last " +
+            "row gives the length below which the floors collapse, and like " +
+            "every other number here it comes from the API.",
+          "A green tick beside 'transferable' on this run would be a lie. " +
+            "This run shows that the machinery runs and that the floors and " +
+            "the detector behave as derived; it doesn't demonstrate " +
+            "non-repudiation. The parameters that would are four minutes of " +
+            "session generation away, so this report shows them as " +
+            "parameters rather than as a run.",
         ]
       )
     );
 
     return panel(
       "Transferability and non-repudiation",
-      "what this run does NOT establish",
+      "What this run doesn't establish",
       children
     );
   }
@@ -1886,24 +1905,24 @@ const Render = (function () {
   function groupingPanel(payload) {
     const detection = payload.detection || {};
     const run = payload.run || {};
-    return panel("Grouping key", "group by this; never average over it", [
+    return panel("Grouping key", "Group by this; never average over it", [
       kv([
         [
           "grouping_key",
-          plain(Fmt.list(detection.grouping_key, "empty")),
+          plain(Fmt.list(detection.grouping_key, "Empty")),
         ],
         ["count_exchange_timing", plain(String(run.count_exchange_timing))],
-        ["counts exchanged?", Fmt.flag(run.counts_exchanged, "yes", "no")],
-        ["sifted key length", plain(Fmt.count(run.sifted_key_length))],
-        ["check fraction", plain(Fmt.fixed(run.check_fraction, 4))],
-        ["message bit", plain(Fmt.count(run.message_bit))],
+        ["Counts exchanged?", Fmt.flag(run.counts_exchanged, "Yes", "No")],
+        ["Sifted key length", plain(Fmt.count(run.sifted_key_length))],
+        ["Check fraction", plain(Fmt.fixed(run.check_fraction, 4))],
+        ["Message bit", plain(Fmt.count(run.message_bit))],
       ]),
       h("p", {
         class: "note",
         text:
-          "The two count-exchange orderings answer different questions, one " +
+          "The two count-exchange orderings answer different questions: one " +
           "is a forgery, the other a denial of service. Timing is a control " +
-          "the operator sets and a label on the result. It is never a thing " +
+          "the operator sets and a label on the result, never a thing " +
           "summed over, and no total on this page crosses it.",
       }),
     ]);
@@ -1924,20 +1943,20 @@ const Render = (function () {
     const list = h("ul");
     withheld.forEach(function (item) {
       list.appendChild(
-        h("li", {}, [token("withheld", "NOT EVALUATED"), h("span", {
-          text: ` ${item}`,
+        h("li", {}, [token("withheld", "Not evaluated"), h("span", {
+          text: ` ${Fmt.prose(item)}`,
         })])
       );
     });
     return panel(
       "Withheld",
-      "not evaluated, which is not the same as passed",
+      "Not evaluated, which isn't the same as passed",
       [
         h("p", {
           class: "note",
           text:
             "These checks had no admissible operating point at this budget " +
-            "and sample size, or this run could not evaluate them at all. " +
+            "and sample size, or this run couldn't evaluate them at all." +
             "They contributed no evidence in either direction.",
         }),
         list,
@@ -1970,7 +1989,7 @@ const Render = (function () {
     const rows = Object.keys(error).map(function (key) {
       return [key, String(error[key])];
     });
-    return panel("This run did not complete", "not a result of any kind", [
+    return panel("This run didn't complete","Not a result of any kind", [
       h("div", { class: "verdict is-withheld" }, [
         h("div", { class: "headline" }, [
           h("span", {
@@ -1978,23 +1997,24 @@ const Render = (function () {
             text: STATE.withheld.glyph,
             attrs: { "aria-hidden": "true" },
           }),
-          h("span", { text: "NO RUN" }),
+          h("span", { text: "No run" }),
         ]),
         h("div", {
           class: "sub",
           text:
-            "The session or the detector did not finish, so there is nothing " +
-            "to score. This is NOT a clean run, NOT a detection and NOT a " +
-            "no-verdict: those are three things that happened, and this is a " +
-            "thing that did not. It belongs in no rate at all.",
+            "The session or the detector didn't finish, so there's nothing " +
+            "to score. This isn't a clean run, a detection or a no-verdict, " +
+            "because those are things that happened and this is a thing that " +
+            "didn't. It belongs in no rate at all.",
         }),
       ]),
       kv(rows),
       h("p", {
         class: "note",
         text:
-          "The ground-truth panel below still says which arm was mounted, " +
-          "because that is knowable even when the session is not.",
+          "The ground-truth panel below still says which arm the harness " +
+          "mounted, because the harness knows that even when the session " +
+          "never finished.",
       }),
     ]);
   }
@@ -2039,8 +2059,10 @@ const Render = (function () {
       return [key, String(request[key])];
     });
     return panel(
-      unreachable ? "Nothing answered this request" : "This run was refused",
-      "not a result of any kind",
+      unreachable
+        ? "Nothing answered this request"
+        : "The service refused this request",
+      "Not a result of any kind",
       [
         h("div", { class: "verdict is-withheld" }, [
           h("div", { class: "headline" }, [
@@ -2049,35 +2071,36 @@ const Render = (function () {
               text: STATE.withheld.glyph,
               attrs: { "aria-hidden": "true" },
             }),
-            h("span", { text: "NO RUN" }),
+            h("span", { text: "No run" }),
           ]),
           h("div", {
             class: "sub",
             text: unreachable
               ? "The request never reached a service. Nothing refused it and " +
                 "nothing scored it: the fetch itself failed, which means the " +
-                "process serving this page is not answering. This is NOT a " +
+                "process serving this page isn't answering. This is NOT a " +
                 "clean run, NOT a detection and NOT a no-verdict. It belongs " +
-                "in no rate at all, and any result previously on this screen " +
-                "belonged to a different request and has been cleared."
-              : "The service refused this request, so no session was " +
-                "generated and nothing was scored. This is NOT a clean run, " +
-                "NOT a detection and NOT a no-verdict. It belongs in no rate " +
-                "at all, and any result previously on this screen belonged to " +
-                "different parameters and has been cleared.",
+                "in no rate at all, and this page has cleared any earlier " +
+                "result, which belonged to a different request."
+              : "The service refused this request, so it generated no " +
+                "session and scored nothing. This is NOT a clean run, NOT a " +
+                "detection and NOT a no-verdict. It belongs in no rate at " +
+                "all, and this page has cleared any earlier result, which " +
+                "belonged to different parameters.",
           }),
         ]),
-        h("p", { class: "note", text: message }),
+        h("p", { class: "note", text: Fmt.prose(message) }),
         h("p", {
           class: "note",
           text: unreachable
-            ? "No cap was hit and no parameter was rejected, there was " +
-              "nobody there to reject one. Check that the server is still " +
+            ? "Nothing hit a cap and nothing rejected a parameter, because " +
+              "nobody was there to reject one. Check that the server is still " +
               "running; the recorded runs held in this page's memory keep " +
               "working without it."
-            : "The request is refused rather than quietly run at the nearest " +
-              "allowed value: a screen reporting one run under the label of " +
-              "another is the single easiest way for this dashboard to lie.",
+            : "The service refuses the request rather than quietly running it " +
+              "at the nearest allowed value, because a screen that reports one " +
+              "run under the label of another is the single easiest way for " +
+              "this dashboard to lie.",
         }),
         kv(rows),
       ]
@@ -2115,7 +2138,7 @@ const Render = (function () {
   function summaryPanel(payload) {
     return panel(
       "The detector's own summary",
-      "rendered in Python, verbatim",
+      "Verbatim, as Python wrote it",
       [
         h("pre", {
           class: "summary-pre",
@@ -2169,19 +2192,20 @@ const Render = (function () {
 
     return panel(
       "The headline parameter set",
-      "closed forms \u2014 NO session was run at this length",
+      "Closed forms: no session ran at this length",
       [
         h("p", {
           class: "note",
           text:
-            "The decision rule being demonstrated is the SAME rule at both " +
-            "sizes; only L differs, and with it whether the floors mean " +
-            "anything at all. Every figure below is derived without running " +
-            "a session, which is why it can be shown when a run at this " +
-            "length cannot.",
+            "The decision rule on show is the same at both sizes; only L " +
+            "differs, and with it whether the floors mean anything at all. " +
+            "Every bound and floor below comes from a closed form, with no " +
+            "session run at this length, which is why they can appear here " +
+            "even though this screen can't run a session that long. Only the " +
+            "cost table at the end is measured, and on shorter live runs.",
         }),
-        h("p", { class: "note", text: bounds.note || "" }),
-        h("p", { class: "note", text: headline.note || "" }),
+        h("p", { class: "note", text: Fmt.prose(bounds.note) }),
+        h("p", { class: "note", text: Fmt.prose(headline.note) }),
         kv([
           ["key_length", plain(Fmt.count(pick(sources, "key_length")))],
           ["s_a", plain(Fmt.rate(params.s_a))],
@@ -2203,36 +2227,36 @@ const Render = (function () {
             ),
           ],
           [
-            "floors live at this length?",
+            "Floors live at this length?",
             headline.floors_are_live === undefined
               ? plain(Fmt.ABSENT)
               : token(
                   headline.floors_are_live ? "clean" : "withheld",
-                  Fmt.flag(headline.floors_are_live, "LIVE", "INERT")
+                  Fmt.flag(headline.floors_are_live, "Live", "Inert")
                 ),
           ],
           [
-            "runnable from this screen?",
+            "Runnable from this screen?",
             headline.runnable === undefined
               ? plain(Fmt.ABSENT)
               : token(
                   headline.runnable ? "clean" : "withheld",
                   Fmt.flag(
                     headline.runnable,
-                    "YES",
-                    "NO: about four minutes per session"
+                    "Yes",
+                    "No: about four minutes per session"
                   )
                 ),
           ],
           [
-            "enforced repudiation bound",
+            "Enforced repudiation bound",
             proven(
               Fmt.exp(pick(sources, "enforced_repudiation_bound")),
               "P(successful repudiation)"
             ),
           ],
           [
-            "floors collapse below",
+            "Floors collapse below",
             plain(
               Fmt.count(pick(sources, "degenerate_below_key_length")),
               "sifted positions"
@@ -2242,7 +2266,7 @@ const Render = (function () {
         h("p", {
           class: "note",
           text:
-            "The last two rows are why a demo-scale run cannot demonstrate " +
+            "The last two rows are why a demo-scale run can't demonstrate " +
             "non-repudiation, and why the transferability panel says so in " +
             "the run's own words rather than leaving a reader to compare two " +
             "numbers on different screens.",
@@ -2253,20 +2277,18 @@ const Render = (function () {
               h("table", {}, [
                 h("caption", {
                   text:
-                    "the same decision rule at both sizes; only L differs, " +
-                    "and with it whether the floors mean anything. BOTH " +
-                    "COLUMNS ARE PARAMETER SETS AND NEITHER IS THIS RUN: " +
-                    "the left one is the dashboard's default set at its full " +
-                    "key length. A run that spends positions on check rounds " +
-                    "is scored at its own shorter sifted length, so its " +
-                    "floors and its enforced bound are its own and are on " +
-                    "the transferability panel above.",
+                    "Both columns are parameter sets, and neither is this " +
+                    "run. The left one is the dashboard's default set at its " +
+                    "full key length; the detector scores a run that spends " +
+                    "positions on check rounds at its own shorter sifted " +
+                    "length, so that run's floors and enforced bound are its " +
+                    "own, on the transferability panel above.",
                 }),
                 h("thead", {}, [
                   h("tr", {}, [
                     h("th", { text: "" }),
-                    h("th", { class: "numeric", text: "demo default set" }),
-                    h("th", { class: "numeric", text: "headline set" }),
+                    h("th", { class: "numeric", text: "Demo default set" }),
+                    h("th", { class: "numeric", text: "Headline set" }),
                   ]),
                 ]),
                 h("tbody", {}, [
@@ -2286,27 +2308,27 @@ const Render = (function () {
                     plain(Fmt.count(headline.minimum_pooled))
                   ),
                   compareRow(
-                    "enforced repudiation bound",
+                    "Enforced repudiation bound",
                     proven(Fmt.exp(demo.enforced_repudiation_bound), ""),
                     proven(Fmt.exp(headline.enforced_repudiation_bound), "")
                   ),
                 ]),
               ]),
             ]),
-        h("p", { class: "note", text: limits.cost_table_note || "" }),
+        h("p", { class: "note", text: Fmt.prose(limits.cost_table_note) }),
         h("div", { class: "table-wrap" }, [
           h("table", {}, [
             h("caption", {
               text:
-                "what a live run costs \u2014 measured, one run each, and the " +
-                "reason the live range is capped on key length",
+                "What a live run costs, measured once at each key length. " +
+                "This cost is why the service caps key length for live runs.",
             }),
             h("thead", {}, [
               h("tr", {}, [
-                h("th", { class: "numeric", text: "key length" }),
-                h("th", { class: "numeric", text: "session" }),
-                h("th", { class: "numeric", text: "detect" }),
-                h("th", { class: "numeric", text: "transcript KB" }),
+                h("th", { class: "numeric", text: "Key length" }),
+                h("th", { class: "numeric", text: "Session" }),
+                h("th", { class: "numeric", text: "Detect" }),
+                h("th", { class: "numeric", text: "Transcript KB" }),
               ]),
             ]),
             costRows,
@@ -2368,21 +2390,25 @@ const Render = (function () {
   }
 
   /**
-   * The heading block at the top of a page.
+   * The heading block at the top of a view.
    *
    * @param {string} title
-   * @param {string} lead
+   * @param {string|null} [lede]
+   * @param {Node|null} [extra] A source tag or a toolbar, beside the titles.
    * @returns {HTMLElement}
    */
-  function pageHead(title, lead) {
-    return h("header", { class: "page-head" }, [
-      h("h1", { text: title }),
-      h("p", { text: lead }),
+  function viewHead(title, lede, extra) {
+    return h("header", { class: "view-head" }, [
+      h("div", { class: "view-titles" }, [
+        h("h1", { text: title }),
+        lede ? h("p", { class: "view-lede", text: lede }) : null,
+      ]),
+      extra || null,
     ]);
   }
 
   /**
-   * One section of a page.
+   * One card of a view.
    *
    * @param {string} title
    * @param {string|null} lead
@@ -2391,8 +2417,8 @@ const Render = (function () {
    * @returns {HTMLElement}
    */
   function sheet(title, lead, children, cls) {
-    const node = h("section", { class: `sheet ${cls || ""}` }, [
-      h("h2", { text: title }),
+    const node = h("section", { class: cls ? `panel-card ${cls}` : "panel-card" }, [
+      h("h2", { class: "panel-title", text: title }),
     ]);
     if (lead) {
       node.appendChild(h("p", { class: "lead", text: lead }));
@@ -2527,7 +2553,7 @@ const Render = (function () {
   function withheldLabel(item) {
     const text = String(item);
     if (text.indexOf(" ") !== -1) {
-      return text;
+      return Fmt.prose(text);
     }
     const parts = text.split(":");
     if (parts[0] === "channel" && parts[2] === "chsh") {
@@ -2630,19 +2656,36 @@ const Render = (function () {
       : false;
     if (oneStated) {
       lines.push(
-        "Only one of the two noise settings was given, so ordinary link noise " +
-          "can still raise this alarm."
+        "The operator gave only one of the two noise settings, so ordinary " +
+          "link noise can still raise this alarm."
       );
     } else if (bothDefault && detected) {
       lines.push(
-        "Scored against a perfect link. Ordinary noise on a real link raises " +
-          "this alarm too, so check what actually happened before calling it " +
-          "an attack."
+        nulls
+          ? "The detector scored this run against a perfect link, and ordinary " +
+            "noise on a real link raises this alarm too, so check what actually " +
+            "happened before calling it an attack."
+          : "The detector scored the rate check against a perfect link, and " +
+            "ordinary noise on a real link raises this alarm too, so check " +
+            "what actually happened before calling it an attack."
       );
     } else if (bothDefault) {
-      lines.push("Scored against a perfect link.");
+      lines.push(
+        nulls
+          ? "The detector scored this run against a perfect link."
+          : "The detector scored the rate check against a perfect link."
+      );
     } else {
-      lines.push("Scored against the noise levels the operator gave.");
+      lines.push(
+        nulls
+          ? "The detector scored this run against the noise levels the operator gave."
+          : "The detector scored the rate check against the noise level the operator gave."
+      );
+    }
+    if (!nulls) {
+      lines.push(
+        "This response doesn't say what it scored the channel check against."
+      );
     }
     return lines.join(" ");
   }
@@ -2701,7 +2744,6 @@ const Render = (function () {
    */
   const PHASES = {
     distribute: {
-      tag: "Phase A",
       title: "Distribute",
       line:
         "Alice sends quantum keys for both possible messages to Bob and to " +
@@ -2709,15 +2751,13 @@ const Render = (function () {
       live: ["beam-bob", "beam-charlie"],
     },
     symmetrise: {
-      tag: "Phase A'",
       title: "Swap",
       line:
-        "Bob and Charlie privately swap key positions, so Alice cannot tell " +
+        "Bob and Charlie privately swap key positions, so Alice can't tell " +
         "which of them holds what.",
       live: ["private-down", "private-up"],
     },
     sign: {
-      tag: "Phase B",
       title: "Sign",
       line:
         "Alice announces which key she signed with, over an authenticated line " +
@@ -2725,7 +2765,6 @@ const Render = (function () {
       live: ["cable-bob"],
     },
     counts: {
-      tag: "Phase C'",
       title: "Compare counts",
       line:
         "Bob and Charlie tell each other how many key positions each of them " +
@@ -2733,7 +2772,6 @@ const Render = (function () {
       live: ["private-down", "private-up"],
     },
     verifyBob: {
-      tag: "Phase C",
       title: "Bob checks",
       line:
         "Bob checks the signature against his own key copy. Nothing moves: he " +
@@ -2742,7 +2780,6 @@ const Render = (function () {
       working: "bob",
     },
     forward: {
-      tag: "Phase C",
       title: "Forward",
       line:
         "Bob passes the signature on to Charlie. A forging recipient would act " +
@@ -2750,7 +2787,6 @@ const Render = (function () {
       live: ["forward"],
     },
     verifyCharlie: {
-      tag: "Phase C",
       title: "Charlie checks",
       line:
         "Charlie checks what reached him against his own copy, with a slightly " +
@@ -2802,18 +2838,22 @@ const Render = (function () {
    * `next`, `prev` and `reached` are plain lookups afterwards.
    *
    * @param {Array<string>} ids
-   * @returns {{next: Object, prev: Object, reached: Object, last: string}}
+   * @returns {{next: Object, prev: Object, reached: Object, first: string,
+   *            last: string}}
    */
   function sequence(ids) {
     const next = {};
     const prev = {};
     const reached = {};
     let seen = {};
+    let first = null;
     let previous = null;
     ids.forEach(function (id) {
       if (previous !== null) {
         next[previous] = id;
         prev[id] = previous;
+      } else {
+        first = id;
       }
       const marks = {};
       Object.keys(seen).forEach(function (key) {
@@ -2824,7 +2864,13 @@ const Render = (function () {
       seen = marks;
       previous = id;
     });
-    return { next: next, prev: prev, reached: reached, last: previous };
+    return {
+      next: next,
+      prev: prev,
+      reached: reached,
+      first: first,
+      last: previous,
+    };
   }
 
   /** Which drawn route each seam puts an adversary on. */
@@ -2997,13 +3043,13 @@ const Render = (function () {
     let text = null;
     if (facts.adversary_present === true && facts.identical_to_honest === true) {
       text =
-        "The adversary was mounted and did not act, so the transcript is " +
-        "identical to an honest one. Nothing firing here is correct.";
+        "The harness mounted an adversary that never acted, so the transcript " +
+        "is identical to an honest one and the detector is right to stay quiet.";
     } else if (facts.detectable === "undetectable-by-construction") {
       text =
-        "Undetectable by design. This adversary is excluded only by assuming " +
-        "the classical channel is authentic, never by the evidence, so no " +
-        "alarm here is a proof rather than a miss.";
+        "Undetectable by design. Only the assumption that the classical " +
+        "channel is authentic excludes this adversary, never the evidence, so " +
+        "a quiet detector here reflects a proof about the model, not a miss.";
     } else if (facts.adversary_present !== true && layout.noisy.length !== 0) {
       text =
         "No adversary. The link itself is noisy, and whatever the detector " +
@@ -3043,9 +3089,9 @@ const Render = (function () {
           h("p", {
             class: "verdict-sub",
             text: detected
-              ? "At least one threshold was crossed."
-              : "No threshold was crossed. A quiet detector is not proof " +
-                "that nothing happened.",
+              ? "The run crossed at least one threshold."
+              : "Nothing crossed a threshold, and a quiet detector isn't " +
+                "proof that nothing happened.",
           }),
         ]),
       ])
@@ -3100,7 +3146,7 @@ const Render = (function () {
         cell.appendChild(
           h("p", {
             class: "verifier-note",
-            text: "Denied the evidence, so there was nothing to score.",
+            text: "Never got the evidence, so there was nothing to score.",
           })
         );
       }
@@ -3129,7 +3175,7 @@ const Render = (function () {
     if (withheld.length !== 0) {
       nodes.push(
         h("div", { class: "readout-block" }, [
-          h("h3", { text: "Checks that could not run" }),
+          h("h3", { text: "Checks that couldn't run" }),
           h(
             "ul",
             { class: "withheld-list" },
@@ -3154,10 +3200,79 @@ const Render = (function () {
   }
 
   /**
+   * A verifier's mount label: waiting until its own check phase is reached.
+   *
+   * @param {Object} outcomes `detection.outcomes`.
+   * @param {Object|null} reached Phases reached so far, or null for all.
+   * @param {string} party
+   * @param {string} phaseId The phase in which this party checks.
+   * @returns {{stateLabel: string, className: string}}
+   */
+  function verifierState(outcomes, reached, party, phaseId) {
+    if (reached !== null && reached[phaseId] !== true) {
+      return { stateLabel: "Waiting", className: "" };
+    }
+    const spec = OUTCOME_STATE[outcomes[party]];
+    if (!spec) {
+      return { stateLabel: "Outcome not supplied", className: "" };
+    }
+    return {
+      stateLabel: `${STATE[spec.kind].glyph} ${OUTCOME_WORD[outcomes[party]]}`,
+      className: STATE[spec.kind].css,
+    };
+  }
+
+  /**
+   * The bench drawing for one moment of a run.
+   *
+   * @param {string} title The drawing's accessible name.
+   * @param {Object|null} phase An entry of `PHASES`, or null for a still.
+   * @param {Object} layout From `adversaryLayout`.
+   * @param {Object} bob From `verifierState`.
+   * @param {Object} charlie From `verifierState`.
+   * @returns {SVGElement}
+   */
+  function benchDrawing(title, phase, layout, bob, charlie) {
+    const spec = phase || { live: [], working: null };
+    return Charts.bench({
+      title: title,
+      parties: [
+        {
+          id: "alice",
+          name: "Alice",
+          role: layout.impersonated ? "Signer, impersonated" : "Signer",
+          impersonated: layout.impersonated,
+        },
+        {
+          id: "bob",
+          name: "Bob",
+          role: "Verifier",
+          stateLabel: bob.stateLabel,
+          className: bob.className,
+          scanning: spec.working === "bob",
+        },
+        {
+          id: "charlie",
+          name: "Charlie",
+          role: "Verifier",
+          stateLabel: charlie.stateLabel,
+          className: charlie.className,
+          scanning: spec.working === "charlie",
+        },
+      ],
+      live: spec.live.map(function (route) {
+        return { route: route };
+      }),
+      adversaries: layout.adversaries,
+      noisy: layout.noisy,
+    });
+  }
+
+  /**
    * The session: what happened on the bench, beside what the detector
    * concluded.
    *
-   * TWO PANES, AND THE SPLIT IS THE POINT. The left is the simulator's own
+   * TWO CARDS, AND THE SPLIT IS THE POINT. The left is the simulator's own
    * record: where the adversary sat, which link was noisy. The right is the
    * detector reading the transcript and nothing else. A judge who sees the two
    * side by side understands the project from the layout, and the separation
@@ -3200,79 +3315,35 @@ const Render = (function () {
     const steps = {};
 
     /**
-     * A verifier's mount label: waiting until its own phase is reached.
-     *
-     * @param {string} party
-     * @param {string} phaseId
-     * @returns {{stateLabel: string, className: string}}
-     */
-    function partyState(party, phaseId) {
-      if ((walk.reached[current] || {})[phaseId] !== true) {
-        return { stateLabel: "Waiting", className: "" };
-      }
-      const spec = OUTCOME_STATE[outcomes[party]];
-      if (!spec) {
-        return { stateLabel: "Outcome not supplied", className: "" };
-      }
-      return {
-        stateLabel: `${STATE[spec.kind].glyph} ${OUTCOME_WORD[outcomes[party]]}`,
-        className: STATE[spec.kind].css,
-      };
-    }
-
-    /**
      * Repaint the bench, the caption and the timeline for `current`.
      *
      * @returns {void}
      */
     function paintBench() {
       const spec = PHASES[current];
-      const bob = partyState("Bob", "verifyBob");
-      const charlie = partyState("Charlie", "verifyCharlie");
+      const reached = walk.reached[current] || {};
       benchBox.textContent = "";
       benchBox.appendChild(
-        Charts.bench({
-          title: `${spec.title}. ${spec.line}`,
-          parties: [
-            {
-              id: "alice",
-              name: "Alice",
-              role: layout.impersonated ? "Signer, impersonated" : "Signer",
-              impersonated: layout.impersonated,
-            },
-            {
-              id: "bob",
-              name: "Bob",
-              role: "Verifier",
-              stateLabel: bob.stateLabel,
-              className: bob.className,
-              scanning: spec.working === "bob",
-            },
-            {
-              id: "charlie",
-              name: "Charlie",
-              role: "Verifier",
-              stateLabel: charlie.stateLabel,
-              className: charlie.className,
-              scanning: spec.working === "charlie",
-            },
-          ],
-          live: spec.live.map(function (route) {
-            return { route: route };
-          }),
-          adversaries: layout.adversaries,
-          noisy: layout.noisy,
-        })
+        benchDrawing(
+          `${spec.title}. ${spec.line}`,
+          spec,
+          layout,
+          verifierState(outcomes, reached, "Bob", "verifyBob"),
+          verifierState(outcomes, reached, "Charlie", "verifyCharlie")
+        )
       );
       caption.textContent = "";
-      caption.appendChild(h("p", { class: "phase-tag", text: spec.tag }));
       caption.appendChild(h("p", { class: "phase-title", text: spec.title }));
       caption.appendChild(h("p", { class: "phase-line", text: spec.line }));
       order.forEach(function (id) {
-        const reached = (walk.reached[current] || {})[id] === true;
-        steps[id].className = `step ${id === current ? "is-current" : ""} ${
-          reached ? "is-reached" : ""
-        }`;
+        const classes = ["step"];
+        if (id === current) {
+          classes.push("is-current");
+        }
+        if (reached[id] === true) {
+          classes.push("is-reached");
+        }
+        steps[id].className = classes.join(" ");
         steps[id].setAttribute(
           "aria-current",
           id === current ? "step" : "false"
@@ -3287,7 +3358,7 @@ const Render = (function () {
     });
 
     /**
-     * Repaint the detector pane.
+     * Repaint the detector card.
      *
      * @returns {void}
      */
@@ -3336,7 +3407,7 @@ const Render = (function () {
       }
       revealed = false;
       paintReadout();
-      goTo(order[0]);
+      goTo(walk.first);
       playTimer = window.setInterval(function () {
         const after = walk.next[current];
         if (after === undefined) {
@@ -3397,23 +3468,17 @@ const Render = (function () {
     });
 
     const view = h("div", { class: "session" }, [
-      h("header", { class: "session-head" }, [
-        h("div", { class: "session-titles" }, [
-          h("h1", { text: opts.title || String(truth.label || "This run") }),
-          opts.description
-            ? h("p", { class: "session-why", text: opts.description })
-            : null,
-        ]),
-        opts.source
-          ? h("span", { class: "source-tag", text: opts.source })
-          : null,
-      ]),
+      viewHead(
+        opts.title || String(truth.label || "This run"),
+        Fmt.prose(opts.description),
+        opts.source ? h("span", { class: "source-tag", text: opts.source }) : null
+      ),
       h("div", { class: "session-grid" }, [
         h("section", {
-          class: "pane pane-truth",
+          class: "stage-card",
           attrs: { "aria-label": "What actually happened" },
         }, [
-          h("div", { class: "pane-head" }, [
+          h("div", { class: "card-head" }, [
             h("h2", { text: "What actually happened" }),
             h("p", {
               text:
@@ -3436,10 +3501,10 @@ const Render = (function () {
           ]),
         ]),
         h("section", {
-          class: "pane pane-detector",
+          class: "readout-card",
           attrs: { "aria-label": "What the detector concluded" },
         }, [
-          h("div", { class: "pane-head" }, [
+          h("div", { class: "card-head" }, [
             h("h2", { text: "What the detector concluded" }),
             h("p", { text: "From the published transcript alone." }),
           ]),
@@ -3478,27 +3543,22 @@ const Render = (function () {
     const links = run_.links || [];
     const evaluable = !(run_.channel_evaluable === false || links.length === 0);
     const fired = firedLinks(detection.signals);
-    const nodes = [
-      pageHead(
-        "Evidence",
-        "What was measured on this run, counted from the transcript. Bounds " +
-          "that are proven rather than measured are on the Proof page."
-      ),
-      // The warning rides on every view about a run. On an honest run over a
-      // noisy link this page shows every link fired, and without the shelf
-      // that reads as an attack measured on all four.
-      alertShelf(payload, splitBanners(payload, context).warnings),
-    ];
+    const cards = [];
 
     if (!evaluable) {
-      nodes.push(
-        sheet("Link measurements", null, [
-          notEvaluated(
-            "Not evaluated",
-            "This run published no check rounds, so neither link was " +
-              "measured. An unmonitored link is not a clean one."
-          ),
-        ])
+      cards.push(
+        sheet(
+          "Link measurements",
+          null,
+          [
+            notEvaluated(
+              "Not evaluated",
+              "This run published no check rounds, so it measured none of its " +
+                "links, and an unmonitored link isn't a clean one."
+            ),
+          ],
+          "is-wide"
+        )
       );
     } else {
       const qberRows = [];
@@ -3525,7 +3585,7 @@ const Render = (function () {
                 label: label,
                 value: null,
                 valueLabel: Fmt.ABSENT,
-                unavailable: "no check rounds",
+                unavailable: "No check rounds",
               }
         );
         if (link.chsh) {
@@ -3543,10 +3603,12 @@ const Render = (function () {
             label: label,
             value: null,
             valueLabel: Fmt.ABSENT,
-            unavailable: "not evaluated",
+            unavailable: "Not evaluated",
           });
           reasons.push(
-            `${label}: ${link.chsh_unavailable || "no Bell test on this link"}`
+            `${label}: ${
+              Fmt.prose(link.chsh_unavailable) || "no Bell test on this link"
+            }`
           );
         }
       });
@@ -3565,7 +3627,7 @@ const Render = (function () {
       if (Fmt.present(classical)) {
         markers.push({
           value: classical,
-          label: "classical limit",
+          label: "Classical limit",
           className: "marker-reference",
           labelClassName: "reference-label",
         });
@@ -3573,7 +3635,7 @@ const Render = (function () {
       if (Fmt.present(tsirelson)) {
         markers.push({
           value: tsirelson,
-          label: "quantum limit",
+          label: "Quantum limit",
           className: "marker-reference",
           labelClassName: "reference-label",
         });
@@ -3583,16 +3645,12 @@ const Render = (function () {
       // nothing.
       const domain = chsh.domain || { minimum: -4, maximum: 4 };
 
-      nodes.push(
+      cards.push(
         sheet(
-          "Link measurements",
-          "Each link's error rate and Bell test, from its published check " +
-            "rounds. A red bar is a link the detector fired on.",
+          "Link error rate",
+          "Each link's error rate from its published check rounds. Zero is a " +
+            "perfect link, and a red bar is a link the detector fired on.",
           [
-            h("h3", {
-              class: "chart-title",
-              text: "Error rate. Zero is a perfect link.",
-            }),
             Charts.bars({
               title: "Check-round error rate per link",
               rows: qberRows,
@@ -3604,10 +3662,12 @@ const Render = (function () {
               ],
               markers: [],
             }),
-            h("h3", {
-              class: "chart-title",
-              text: "Bell test. Above the classical limit means entanglement.",
-            }),
+          ]
+        ),
+        sheet(
+          "Bell test",
+          "Above the classical limit means the link carried entanglement.",
+          [
             Charts.bars({
               title: "Check-round CHSH statistic per link",
               rows: chshRows,
@@ -3662,8 +3722,8 @@ const Render = (function () {
               return {
                 label: row.party,
                 value: null,
-                valueLabel: "no verdict",
-                unavailable: "denied the evidence",
+                valueLabel: "No verdict",
+                unavailable: "Never got the evidence",
               };
             }
             return {
@@ -3687,7 +3747,7 @@ const Render = (function () {
             ? [
                 {
                   value: floors.matched_minimum,
-                  label: `minimum ${Fmt.count(floors.matched_minimum)}`,
+                  label: `Minimum ${Fmt.count(floors.matched_minimum)}`,
                   className: "marker-floor",
                 },
               ]
@@ -3702,7 +3762,7 @@ const Render = (function () {
           title: "Pooled matched count against the pooled minimum",
           rows: [
             {
-              label: "counted",
+              label: "Counted",
               value: pooled.count,
               valueLabel: `${Fmt.count(pooled.count)} of ${Fmt.count(
                 pooled.trials
@@ -3710,7 +3770,7 @@ const Render = (function () {
               className: "bar",
             },
             {
-              label: "declared",
+              label: "Declared",
               value: pooled.declared_pooled,
               valueLabel: Fmt.count(pooled.declared_pooled),
               className: "bar-quiet",
@@ -3725,7 +3785,7 @@ const Render = (function () {
             ? [
                 {
                   value: floors.pooled_minimum,
-                  label: `minimum ${Fmt.count(floors.pooled_minimum)}`,
+                  label: `Minimum ${Fmt.count(floors.pooled_minimum)}`,
                   className: "marker-floor",
                 },
               ]
@@ -3741,24 +3801,24 @@ const Render = (function () {
         )
       );
     }
-    nodes.push(
+    cards.push(
       sheet(
         "How much evidence each verifier had",
         "Key positions each verifier could check, against the minimum the " +
           "protocol requires before it will decide.",
-        volume
+        volume,
+        "is-wide"
       )
     );
 
     const signals = detection.signals || [];
-    nodes.push(
+    cards.push(
       sheet(
         "Thresholds",
-        "Every threshold the detector checked that was crossed, with the " +
-          "value that crossed it.",
+        "Every threshold this run crossed, with the value that crossed it.",
         [
           signals.length === 0
-            ? h("p", { class: "empty", text: "No threshold was crossed." })
+            ? h("p", { class: "empty", text: "Nothing crossed a threshold." })
             : h("div", { class: "table-wrap" }, [
                 h("table", { class: "grid" }, [
                   h("thead", {}, [
@@ -3799,10 +3859,10 @@ const Render = (function () {
 
     const withheld = detection.withheld || [];
     if (withheld.length !== 0) {
-      nodes.push(
+      cards.push(
         sheet(
           "Not evaluated",
-          "Checks the detector could not run on this transcript. Each is " +
+          "Checks the detector couldn't run on this transcript. Each is " +
             "absent, not passed.",
           [
             h(
@@ -3819,15 +3879,27 @@ const Render = (function () {
 
     const calibration = splitBanners(payload, context).evidence;
     if (calibration.length !== 0) {
-      nodes.push(
+      cards.push(
         sheet(
           "How often honest noise raises an alarm",
-          "Measured separately, over many honest runs at each noise level.",
-          calibration
+          "A separate measurement, over many honest runs at each noise level.",
+          calibration,
+          "is-wide"
         )
       );
     }
-    return nodes;
+    return [
+      viewHead(
+        "Evidence",
+        "What this run measured, counted from the transcript. The Proof page " +
+          "holds the bounds that come from a proof instead of a count."
+      ),
+      // The warning rides on every view about a run. On an honest run over a
+      // noisy link this page shows every link fired, and without the shelf
+      // that reads as an attack measured on all four.
+      alertShelf(payload, splitBanners(payload, context).warnings),
+      h("div", { class: "evidence-grid" }, cards),
+    ];
   }
 
   /* ---------------------------------------------------------------------- *
@@ -3859,18 +3931,19 @@ const Render = (function () {
     const bounds = defaults.bounds || {};
     const headline = bounds.headline || {};
     const nodes = [
-      pageHead(
+      viewHead(
         "Proof",
-        "What is proven about this run from a stated assumption and a named " +
-          "inequality. Nothing on this page is a measurement."
+        "What a stated assumption and a named inequality prove about this " +
+          "run. Nothing on this page is a measurement."
       ),
       // An honest run scored against the wrong null lists "Honest run: ruled
       // out" below. That row is correct about the null it was given and wrong
       // about the wire, and the shelf is what says so.
       alertShelf(payload, splitBanners(payload, context).warnings),
     ];
+    const cards = [];
 
-    nodes.push(
+    cards.push(
       sheet(
         "Chance of a false alarm",
         null,
@@ -3886,7 +3959,7 @@ const Render = (function () {
             class: "lead",
             text:
               "If this run was honest, the detector raises an alarm with at " +
-              `most this probability. The budget it was given is ` +
+              `most this probability. Its budget, set in the request, was ` +
               `${Fmt.sci(detection.eps)}.`,
           }),
           detection.bound_is_unconditional === false
@@ -3894,7 +3967,7 @@ const Render = (function () {
                 class: "caveat",
                 text:
                   "This bound is conditional on the run's matched counts, " +
-                  "because a noise rate was given for the rate check.",
+                  "because the operator gave the rate check a noise rate.",
               })
             : null,
           why("How the budget is split", [
@@ -3908,13 +3981,13 @@ const Render = (function () {
       )
     );
 
-    nodes.push(
-      sheet("What cannot be promised", null, [
+    cards.push(
+      sheet("What nobody can promise", null, [
         h("p", {
           class: "statement",
           text:
-            "There is no bound on missed attacks, and none can be derived from " +
-            "a transcript. A quiet detector is not proof that nothing happened.",
+            "There is no bound on missed attacks, and no transcript can yield " +
+            "one. A quiet detector isn't proof that nothing happened.",
         }),
       ])
     );
@@ -3937,7 +4010,7 @@ const Render = (function () {
         item.appendChild(
           h("p", {
             class: "suspect-note",
-            text: `Cannot be told apart from ${twins
+            text: `Nothing on the transcript tells this apart from ${twins
               .map(function (key) {
                 return hypothesisLabel(key, context.attacks);
               })
@@ -3950,14 +4023,14 @@ const Render = (function () {
           h("p", {
             class: "suspect-note",
             text:
-              assumptionFor(row.hypothesis, context.attacks) ||
-              "Excluded only by an assumption, never by the evidence.",
+              Fmt.prose(assumptionFor(row.hypothesis, context.attacks)) ||
+              "Only an assumption excludes this, never the evidence.",
           })
         );
       }
       suspects.appendChild(item);
     });
-    nodes.push(
+    cards.push(
       sheet(
         "Possible explanations",
         "The detector's attribution, reasoned from the transcript alone.",
@@ -3966,7 +4039,7 @@ const Render = (function () {
     );
 
     const headlineLength = pick([headline, defaults.params || {}], "key_length");
-    nodes.push(
+    cards.push(
       sheet(
         "Can the signer deny it later",
         "The chance a signer gets one verifier to accept and the other to " +
@@ -3996,14 +4069,15 @@ const Render = (function () {
           h("p", {
             class: "lead",
             text:
-              "A demo-length run shows the machinery working. It does not " +
-              "demonstrate non-repudiation: that needs the full length, which " +
-              "takes minutes per session, so it is shown as a bound rather " +
-              "than as a run.",
+              "A demo-length run shows the machinery working but doesn't " +
+              "demonstrate non-repudiation. That needs the full length, which " +
+              "takes minutes per session, so this page shows it as a bound " +
+              "rather than as a run.",
           }),
         ]
       )
     );
+    nodes.push(h("div", { class: "proof-grid" }, cards));
     return nodes;
   }
 
@@ -4012,12 +4086,108 @@ const Render = (function () {
    * ---------------------------------------------------------------------- */
 
   /**
+   * One collapsible section of the full report.
+   *
+   * @param {string} title
+   * @param {string} lede One line in plain words.
+   * @param {function(HTMLElement): void} fill Appends the section's panels.
+   * @param {boolean} [open]
+   * @returns {HTMLElement}
+   */
+  function reportSection(title, lede, fill, open) {
+    const body = h("div", { class: "report-body" });
+    fill(body);
+    const node = h("details", { class: "report-section" }, [
+      h("summary", { class: "report-summary" }, [
+        h("span", { class: "report-heading" }, [
+          h("h2", { class: "report-title", text: title }),
+          h("p", { class: "report-lede", text: lede }),
+        ]),
+      ]),
+      body,
+    ]);
+    if (open === true) {
+      node.open = true;
+    }
+    return node;
+  }
+
+  /**
+   * The report's toolbar: download, print, open or close every section.
+   *
+   * Handler bodies use browser APIs (Blob, URL, print); they run only on a
+   * click, never while the view is being built.
+   *
+   * @param {HTMLElement} report The container holding the sections.
+   * @param {Object} payload
+   * @returns {HTMLElement}
+   */
+  function reportTools(report, payload) {
+    const request = payload.request || {};
+    const named =
+      request.attack !== undefined &&
+      request.attack !== null &&
+      request.seed !== undefined &&
+      request.seed !== null;
+    const fileName = named
+      ? `qsecure-${request.attack}-seed-${request.seed}.json`
+      : "qsecure-run.json";
+
+    const download = h("button", {
+      class: "tool-button",
+      text: "Download JSON",
+      attrs: { type: "button" },
+    });
+    download.addEventListener("click", function () {
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    });
+
+    const print = h("button", {
+      class: "tool-button",
+      text: "Print report",
+      attrs: { type: "button" },
+    });
+    print.addEventListener("click", function () {
+      report.querySelectorAll("details").forEach(function (node) {
+        node.open = true;
+      });
+      window.print();
+    });
+
+    let allOpen = false;
+    const toggle = h("button", {
+      class: "tool-button",
+      text: "Open all sections",
+      attrs: { type: "button" },
+    });
+    toggle.addEventListener("click", function () {
+      allOpen = !allOpen;
+      report.querySelectorAll("details.report-section").forEach(function (node) {
+        node.open = allOpen;
+      });
+      toggle.textContent = allOpen ? "Close all sections" : "Open all sections";
+    });
+
+    return h("div", { class: "report-tools" }, [download, print, toggle]);
+  }
+
+  /**
    * Every panel, for the person who asks to check a number.
    *
-   * Appended one call at a time rather than assembled as a list, so that each
-   * panel's presence on every run is a line a reader can find: the grouping
-   * panel in particular is constraint 6, and a list built by `concat` is one
-   * dropped element away from losing it silently.
+   * Each section is filled one call at a time rather than from a list, so
+   * that each panel's presence on every run is a line a reader can find: the
+   * grouping panel in particular is constraint 6, and a list built by `concat`
+   * is one dropped element away from losing it silently.
    *
    * @param {HTMLElement} target
    * @param {Object} payload
@@ -4026,34 +4196,614 @@ const Render = (function () {
    */
   function reportView(target, payload, context) {
     const split = splitBanners(payload, context);
+    const report = h("div", { class: "report" });
     target.appendChild(
-      pageHead(
+      viewHead(
         "Full report",
-        "Every panel and every number, with the reasoning behind each. For " +
-          "checking the result rather than presenting it."
+        "Every panel and every number for this run, with the reasoning behind each.",
+        reportTools(report, payload)
       )
     );
-    target.appendChild(verdictStrip(payload));
-    split.warnings.forEach(function (node) {
-      target.appendChild(node);
-    });
-    target.appendChild(groundTruth(payload));
-    target.appendChild(channelPanel(payload, context));
-    target.appendChild(floorsPanel(payload));
-    target.appendChild(signalsPanel(payload));
-    const held = withheldPanel(payload);
-    if (held) {
-      target.appendChild(held);
+    target.appendChild(report);
+
+    report.appendChild(
+      reportSection(
+        "Verdict",
+        "What the detector returned and what each verifier decided, with this run's warnings.",
+        function (body) {
+          body.appendChild(verdictStrip(payload));
+          split.warnings.forEach(function (node) {
+            body.appendChild(node);
+          });
+        },
+        true
+      )
+    );
+    report.appendChild(
+      reportSection(
+        "What actually happened",
+        "The simulator's own record of the adversary and the link. The detector never saw it.",
+        function (body) {
+          body.appendChild(groundTruth(payload));
+        }
+      )
+    );
+    report.appendChild(
+      reportSection(
+        "Link measurements",
+        "Error rate and Bell test for each link, read from its check rounds.",
+        function (body) {
+          body.appendChild(channelPanel(payload, context));
+        }
+      )
+    );
+    report.appendChild(
+      reportSection(
+        "Evidence counts",
+        "How many positions each verifier could check, and every signal the detector raised.",
+        function (body) {
+          body.appendChild(floorsPanel(payload));
+          body.appendChild(signalsPanel(payload));
+          const held = withheldPanel(payload);
+          if (held) {
+            body.appendChild(held);
+          }
+        }
+      )
+    );
+    report.appendChild(
+      reportSection(
+        "Who could have done it",
+        "Every hypothesis the detector weighed, the honest run included, and " +
+          "where this transcript leaves each one.",
+        function (body) {
+          body.appendChild(attributionPanel(payload, context.attacks));
+        }
+      )
+    );
+    report.appendChild(
+      reportSection(
+        "Bounds and transferability",
+        "The proven chance of a false alarm, and what a run this short can't establish.",
+        function (body) {
+          body.appendChild(boundsPanel(payload));
+          body.appendChild(transferabilityPanel(payload, context));
+        }
+      )
+    );
+    report.appendChild(
+      reportSection(
+        "How runs are grouped",
+        "The settings that make two runs different experiments, which nothing on this page pools across.",
+        function (target) {
+          target.appendChild(groupingPanel(payload));
+        }
+      )
+    );
+    if (split.evidence.length !== 0) {
+      report.appendChild(
+        reportSection(
+          "Noise calibration",
+          "How often honest runs over a noisy link raise an alarm, measured separately.",
+          function (body) {
+            split.evidence.forEach(function (node) {
+              body.appendChild(node);
+            });
+          }
+        )
+      );
     }
-    target.appendChild(attributionPanel(payload, context.attacks));
-    target.appendChild(boundsPanel(payload));
-    target.appendChild(transferabilityPanel(payload, context));
-    target.appendChild(groupingPanel(payload));
-    split.evidence.forEach(function (node) {
-      target.appendChild(node);
+    report.appendChild(
+      reportSection(
+        "Transcript summary",
+        "The detector's own summary of this run, exactly as Python printed it.",
+        function (body) {
+          body.appendChild(summaryPanel(payload));
+        }
+      )
+    );
+    report.appendChild(
+      reportSection(
+        "Parameter sets",
+        "The full-length parameter set beside the demo set, and what a live run costs.",
+        function (body) {
+          body.appendChild(headlineParams(context.defaults));
+        }
+      )
+    );
+  }
+
+  /* ---------------------------------------------------------------------- *
+   * Home
+   * ---------------------------------------------------------------------- */
+
+  /**
+   * The three properties a quantum digital signature is for, each with the
+   * limit that goes with it. Words only: no figure on Home comes from a run,
+   * so none is typed here either.
+   */
+  const PROMISES = [
+    {
+      icon: "shield",
+      title: "Can't be forged",
+      body:
+        "A forger never holds Alice's key, so part of any forged signature is " +
+        "guesswork, and wrong guesses show up as mismatches when Bob and " +
+        "Charlie check it.",
+      limit:
+        "Assumes the line from Alice is authentic. An impersonator who " +
+        "controls both of her channels is undetectable by design, and the " +
+        "dashboard says so.",
+    },
+    {
+      icon: "seal",
+      title: "Can't be denied",
+      body:
+        "Alice can't get Bob to accept a signature that Charlie then rejects. " +
+        "The proof covers any strategy she tries and assumes nothing about her.",
+      limit:
+        "Proven for the full-length key. A short demo run shows the mechanism " +
+        "working, not the guarantee.",
+    },
+    {
+      icon: "handoff",
+      title: "Can be passed on",
+      body:
+        "A signature Bob accepts is overwhelmingly likely to clear Charlie " +
+        "too, because Charlie tolerates more mismatches than Bob does.",
+      limit:
+        "A dishonest recipient can still block the hand-over, and that shows " +
+        "up as no verdict, which is not a rejection.",
+    },
+  ];
+
+  /**
+   * The promises as three columns.
+   *
+   * @returns {HTMLElement}
+   */
+  function promiseList() {
+    return h(
+      "section",
+      {
+        class: "promises",
+        attrs: { "aria-label": "What the signature promises" },
+      },
+      PROMISES.map(function (promise) {
+        return h("article", { class: "promise" }, [
+          Charts.icon(promise.icon, "promise-icon"),
+          h("h2", { class: "promise-title", text: promise.title }),
+          h("p", { class: "promise-body", text: promise.body }),
+          h("p", { class: "promise-limit", text: promise.limit }),
+        ]);
+      })
+    );
+  }
+
+  /**
+   * Home: two recorded runs on a loop, an honest one and a forged one, with
+   * each run's verdict shown when that run ends.
+   *
+   * The loop is one flat list of frames built by iteration (a phase frame per
+   * phase of each run, then that run's verdict held for two ticks), so moving
+   * on is a lookup rather than a count. Every word at a verdict frame comes
+   * from `detection.detected` and `detection.outcomes`; nothing says which
+   * attack it was, because the detector names a group, not an attack.
+   *
+   * @param {HTMLElement} target
+   * @param {Array<Object>} reel `[{key, title, why, file, payload}]`.
+   * @param {Object} context
+   * @param {Object} [options] `{autoplay, open}`.
+   * @returns {void}
+   */
+  function home(target, reel, context, options) {
+    stopPlayback();
+    target.textContent = "";
+    const opts = options || {};
+    const items = (reel || []).filter(function (item) {
+      return Boolean(item && item.payload);
     });
-    target.appendChild(summaryPanel(payload));
-    target.appendChild(headlineParams(context.defaults));
+
+    const view = h("div", { class: "home" }, [
+      h("section", { class: "home-hero" }, [
+        h("h1", {
+          class: "home-title",
+          text: "Alice signs, Eve forges, and the detector tells the two apart.",
+        }),
+        h("p", {
+          class: "home-lede",
+          text:
+            "Two recorded runs play on a loop: an honest signature, then a " +
+            "forged one. Every verdict you see is what the detector returned " +
+            "for that run.",
+        }),
+      ]),
+    ]);
+    target.appendChild(view);
+
+    if (items.length === 0) {
+      view.appendChild(
+        h("p", {
+          class: "empty",
+          text:
+            "The recorded runs didn't load, so there's nothing to replay. " +
+            "Start the server and reload.",
+        })
+      );
+      view.appendChild(promiseList());
+      return;
+    }
+
+    const ids = [];
+    const frames = {};
+    const starts = {};
+    items.forEach(function (item) {
+      const order = phaseOrder((item.payload.run || {}).count_exchange_timing);
+      const walk = sequence(order);
+      const layout = adversaryLayout(item.payload.ground_truth);
+      starts[item.key] = `${item.key}:${walk.first}`;
+      order.forEach(function (phaseId) {
+        const id = `${item.key}:${phaseId}`;
+        ids.push(id);
+        frames[id] = { item: item, phaseId: phaseId, walk: walk, layout: layout };
+      });
+      [`${item.key}:verdict`, `${item.key}:hold`].forEach(function (id) {
+        ids.push(id);
+        frames[id] = { item: item, phaseId: null, walk: walk, layout: layout };
+      });
+    });
+    const loop = sequence(ids);
+    const animate = opts.autoplay === true && !prefersStill();
+    let current = animate
+      ? loop.first
+      : `${frames[loop.last].item.key}:verdict`;
+
+    const benchBox = h("div", { class: "bench" });
+    const captionBox = h("div", { class: "reel-caption" });
+    const note = h("p", { class: "reel-note" });
+    const buttons = {};
+
+    /**
+     * Repaint the stage for `current`.
+     *
+     * @returns {void}
+     */
+    function paint() {
+      const frame = frames[current];
+      const item = frame.item;
+      // A failed run answers with a null detection. Reading that as "nothing
+      // detected" would put a clean verdict on a run that never finished, so
+      // it is its own state here as everywhere else.
+      const failed = !item.payload.detection;
+      const detection = item.payload.detection || {};
+      const outcomes = detection.outcomes || {};
+      const detected = detection.detected === true;
+      const phase = frame.phaseId === null ? null : PHASES[frame.phaseId];
+      const reached = phase ? frame.walk.reached[frame.phaseId] || {} : null;
+
+      benchBox.textContent = "";
+      benchBox.appendChild(
+        benchDrawing(
+          phase ? `${phase.title}. ${phase.line}` : item.title,
+          phase,
+          frame.layout,
+          verifierState(outcomes, reached, "Bob", "verifyBob"),
+          verifierState(outcomes, reached, "Charlie", "verifyCharlie")
+        )
+      );
+
+      captionBox.textContent = "";
+      captionBox.appendChild(
+        h("div", { class: "reel-phase" }, [
+          h("p", { class: "reel-title", text: phase ? phase.title : item.title }),
+          h("p", {
+            class: "reel-line",
+            text: phase
+              ? phase.line
+              : failed
+                ? "This run failed, so the detector has no verdict to show, and a failed run isn't a clean one."
+                : detected
+                  ? "The detector raised an alarm on this run."
+                  : "Nothing crossed a threshold on this run.",
+          }),
+        ])
+      );
+      if (!phase && failed) {
+        captionBox.appendChild(
+          h("div", { class: "reel-verdict" }, [lamp("withheld", "No run")])
+        );
+      } else if (!phase) {
+        captionBox.appendChild(
+          h("div", { class: "reel-verdict" }, [
+            lamp(
+              detected ? "detected" : "clean",
+              detected ? "Alarm raised" : "No alarm"
+            ),
+            h(
+              "span",
+              { class: "reel-parties" },
+              ["Bob", "Charlie"].map(function (party) {
+                return h("span", { class: "reel-party" }, [
+                  h("span", { class: "reel-party-name", text: party }),
+                  outcomeLamp(outcomes[party]),
+                ]);
+              })
+            ),
+          ])
+        );
+      }
+
+      note.textContent = failed
+        ? "Recorded run."
+        : `Recorded run. ${plainWarning(item.payload)}`;
+
+      items.forEach(function (other) {
+        const on = other.key === item.key;
+        buttons[other.key].className = on ? "reel-button is-current" : "reel-button";
+        buttons[other.key].setAttribute("aria-pressed", on ? "true" : "false");
+      });
+    }
+
+    /**
+     * Start the loop from wherever `current` is.
+     *
+     * @returns {void}
+     */
+    function startLoop() {
+      stopPlayback();
+      playTimer = window.setInterval(function () {
+        const after = loop.next[current];
+        current = after === undefined ? loop.first : after;
+        paint();
+      }, PHASE_HOLD_MS);
+    }
+
+    const switcher = h("div", {
+      class: "reel-switch",
+      attrs: { role: "group", "aria-label": "Choose a run" },
+    });
+    items.forEach(function (item) {
+      const button = h("button", {
+        class: "reel-button",
+        text: item.title,
+        attrs: { type: "button", "aria-pressed": "false" },
+      });
+      button.addEventListener("click", function () {
+        current = animate ? starts[item.key] : `${item.key}:verdict`;
+        paint();
+        if (animate) {
+          startLoop();
+        }
+      });
+      buttons[item.key] = button;
+      switcher.appendChild(button);
+    });
+
+    const foot = h("div", { class: "reel-foot" }, [note]);
+    if (typeof opts.open === "function") {
+      const open = h("button", {
+        class: "reel-open",
+        text: "Watch it step by step",
+        attrs: { type: "button" },
+      });
+      open.addEventListener("click", function () {
+        stopPlayback();
+        opts.open(frames[current].item);
+      });
+      foot.appendChild(open);
+    }
+
+    view.appendChild(
+      h(
+        "section",
+        { class: "home-stage", attrs: { "aria-label": "Recorded runs" } },
+        [switcher, benchBox, captionBox, foot]
+      )
+    );
+    view.appendChild(promiseList());
+
+    paint();
+    if (animate) {
+      startLoop();
+    }
+  }
+
+  /* ---------------------------------------------------------------------- *
+   * Documentation
+   * ---------------------------------------------------------------------- */
+
+  /** How a documentation value reference is formatted, by its `format`. */
+  const DOC_FORMATS = {
+    chsh: Fmt.chsh,
+    count: Fmt.count,
+    exp: Fmt.exp,
+    rate: Fmt.rate,
+    sci: Fmt.sci,
+  };
+
+  /**
+   * Look a dotted path up in an object, one key at a time.
+   *
+   * @param {Object} root
+   * @param {string} path e.g. `bounds.headline.key_length`.
+   * @returns {*} The value, or undefined when any step is missing.
+   */
+  function lookup(root, path) {
+    let value = root;
+    String(path)
+      .split(".")
+      .forEach(function (key) {
+        value =
+          value !== null &&
+          typeof value === "object" &&
+          Object.prototype.hasOwnProperty.call(value, key)
+            ? value[key]
+            : undefined;
+      });
+    return value;
+  }
+
+  /**
+   * A documentation text run: strings, and value references resolved against
+   * `/api/defaults`. A reference that does not resolve says so.
+   *
+   * @param {string} tag
+   * @param {string} cls
+   * @param {Array<string|Object>} parts
+   * @param {Object} defaults
+   * @returns {HTMLElement}
+   */
+  function docsText(tag, cls, parts, defaults) {
+    const node = h(tag, cls ? { class: cls } : {});
+    (parts || []).forEach(function (part) {
+      if (part === null || typeof part !== "object") {
+        node.appendChild(h("span", { text: String(part) }));
+        return;
+      }
+      const format = DOC_FORMATS[part.format];
+      const text = format ? format(lookup(defaults, part.value)) : Fmt.ABSENT;
+      node.appendChild(
+        text === Fmt.ABSENT
+          ? h("span", { class: "missing", text: Fmt.ABSENT })
+          : h("span", { class: "docs-figure", text: text })
+      );
+    });
+    return node;
+  }
+
+  /** How the roster's detectability reads, and the lamp it lights. */
+  const DETECTABILITY = {
+    "not-an-attack": { kind: "neutral", word: "Baseline" },
+    detectable: { kind: "named", word: "Detectable" },
+    "undetectable-by-construction": {
+      kind: "withheld",
+      word: "Undetectable by design",
+    },
+  };
+
+  /**
+   * One documentation block.
+   *
+   * @param {Object} block
+   * @param {Object} context
+   * @returns {HTMLElement|null}
+   */
+  function docsBlock(block, context) {
+    const defaults = context.defaults || {};
+    if (block.type === "p") {
+      return docsText("p", "docs-p", block.text, defaults);
+    }
+    if (block.type === "note") {
+      return docsText("aside", "docs-note", block.text, defaults);
+    }
+    if (block.type === "steps" || block.type === "list") {
+      return h(
+        block.type === "steps" ? "ol" : "ul",
+        { class: block.type === "steps" ? "docs-steps" : "docs-list" },
+        (block.items || []).map(function (item) {
+          return docsText("li", "", item, defaults);
+        })
+      );
+    }
+    if (block.type === "terms") {
+      const list = h("dl", { class: "docs-terms" });
+      (block.items || []).forEach(function (item) {
+        list.appendChild(h("dt", { text: item.term }));
+        list.appendChild(docsText("dd", "", item.text, defaults));
+      });
+      return list;
+    }
+    if (block.type === "roster") {
+      if (!context.attacks) {
+        return notSupplied(["/api/attacks"]);
+      }
+      return h(
+        "ul",
+        { class: "docs-roster" },
+        context.attacks.map(function (entry) {
+          const spec = DETECTABILITY[entry.detectable] || {
+            kind: "neutral",
+            word: String(entry.detectable),
+          };
+          return h("li", {}, [
+            h("h3", { text: entry.label }),
+            lamp(spec.kind, spec.word),
+            h("p", { text: Fmt.prose(entry.summary) }),
+            entry.assumption
+              ? h("p", {
+                  class: "docs-assumption",
+                  text: Fmt.prose(entry.assumption),
+                })
+              : null,
+          ]);
+        })
+      );
+    }
+    return null;
+  }
+
+  /**
+   * The documentation view, rendered from `data/docs.json`.
+   *
+   * The contents list is buttons rather than links because the hash is the
+   * router's.
+   *
+   * @param {HTMLElement} target
+   * @param {Object|null} docsData
+   * @param {Object} context
+   * @returns {void}
+   */
+  function docs(target, docsData, context) {
+    stopPlayback();
+    target.textContent = "";
+    if (!docsData) {
+      target.appendChild(viewHead("Documentation"));
+      target.appendChild(
+        h("p", {
+          class: "empty",
+          text: "The documentation file didn't load. Start the server and reload.",
+        })
+      );
+      return;
+    }
+    const ctx = context || {};
+    const toc = h("ol");
+    const body = h("div", { class: "docs-body" });
+    (docsData.sections || []).forEach(function (section) {
+      const article = h(
+        "article",
+        { class: "docs-section", attrs: { id: `docs-${section.id}` } },
+        [h("h2", { text: section.title })]
+      );
+      (section.blocks || []).forEach(function (block) {
+        const node = docsBlock(block, ctx);
+        if (node) {
+          article.appendChild(node);
+        }
+      });
+      body.appendChild(article);
+      const jump = h("button", {
+        class: "toc-link",
+        text: section.title,
+        attrs: { type: "button" },
+      });
+      jump.addEventListener("click", function () {
+        article.scrollIntoView({
+          behavior: prefersStill() ? "auto" : "smooth",
+          block: "start",
+        });
+      });
+      toc.appendChild(h("li", {}, [jump]));
+    });
+    target.appendChild(
+      h("div", { class: "docs" }, [
+        viewHead(docsData.title || "Documentation", docsData.lede),
+        h("nav", { class: "docs-toc", attrs: { "aria-label": "On this page" } }, [
+          toc,
+        ]),
+        body,
+      ])
+    );
   }
 
   /* ---------------------------------------------------------------------- *
@@ -4087,7 +4837,7 @@ const Render = (function () {
     const check = Contract.checkRun(payload);
     if (!check.ok) {
       target.appendChild(
-        panel("The API response does not match the contract", null, [
+        panel("The API response doesn't match the contract", null, [
           notSupplied(check.problems),
         ])
       );
@@ -4134,8 +4884,10 @@ const Render = (function () {
 
   return {
     banner: banner,
+    docs: docs,
     h: h,
     headlineParams: headlineParams,
+    home: home,
     kv: kv,
     notSupplied: notSupplied,
     page: page,

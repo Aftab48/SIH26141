@@ -1,0 +1,176 @@
+{
+  "title": "Documentation",
+  "lede": "Alice signs one bit, and a detector that reads only the transcript has to tell an attack on that signature from an honest run. Each claim below sits beside the assumption it needs.",
+  "sections": [
+    {
+      "id": "what-this-is",
+      "title": "What QSecure is",
+      "blocks": [
+        { "type": "p", "text": ["QSecure is the dashboard of a project built for SIH26141: software that detects forgery, impersonation, replay and quantum channel tampering against a teleportation-based quantum digital signature protocol, using quantum measurement statistics and classical hypothesis testing, with no machine learning in the detection path. It runs as a classical simulation, with no quantum hardware."] },
+        { "type": "p", "text": ["A session signs one bit, not a file. The screen shows one run at a time and adds nothing up across runs, so it carries no detection rate for any attack; the Phase 5 evaluation tables stay in the repository. Python computed every figure on it, including those in this documentation."] },
+        { "type": "p", "text": ["It covers the brief's threat detection dashboard. The security event log, another listed deliverable, answers at /api/events, but no screen here reads it."] }
+      ]
+    },
+    {
+      "id": "why-quantum",
+      "title": "Why quantum signatures, and why no machine learning",
+      "blocks": [
+        { "type": "p", "text": ["A large fault-tolerant quantum computer running Shor's algorithm breaks RSA and elliptic-curve signatures, retroactively too, since whoever owns one could forge a signature on an archived document. Post-quantum signatures swap in a different hardness assumption that nobody can prove. Quantum digital signatures rest on physics instead, because nobody can copy an unknown quantum state, and measuring one in the wrong basis randomises it and leaves evidence."] },
+        { "type": "note", "text": ["Information-theoretic security is a claim about what an adversary's computer can't do, not a claim that the protocol needs no assumptions. The assumptions section names the conditions every bound here depends on."] },
+        { "type": "p", "text": ["QSecure keeps machine learning out of the detection path on purpose, because a trained detector reports accuracy on data it has already seen and gives no bound on the next attack. This detector's thresholds come from concentration inequalities (Hoeffding and Chernoff) applied to distributions written down for honest runs, so its false-alarm figure is proven, not observed."] }
+      ]
+    },
+    {
+      "id": "parties",
+      "title": "Alice, Bob, Charlie and the adversaries",
+      "blocks": [
+        { "type": "p", "text": ["The threat model allows an adversary with unlimited computing power who may be Alice denying a signature, a recipient forging one, or an outsider on the channel."] },
+        { "type": "terms", "items": [
+          { "term": "Alice", "text": ["The signer."] },
+          { "term": "Bob", "text": ["First recipient and verifier, who forwards the signature to Charlie. As a forger he's the strongest case, because he holds part of the evidence Charlie scores against."] },
+          { "term": "Charlie", "text": ["Second verifier, required because transferability means nothing without someone to transfer to."] },
+          { "term": "Eve", "text": ["An outsider who substitutes a forged signature or tampers with the entanglement on one recipient's link."] },
+          { "term": "Mallory", "text": ["An impersonator holding one or both of Alice's roles, distributing keys and signing."] }
+        ] }
+      ]
+    },
+    {
+      "id": "protocol",
+      "title": "Signing and checking one bit",
+      "blocks": [
+        { "type": "p", "text": ["Gottesman and Chuang's 2001 scheme needs recipients to store quantum states until a signature arrives. Here Alice teleports the key states and each recipient measures them on arrival, so no part of the system needs quantum memory."] },
+        { "type": "steps", "items": [
+          ["For each possible value of the bit, Alice draws a private key: a row of positions, each with a random basis from X, Y and Z and a random sign. The security-grade set uses ", { "value": "bounds.headline.key_length", "format": "count" }, " positions; dashboard runs start at ", { "value": "bounds.demo.key_length", "format": "count" }, "."],
+          ["She prepares each state twice from her own description, which no-cloning allows, and teleports one copy to each verifier; the two classical bits sent per position tell a listener nothing."],
+          ["Each recipient measures every arriving state in a basis he picks at random and keeps the basis and outcome. From then on no quantum state from the run exists anywhere."],
+          ["Out of Alice's sight, Bob and Charlie flip a private coin per position and swap records on heads, so she can't aim a signature at one of them."],
+          ["Alice signs by sending the bit and its key to Bob over an authenticated classical channel, and Bob forwards that declaration to Charlie."],
+          ["Bob and Charlie send each other one number, how many positions each can score. Under the shipped before-forwarding ordering both count against the declaration Alice signed; under after-forwarding, against the one that reached Charlie."]
+        ] },
+        { "type": "p", "text": ["A verifier scores only matched positions, where his basis equals the declared one, about a third of them. Elsewhere his outcome is a fair coin, and counting those positions (the classic bug in this family) would make both verifiers reject every honest signature, even on a perfect channel."] },
+        { "type": "p", "text": ["He then runs four evidence checks: his own matched count against its floor, whether both counts describe the same declaration, the pooled count against its floor, and his counterpart's count against the floor. If all pass he accepts when his mismatch rate is at or below his threshold, ", { "value": "params.s_a", "format": "rate" }, " for Bob and ", { "value": "params.s_v", "format": "rate" }, " for Charlie. The floors come from a Chernoff tail, and at the security-grade set they're ", { "value": "bounds.headline.minimum_matched", "format": "count" }, " per verifier and ", { "value": "bounds.headline.minimum_pooled", "format": "count" }, " pooled; nobody tuned them."] },
+        { "type": "note", "text": ["A failed check means no verdict. That isn't a rejection, and nothing on these pages averages the two."] },
+        { "type": "p", "text": ["The gap between the thresholds is what makes this a signature rather than a shared password. A signature Bob accepts is overwhelmingly likely to clear Charlie's looser bar, and since Alice can't tell who holds which records, she can't craft one that passes Bob and fails Charlie."] }
+      ]
+    },
+    {
+      "id": "promises",
+      "title": "Three promises and what each rests on",
+      "blocks": [
+        { "type": "p", "text": ["Home makes three promises; each holds only under stated conditions, and each has a limit."] },
+        { "type": "p", "text": ["Can't be forged. A forger doesn't hold Alice's key, so the signs a forger declares are guesses, and wrong guesses show up as mismatches. Eve, forging from outside, is wrong on each matched position with probability one half, so her odds fall exponentially with key length. Bob is the harder forger: after the swap half of Charlie's records are his own, which leaves his mismatch rate only just above Charlie's threshold, and he's the reason the security-grade key is so long."] },
+        { "type": "note", "text": ["This assumes the channels from Alice are authenticated. Both verifiers accept Mallory every time she holds both of Alice's roles, and no transcript statistic separates her from Alice."] },
+        { "type": "p", "text": ["\"Can't be denied\" means Alice can't get Bob to accept a signature that Charlie rejects, and at the security-grade set the bound on her managing it is ", { "value": "bounds.headline.enforced_repudiation_bound", "format": "sci" }, " for any strategy she tries, assuming nothing about her. It does need the swap coins kept private, and it leaves denial of service outside, since a signer can make a run abort for both verifiers, which transfers nothing."] },
+        { "type": "note", "text": ["Demo-scale runs can't demonstrate non-repudiation. At the dashboard's starting length the same bound is ", { "value": "bounds.demo.enforced_repudiation_bound", "format": "rate" }, ", close to one, so a demo run shows the mechanism and never the guarantee."] },
+        { "type": "p", "text": ["The third promise, \"can be passed on\", names a property: if Bob accepts, Charlie accepts too, in the same round. Noise trips Bob's stricter threshold long before Charlie's, and the count exchange stops Alice splitting the evidence so that Bob accepts what Charlie can't score. Transfer can still fail under attack: a forging Bob under before-forwarding, or a starved count, leaves one verifier with no verdict, which isn't a rejection."] }
+      ]
+    },
+    {
+      "id": "attacks",
+      "title": "Attacks",
+      "blocks": [
+        { "type": "p", "text": ["Each catalogue row below comes from the service, with a lamp reading Baseline, Detectable or Undetectable by design. Detectable describes the derivation and promises nothing about any one run, because the project has no false-negative bound."] },
+        { "type": "roster" },
+        { "type": "note", "text": ["The honest row says both verifiers keep accepting on a noisy link, and that isn't always true. In both recorded noisy honest runs Bob rejects and Charlie accepts, whichever null the detector had, because the nulls move the detector and never the verifiers."] },
+        { "type": "p", "text": ["Recipient forgery needs its ordering named. Under before-forwarding, which every recording uses, Charlie counted against Alice's declaration but holds Bob's, so he refuses on provenance: a denial of transfer, and the detector still raises an alarm. Under after-forwarding Charlie scores the forged key, and only there does a forgery rate exist. The replay recording ends the same way, since the session rebinds the captured declaration to the live round and Charlie, seeing two declarations behind one count, reaches no verdict."] },
+        { "type": "p", "text": ["An impersonator holding one of Alice's roles produces a coin-flip mismatch rate, and the detector catches it. Impersonating both is undetectable by design, and the dashboard labels it that way instead of showing a zero, because a zero would claim the detector looked. A detection names the explanations the evidence fits, and that can be a group: outside forgery and single-role impersonation look the same in a transcript."] },
+        { "type": "p", "text": ["Channel attacks raise the error rate and lower the Bell statistic on the link they touch, which is why the detector never pools links. Count starvation is availability rather than forgery: a recipient understates his count to deny the other a verdict, and the lie sits so far below the honest mean that one run exposes it."] },
+        { "type": "p", "text": ["Unauthorised verification, named in Objective 2, isn't a catalogue row. An outsider who invents a record gets a verdict carrying no information, since his mismatch rate is a coin flip on genuine and never-signed declarations alike. A stolen record verifies exactly as its owner would, which the record-secrecy assumption excludes, and tapping the wire is intercept-and-resend, which the detector catches."] },
+        { "type": "note", "text": ["No detector here fires on an unauthorised verification attempt as such, and the verifier's optional authorised-party check is off by default."] },
+        { "type": "p", "text": ["Objective 2, threat by threat:"] },
+        { "type": "list", "items": [
+          ["Forgery: detected, from outside and from a recipient, in both orderings."],
+          ["Replay: detected."],
+          ["Impersonation: detected for either role alone, not for both, which the authentication assumption excludes. Three of four detected is true only with this sentence attached."],
+          ["Unauthorised verification: answered route by route rather than detected."]
+        ] }
+      ]
+    },
+    {
+      "id": "detector",
+      "title": "What the detector reads",
+      "blocks": [
+        { "type": "p", "text": ["The detector reads the transcript after a JSON round trip and nothing else, and Session keeps the simulator's record and the detector's conclusion in separate halves to match. Its thresholds fall into three families, and a union bound recombines them without assuming they're independent."] },
+        { "type": "list", "items": [
+          ["Rate and count: mismatch rates, matched counts, the exchanged counts and the pooled count."],
+          ["Channel: check-round error rate, Bell statistic and resource diagnostics, per link and never pooled."],
+          ["Structural: aborts, replay refusals and the shape of the run."]
+        ] },
+        { "type": "p", "text": ["Every threshold comes from a written-down null and a named inequality, and none came from looking at attack data. Check rounds, positions spent measuring the link, feed the channel family; with none, that family goes unevaluated and no channel chart appears."] },
+        { "type": "p", "text": ["After a run the detector publishes its false-positive bound, the proven chance that an honest run scored against the stated nulls would fire any signal, and Proof shows it as the chance of a false alarm. It's not the budget the operator sets (", { "value": "eps_default", "format": "sci" }, " by default) and not the post hoc evidence bound."] },
+        { "type": "note", "text": ["There's no false-negative bound in this project, so a quiet detector isn't proof that nothing happened."] },
+        { "type": "p", "text": ["Both nulls, channel_error_rate for the rate family and tolerated_depolarising for the channel family, default to a perfect link, and only the operator changes them. An honest run on a noisy link therefore fires, correctly, because the null is wrong about the wire; correcting the rate null alone still leaves it firing."] }
+      ]
+    },
+    {
+      "id": "proven-measured",
+      "title": "Proven and measured",
+      "blocks": [
+        { "type": "p", "text": ["A proven bound holds for every run the scheme will ever execute, derived from a stated adversary model and a concentration inequality; a measured rate is a count over a denominator from runs that happened, with a confidence interval and nothing else. The dashboard draws the two in different shapes and never in one column, and every bound names its estimator."] },
+        { "type": "p", "text": ["A demo run can show the machinery working: the detector firing on mounted attacks and staying quiet on an idle adversary, a refusal that never reads as a rejection, an unevaluated family that never reads as a clean one, and an out-of-model attack the detector can't see that never reads as a miss. It can't show non-repudiation, and it can't give a detection rate or any false-negative statement."] },
+        { "type": "note", "text": ["Below a signing length of ", { "value": "bounds.degenerate_below_key_length", "format": "count" }, " the floors collapse and a run carries no security claim, though every number still computes. The recording called Degenerate key length is that case."] }
+      ]
+    },
+    {
+      "id": "assumptions",
+      "title": "Assumptions and limits",
+      "blocks": [
+        { "type": "p", "text": ["Five assumptions carry the security argument, and the code checks only exchange honesty, with a single-run test on the declared count."] },
+        { "type": "terms", "items": [
+          { "term": "Authenticated channels (AUTH)", "text": ["Channels from Alice are authenticated. If they aren't, full impersonation succeeds with probability one, an exclusion every measurement-based quantum signature scheme shares."] },
+          { "term": "Independence (IND)", "text": ["The declared key is independent of the bases the recipients logged. Without it, bounds averaged over a matched count become false."] },
+          { "term": "Private coins", "text": ["Only Bob and Charlie know the swap coins; if Alice learns them, non-repudiation collapses."] },
+          { "term": "Exchange honesty", "text": ["Recipients report counts truthfully. A liar forces aborts, a denial of service rather than a forgery."] },
+          { "term": "Record secrecy", "text": ["Only the named recipient holds his record. A stolen copy verifies exactly as the owner's would, and nothing detects it."] }
+        ] },
+        { "type": "p", "text": ["Limits worth knowing up front:"] },
+        { "type": "list", "items": [
+          ["Live runs stop at ", { "value": "live_key_length_max", "format": "count" }, " positions, and the service refuses a longer request rather than clamping it. It publishes the security-grade set as closed forms and never runs it."],
+          ["An adversary on the payload line is invisible to check rounds, and the verifiers' mismatch rate is the signal that survives."],
+          ["Once the null carries the link's true rate, no threshold derived from that null can see an adversary working inside the noise the protocol tolerates; that's a result about the protocol's observability."],
+          ["Charlie can't tell whether Alice or the forwarding hop minted a bad declaration without a dispute comparing copies."],
+          ["Check-round statistics assume the adversary can't spot check rounds by timing."],
+          ["At small key lengths the detector can catch a channel attack without naming the link."]
+        ] }
+      ]
+    },
+    {
+      "id": "reading",
+      "title": "Reading the dashboard",
+      "blocks": [
+        { "type": "p", "text": ["Home loops two recordings, an honest signature then an outside forgery, and shows each verdict as its run ends. Every recording in the scenario list sits in the page's memory, so picking one replays it in Session without asking the service."] },
+        { "type": "terms", "items": [
+          { "term": "Session", "text": ["One run step by step: the simulator's record of what happened, which the detector never sees, beside what the detector concluded from the transcript alone."] },
+          { "term": "Evidence", "text": ["Per-link error rates and Bell tests, and each verifier's evidence against the floors."] },
+          { "term": "Proof", "text": ["The proven chance of a false alarm, what a short run can't establish, the explanations the evidence fits, and whether Alice could deny signing."] },
+          { "term": "Full report", "text": ["Every panel and number in collapsible sections, plus a JSON download and a print layout."] },
+          { "term": "Run a session", "text": ["Live-run controls, each cap printed beside its field."] }
+        ] },
+        { "type": "p", "text": ["The detector and the verifiers answer different questions, so they never share one verdict. Recipient forgery and count starvation both raise an alarm and leave a verifier without a verdict."] },
+        { "type": "terms", "items": [
+          { "term": "Accepted", "text": ["Green, solid border, filled circle: the mismatch rate was at or below the threshold."] },
+          { "term": "Rejected", "text": ["Red, solid border, triangle: the rate was above it. The detector's alarm uses the same mark."] },
+          { "term": "No verdict", "text": ["Violet, dashed border, hollow diamond: the verifier refused to judge. It's neither acceptance nor rejection and belongs in no rate."] },
+          { "term": "Not evaluated", "text": ["Grey, dotted and hatched, slashed circle: the run didn't collect enough to evaluate this check, and not evaluated isn't passed."] },
+          { "term": "Undetectable by design", "text": ["Full impersonation's label, in place of a zero: an assumption excludes that attack, so there was nothing for the detector to miss."] }
+        ] },
+        { "type": "p", "text": ["The chip in the top bar says whether the service answers. When it doesn't, the chip says whether the page still holds recorded runs (scenarios replay, new runs can't start) or has neither the service nor a single recording."] },
+        { "type": "note", "text": ["Every run view warns when its nulls are noiseless. On an honest noisy link an alarm means the null is wrong about the wire, not that someone attacked."] }
+      ]
+    },
+    {
+      "id": "glossary",
+      "title": "Glossary",
+      "blocks": [
+        { "type": "terms", "items": [
+          { "term": "QBER", "text": ["Quantum bit error rate: the share of same-basis check results that disagree. It rises under attack."] },
+          { "term": "CHSH", "text": ["A Bell-test statistic. Ideal entanglement reaches ", { "value": "bounds.chsh_tsirelson_bound", "format": "chsh" }, ", and no classical source can push its magnitude past ", { "value": "bounds.chsh_classical_bound", "format": "chsh" }, "."] },
+          { "term": "Matched position", "text": ["A position measured in the declared basis, and the only kind a verifier scores."] },
+          { "term": "Null", "text": ["The honest-run distribution the detector tests a statistic against."] },
+          { "term": "Teleportation", "text": ["Sending a quantum state with a shared Bell pair and two classical bits, so the state never crosses the channel."] },
+          { "term": "Denial of transfer", "text": ["A signature that stops at Bob because Charlie reaches no verdict."] }
+        ] }
+      ]
+    }
+  ]
+}

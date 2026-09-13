@@ -17,7 +17,7 @@
  * ever rounded to change a comparison -- no threshold is applied here, because
  * no threshold is applied anywhere in this frontend.
  *
- * A null or undefined never becomes a zero. It becomes an em dash and, where it
+ * A null or undefined never becomes a zero. It becomes "n/a" and, where it
  * matters, a word: "no verdict", "not evaluated", "not supplied by the API". A
  * zero on a screen is a claim, and the absence of a number is not one.
  */
@@ -239,6 +239,23 @@ const Fmt = (function () {
     return `${party} / bit ${bit}`;
   }
 
+  /**
+   * Render an API sentence for running prose.
+   *
+   * The API spells a dash as " -- " (ASCII, frozen in the contract). On the
+   * page that reads as a stand-in em dash, so it becomes a comma. Verbatim
+   * blocks (the detector's summary, the budget derivation) do not use this.
+   *
+   * @param {*} text
+   * @returns {string}
+   */
+  function prose(text) {
+    if (text === null || text === undefined) {
+      return "";
+    }
+    return String(text).split(" -- ").join(", ");
+  }
+
   return {
     ABSENT: ABSENT,
     chsh: chsh,
@@ -251,6 +268,7 @@ const Fmt = (function () {
     list: list,
     millis: millis,
     present: present,
+    prose: prose,
     rate: rate,
     sci: sci,
   };
