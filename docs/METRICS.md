@@ -2,13 +2,13 @@
 
 **SIH26141**: Quantum-Inspired Cyber Threat Detection for Digital Signature Security
 
-Generated `2026-09-06 11:07 UTC` by `tools/metrics.py`. Every figure is computed from the
+Generated `2026-09-16 15:43 UTC` by `tools/metrics.py`. Every figure is computed from the
 repository, so do not edit by hand, re-run the script.
 
 ## Test suite
 
 ```
-3904 passed in 2382.51s (0:39:42)
+3916 passed in 3442.74s (0:57:22)
 ```
 
 - Doctests collected from package modules: **499**
@@ -46,7 +46,7 @@ repository, so do not edit by hand, re-run the script.
 | `sih141/attacks/replay.py` | 2328 | 682 | 1317 | 51 | 36 | 3 |
 | `sih141/attacks/starvation.py` | 1678 | 333 | 1115 | 21 | 27 | 4 |
 | `sih141/attacks/statistics.py` | 570 | 158 | 323 | 3 | 14 | 1 |
-| `sih141/attacks/unauthorised.py` | 1751 | 482 | 995 | 44 | 37 | 4 |
+| `sih141/attacks/unauthorised.py` | 1764 | 488 | 999 | 47 | 37 | 4 |
 | `sih141/detect/__init__.py` | 572 | 263 | 259 | 8 | 2 | 1 |
 | `sih141/detect/detector.py` | 2662 | 928 | 1397 | 85 | 27 | 8 |
 | `sih141/detect/statistics.py` | 3337 | 964 | 1947 | 63 | 56 | 10 |
@@ -71,10 +71,10 @@ repository, so do not edit by hand, re-run the script.
 | `sih141/web/driver.py` | 1250 | 512 | 562 | 40 | 12 | 3 |
 | `sih141/web/limits.py` | 1070 | 277 | 578 | 78 | 14 | 2 |
 | `sih141/web/payload.py` | 696 | 277 | 341 | 10 | 9 | 0 |
-| **total** | **77189** | **20826** | **45429** | **1715** | **1191** | **138** |
+| **total** | **77202** | **20832** | **45433** | **1718** | **1191** | **138** |
 
-Tests: **50290 lines** across **45 files**, **2422 test functions** defined.
-Test-lines to code-lines ratio: **2.41 : 1**
+Tests: **50907 lines** across **45 files**, **2444 test functions** defined.
+Test-lines to code-lines ratio: **2.44 : 1**
 
 ## Live security parameters
 
@@ -100,9 +100,9 @@ actually computes today, not what a document once claimed.
 
 | File | Words |
 | --- | ---: |
-| `README.md` | 7049 |
+| `README.md` | 7153 |
 | `docs/ATTACKS.md` | 9119 |
-| `docs/METRICS.md` | 1494 |
+| `docs/METRICS.md` | 1501 |
 | `docs/MODELLING.md` | 8175 |
 | `docs/PHASE1.md` | 4038 |
 | `docs/PHASE2.md` | 10044 |
@@ -111,15 +111,20 @@ actually computes today, not what a document once claimed.
 | `docs/PHASE5.md` | 12630 |
 | `docs/PHASE6.md` | 12382 |
 | `docs/QDS.md` | 5883 |
-| `docs/SECURITY.md` | 8639 |
-| **total** | **104008** |
+| `docs/SECURITY.md` | 8789 |
+| **total** | **104269** |
 
 ## Repository
 
-- Commits: **35**
+- Commits: **40**
 
 | Commit | Subject |
 | --- | --- |
+| `032a61b` | Rebuild the dashboard as QSecure: a looping Home, light and dark themes, in-app documentation |
+| `6e509eb` | Rebuild the dashboard as an optical bench: replayed session beside the detector's verdict |
+| `0ca5e52` | Add the coverage record: every asked deliverable against its measurement |
+| `fcbd43b` | Lead the unauthorised-verification account with what it answers |
+| `ad1147f` | Add the unauthorised-verification analysis and a security event log |
 | `e38d413` | Untrack the working journal and editor config, add the problem statement |
 | `7b7b93e` | Add the Phase 7 submission documents: modelling, security analysis, attack record |
 | `91f3e18` | Re-measure the calibration panel from a clean tree |
@@ -140,8 +145,3 @@ actually computes today, not what a document once claimed.
 | `2e75d91` | Close routes H and I; audit 22 thresholds; reconcile the families |
 | `c61ee52` | Derive 22 thresholds and compose them with a family-wise bound |
 | `99efdf7` | Add the detection statistics layer with its honest-run nulls |
-| `cec3cc6` | Close the read-count inference routes; argue the timing boundary |
-| `adee91b` | Record the hardening round: one finding closed, one still open |
-| `f4544fc` | Reconcile the two hardening fixes and re-measure what moved |
-| `9c00d5f` | Make the check set uninferable and the isolation check bite |
-| `885f342` | Close Phase 3: propagate check-round sifting, fix stale figures |
