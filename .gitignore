@@ -22,3 +22,7 @@ JOURNAL.md
 # Editor and dev-server configuration. `launch.json` names a local port for the
 # preview pane, which is tooling for whoever is working on this, not part of it.
 .claude/
+
+# The research paper and its build scripts. Unpublished, so they stay on disk only.
+paper/
+brag-output/

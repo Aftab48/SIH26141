@@ -582,20 +582,27 @@ def test_no_reduction_over_api_data() -> None:
 # --------------------------------------------------------------------------- #
 
 
+IMAGE_KINDS = {".png"}
+
+
 def _assets() -> Iterable[Path]:
-    """Every file served to the browser."""
+    """Every text file served to the browser: all of them but the logo."""
     for path in sorted(STATIC.rglob("*")):
-        if path.is_file():
+        if path.is_file() and path.suffix not in IMAGE_KINDS:
             yield path
 
 
 def test_every_served_asset_is_a_known_kind() -> None:
-    """A binary blob nobody can read is not an artefact anybody can audit."""
-    allowed = {".html", ".css", ".js", ".json"}
+    """A binary blob nobody can read is not an artefact anybody can audit.
+
+    The one binary is the logo, ``img/qsecure-mark.png``: a picture, not code,
+    so it can neither run nor fetch anything.
+    """
+    allowed = {".html", ".css", ".js", ".json"} | IMAGE_KINDS
     unexpected = [
         path.relative_to(STATIC).as_posix()
-        for path in _assets()
-        if path.suffix not in allowed
+        for path in sorted(STATIC.rglob("*"))
+        if path.is_file() and path.suffix not in allowed
     ]
     assert unexpected == [], (
         f"unexpected asset kinds under the static root: {unexpected}. The "

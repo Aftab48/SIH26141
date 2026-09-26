@@ -435,11 +435,12 @@ summary:focus-visible {
   margin: 0;
 }
 
+/* The logo keeps its own black ground, so it reads as a tile in both themes. */
 .brand-mark {
   flex: none;
-  width: 2.25rem;
-  height: 2.25rem;
-  color: var(--indigo);
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.6rem;
 }
 
 .brand-text {
